@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use pinocchio::sysvars::Sysvar;
+use crate::sysvars::Sysvar;
 use crate::prelude::*;
 
 #[repr(transparent)]
@@ -81,13 +81,13 @@ impl<T: QuasarAccount + Owner> Account<T> {
 
         let rent_exempt_lamports = match rent {
             Some(rent_account) => rent_account.get()?.try_minimum_balance(new_space)?,
-            None => pinocchio::sysvars::rent::Rent::get()?.try_minimum_balance(new_space)?,
+            None => crate::sysvars::rent::Rent::get()?.try_minimum_balance(new_space)?,
         };
 
         let current_lamports = view.lamports();
 
         if rent_exempt_lamports > current_lamports {
-            pinocchio_system::instructions::Transfer {
+            crate::cpi::system::Transfer {
                 from: payer,
                 to: view,
                 lamports: rent_exempt_lamports - current_lamports,

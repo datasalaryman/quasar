@@ -11,7 +11,7 @@ impl crate::traits::Program for Rent {
 
 impl Rent {
     #[inline(always)]
-    pub fn get(&self) -> Result<solana_account_view::Ref<'_, pinocchio::sysvars::rent::Rent>, ProgramError> {
-        pinocchio::sysvars::rent::Rent::from_account_view(self.to_account_view())
+    pub fn get(&self) -> Result<solana_account_view::Ref<'_, crate::sysvars::rent::Rent>, ProgramError> {
+        crate::sysvars::rent::Rent::from_account_view(self.to_account_view())
     }
 }

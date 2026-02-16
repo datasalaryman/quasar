@@ -1,6 +1,11 @@
 #![no_std]
+extern crate self as quasar;
 #[macro_use]
 pub mod macros;
+#[macro_use]
+pub mod sysvars;
+pub mod cpi;
+pub mod token;
 pub mod traits;
 pub mod checks;
 pub mod accounts;

@@ -8,4 +8,5 @@ pub use crate::accounts::*;
 pub use crate::programs::*;
 pub use crate::context::{Context, Ctx};
 pub use crate::error::QuasarError;
+pub use crate::sysvars::Sysvar;
 pub use quasar_derive::{Accounts, instruction, account, error_code};

@@ -14,7 +14,7 @@ impl Owner for TokenAccount {
 }
 
 impl core::ops::Deref for Account<TokenAccount> {
-    type Target = pinocchio_token::state::TokenAccount;
+    type Target = crate::token::TokenAccountState;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {

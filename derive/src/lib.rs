@@ -2,10 +2,69 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, Data, DeriveInput, FnArg, Fields, ItemFn, LitInt, Pat, Token, Type,
+    parse_macro_input, Data, DeriveInput, Expr, FnArg, Fields, Ident, ItemFn, LitInt, Pat, Token, Type,
 };
 
-#[proc_macro_derive(Accounts)]
+// --- Account field attribute parsing ---
+
+enum AccountDirective {
+    HasOne(Ident),
+    Constraint(Expr),
+}
+
+impl Parse for AccountDirective {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let key: Ident = input.parse()?;
+        let _: Token![=] = input.parse()?;
+        match key.to_string().as_str() {
+            "has_one" => Ok(Self::HasOne(input.parse()?)),
+            "constraint" => Ok(Self::Constraint(input.parse()?)),
+            _ => Err(syn::Error::new(
+                key.span(),
+                format!("unknown account attribute: `{}`", key),
+            )),
+        }
+    }
+}
+
+struct AccountFieldAttrs {
+    has_ones: Vec<Ident>,
+    constraints: Vec<Expr>,
+}
+
+impl Parse for AccountFieldAttrs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let directives =
+            input.parse_terminated(AccountDirective::parse, Token![,])?;
+        let mut has_ones = Vec::new();
+        let mut constraints = Vec::new();
+        for d in directives {
+            match d {
+                AccountDirective::HasOne(ident) => has_ones.push(ident),
+                AccountDirective::Constraint(expr) => constraints.push(expr),
+            }
+        }
+        Ok(Self { has_ones, constraints })
+    }
+}
+
+fn parse_field_attrs(field: &syn::Field) -> AccountFieldAttrs {
+    for attr in &field.attrs {
+        if attr.path().is_ident("account") {
+            return attr
+                .parse_args::<AccountFieldAttrs>()
+                .expect("failed to parse #[account(...)] attribute");
+        }
+    }
+    AccountFieldAttrs {
+        has_ones: vec![],
+        constraints: vec![],
+    }
+}
+
+// --- Derive Accounts ---
+
+#[proc_macro_derive(Accounts, attributes(account))]
 pub fn derive_accounts(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -38,19 +97,73 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     }).collect();
 
-    let expanded = quote! {
-        impl<'info> TryFrom<&'info [AccountView]> for #name<'info> {
-            type Error = ProgramError;
+    // Collect has_one and constraint directives from field attributes
+    let mut has_one_checks: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut constraint_checks: Vec<proc_macro2::TokenStream> = Vec::new();
 
-            #[inline(always)]
-            fn try_from(accounts: &'info [AccountView]) -> Result<Self, Self::Error> {
-                let [#(#field_names),*] = accounts else {
-                    return Err(ProgramError::NotEnoughAccountKeys);
-                };
+    for field in fields.iter() {
+        let attrs = parse_field_attrs(field);
+        let field_name = field.ident.as_ref().unwrap();
 
-                Ok(Self {
-                    #(#field_constructs,)*
-                })
+        for target in &attrs.has_ones {
+            has_one_checks.push(quote! {
+                if #field_name.#target != *#target.to_account_view().address() {
+                    return Err(QuasarError::HasOneMismatch.into());
+                }
+            });
+        }
+
+        for expr in &attrs.constraints {
+            constraint_checks.push(quote! {
+                if !(#expr) {
+                    return Err(QuasarError::ConstraintViolation.into());
+                }
+            });
+        }
+    }
+
+    let has_any_checks = !has_one_checks.is_empty() || !constraint_checks.is_empty();
+
+    let expanded = if has_any_checks {
+        quote! {
+            impl<'info> TryFrom<&'info [AccountView]> for #name<'info> {
+                type Error = ProgramError;
+
+                #[inline(always)]
+                fn try_from(accounts: &'info [AccountView]) -> Result<Self, Self::Error> {
+                    let [#(#field_names),*] = accounts else {
+                        return Err(ProgramError::NotEnoughAccountKeys);
+                    };
+
+                    let result = Self {
+                        #(#field_constructs,)*
+                    };
+
+                    {
+                        let Self { #(ref #field_names,)* } = result;
+                        #(#has_one_checks)*
+                        #(#constraint_checks)*
+                    }
+
+                    Ok(result)
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl<'info> TryFrom<&'info [AccountView]> for #name<'info> {
+                type Error = ProgramError;
+
+                #[inline(always)]
+                fn try_from(accounts: &'info [AccountView]) -> Result<Self, Self::Error> {
+                    let [#(#field_names),*] = accounts else {
+                        return Err(ProgramError::NotEnoughAccountKeys);
+                    };
+
+                    Ok(Self {
+                        #(#field_constructs,)*
+                    })
+                }
             }
         }
     };
@@ -58,14 +171,15 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Parses: `discriminator = <u8_literal>`
+// --- Instruction macro ---
+
 struct InstructionArgs {
     discriminator: LitInt,
 }
 
 impl Parse for InstructionArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident: syn::Ident = input.parse()?;
+        let ident: Ident = input.parse()?;
         if ident != "discriminator" {
             return Err(syn::Error::new(ident.span(), "expected `discriminator`"));
         }
@@ -81,7 +195,6 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut func = parse_macro_input!(item as ItemFn);
     let discriminator = &args.discriminator;
 
-    // Extract first parameter (ctx: Ctx<T>)
     let first_arg = match func.sig.inputs.first() {
         Some(FnArg::Typed(pt)) => pt.clone(),
         _ => panic!("#[instruction] requires ctx: Ctx<T> as first parameter"),
@@ -90,7 +203,6 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let param_name = &first_arg.pat;
     let param_type = &first_arg.ty;
 
-    // Collect remaining params (instruction data fields)
     let remaining: Vec<_> = func.sig.inputs.iter().skip(1).filter_map(|arg| {
         match arg {
             FnArg::Typed(pt) => Some(pt.clone()),
@@ -98,11 +210,9 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }).collect();
 
-    // Replace all params with just context: Context
     func.sig.inputs = syn::punctuated::Punctuated::new();
     func.sig.inputs.push(syn::parse_quote!(mut context: Context));
 
-    // Prepend: discriminator check + ctx construction
     let stmts = std::mem::take(&mut func.block.stmts);
     let mut new_stmts: Vec<syn::Stmt> = vec![
         syn::parse_quote!(
@@ -118,9 +228,8 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         ),
     ];
 
-    // Deserialize instruction data: repr(C) + zero-copy pointer cast
     if !remaining.is_empty() {
-        let field_names: Vec<syn::Ident> = remaining.iter().map(|pt| {
+        let field_names: Vec<Ident> = remaining.iter().map(|pt| {
             match &*pt.pat {
                 Pat::Ident(pat_ident) => pat_ident.ident.clone(),
                 _ => panic!("#[instruction] parameters must be simple identifiers"),
@@ -157,6 +266,8 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote!(#func).into()
 }
+
+// --- Account attribute macro ---
 
 #[proc_macro_attribute]
 pub fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -219,17 +330,17 @@ pub fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[inline(always)]
-            pub fn init_signed(self, account: &mut Initialize<Self>, payer: &AccountView, rent: Option<&Rent>, signers: &[pinocchio::cpi::Signer]) -> Result<(), ProgramError> {
+            pub fn init_signed(self, account: &mut Initialize<Self>, payer: &AccountView, rent: Option<&Rent>, signers: &[quasar::cpi::Signer]) -> Result<(), ProgramError> {
                 let view = account.to_account_view();
 
-                use pinocchio::sysvars::Sysvar;
+                use quasar::sysvars::Sysvar;
                 let lamports = match rent {
                     Some(rent_account) => rent_account.get()?.try_minimum_balance(Self::SPACE)?,
-                    None => pinocchio::sysvars::rent::Rent::get()?.try_minimum_balance(Self::SPACE)?,
+                    None => quasar::sysvars::rent::Rent::get()?.try_minimum_balance(Self::SPACE)?,
                 };
 
                 if view.lamports() == 0 {
-                    pinocchio_system::instructions::CreateAccount {
+                    quasar::cpi::system::CreateAccount {
                         from: payer,
                         to: view,
                         lamports,
@@ -239,13 +350,13 @@ pub fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     let required = lamports.saturating_sub(view.lamports());
                     if required > 0 {
-                        pinocchio_system::instructions::Transfer {
+                        quasar::cpi::system::Transfer {
                             from: payer,
                             to: view,
                             lamports: required,
                         }.invoke_signed(signers)?;
                     }
-                    pinocchio_system::instructions::Assign {
+                    quasar::cpi::system::Assign {
                         account: view,
                         owner: &Self::OWNER,
                     }.invoke_signed(signers)?;
@@ -261,8 +372,8 @@ pub fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
     }.into()
 }
 
-/// Strips generic arguments from a type path.
-/// e.g. `Signer<'info>` -> `Signer`
+// --- Helpers ---
+
 fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
     match ty {
         Type::Path(type_path) => {
@@ -278,6 +389,8 @@ fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
     }
 }
 
+// --- Error code macro ---
+
 #[proc_macro_attribute]
 pub fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -288,7 +401,6 @@ pub fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
         _ => panic!("#[error_code] can only be used on enums"),
     };
 
-    // Compute discriminant values (mirrors repr(u32) auto-increment)
     let mut next_discriminant: u32 = 0;
     let match_arms: Vec<_> = variants.iter().map(|v| {
         let ident = &v.ident;
