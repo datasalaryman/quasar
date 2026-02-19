@@ -1,7 +1,7 @@
 use quasar_core::prelude::*;
 use quasar_spl::{TokenAccount, TokenProgram};
 
-use crate::state::EscrowAccount;
+use crate::{events::MakeEvent, state::EscrowAccount};
 
 #[derive(Accounts)]
 pub struct Make<'info> {
@@ -14,6 +14,8 @@ pub struct Make<'info> {
     pub rent: &'info Rent,
     pub token_program: &'info TokenProgram,
     pub system_program: &'info SystemProgram,
+    pub event_authority: &'info crate::EventAuthority,
+    pub program: &'info crate::QuasarEscrowProgram,
 }
 
 impl<'info> Make<'info> {
@@ -35,6 +37,18 @@ impl<'info> Make<'info> {
             Some(self.rent),
             &[quasar_core::cpi::Signer::from(&seeds)],
         )
+    }
+
+    #[inline(always)]
+    pub fn emit_event(&self, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+        emit_cpi!(MakeEvent {
+            escrow: *self.escrow.address(),
+            maker: *self.maker.address(),
+            mint_a: *self.maker_ta_a.mint(),
+            mint_b: *self.maker_ta_b.mint(),
+            deposit,
+            receive,
+        })
     }
 
     #[inline(always)]

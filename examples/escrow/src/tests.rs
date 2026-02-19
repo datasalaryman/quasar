@@ -1,5 +1,5 @@
 use alloc::vec;
-use mollusk_svm::{Mollusk, program::keyed_account_for_system_program};
+use mollusk_svm::{Mollusk, program::{create_program_account_loader_v3, create_program_account_pair_loader_v3, keyed_account_for_system_program}};
 
 use solana_address::Address;
 use solana_account::Account;
@@ -67,6 +67,9 @@ fn test_make() {
     let (maker_ta_b, maker_ta_b_account) = (Address::new_unique(), Account { lamports: 1_000_000, data: maker_ta_b_data, owner: token_program, executable: false, rent_epoch: 0 });
     let (vault_ta_a, vault_ta_a_account) = (Address::new_unique(), Account { lamports: 1_000_000, data: vault_ta_a_data, owner: token_program, executable: false, rent_epoch: 0 });
     let (rent, rent_account) = mollusk.sysvars.keyed_account_for_rent_sysvar();
+    
+    let (event_authority, event_authority_account) = (crate::EventAuthority::ADDRESS, Account::default());
+    let (program, program_account) = (crate::ID, create_program_account_loader_v3(&crate::ID.into()));
 
     let instruction: Instruction = MakeInstruction {
         maker,
@@ -77,6 +80,8 @@ fn test_make() {
         rent,
         token_program,
         system_program,
+        event_authority,
+        program,
         deposit: 1337,
         receive: 1337,
     }.into();
@@ -90,6 +95,8 @@ fn test_make() {
         (rent, rent_account),
         (token_program, token_program_account),
         (system_program, system_program_account),
+        (event_authority, event_authority_account),
+        (program, program_account),
     ];
 
     mollusk.process_and_validate_instruction(&instruction, accounts.as_ref(), &[]);

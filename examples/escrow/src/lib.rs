@@ -4,6 +4,7 @@ use quasar_core::prelude::*;
 mod instructions;
 use instructions::*;
 mod state;
+mod events;
 #[cfg(test)]
 mod tests;
 
@@ -24,13 +25,14 @@ mod quasar_escrow {
     pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
         ctx.accounts.transfer_tokens()?;
         ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
-        ctx.accounts.emit_event(&ctx.bumps)?;
+        ctx.accounts.emit_event()?;
         ctx.accounts.close_escrow()
     }
 
     #[instruction(discriminator = 2)]
     pub fn refund(ctx: Ctx<Refund>) -> Result<(), ProgramError> {
         ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
+        ctx.accounts.emit_event()?;
         ctx.accounts.close_escrow()
     }
 }

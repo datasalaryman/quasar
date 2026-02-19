@@ -1,8 +1,8 @@
 use quasar_core::prelude::*;
 use quasar_spl::{TokenAccount, TokenProgram};
 
-use crate::state::{EscrowAccount, EscrowTaken};
-use crate::QuasarEscrowProgram;
+use crate::events::TakeEvent;
+use crate::state::{EscrowAccount};
 
 #[derive(Accounts)]
 pub struct Take<'info> {
@@ -21,9 +21,8 @@ pub struct Take<'info> {
     pub maker_ta_b: &'info mut Account<TokenAccount>,
     pub vault_ta_a: &'info mut Account<TokenAccount>,
     pub token_program: &'info TokenProgram,
-    #[account(seeds = [b"__event_authority"], bump)]
-    pub event_authority: &'info UncheckedAccount,
-    pub program: &'info QuasarEscrowProgram,
+    pub event_authority: &'info crate::EventAuthority,
+    pub program: &'info crate::QuasarEscrowProgram,
 }
 
 impl<'info> Take<'info> {
@@ -56,18 +55,10 @@ impl<'info> Take<'info> {
     }
 
     #[inline(always)]
-    pub fn emit_event(&self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-        let event = EscrowTaken {
-            maker: *self.maker.address(),
-            taker: *self.taker.address(),
-            amount: self.escrow.receive.into(),
-        };
-
-        self.program.emit_event(
-            &event,
-            self.event_authority,
-            bumps.event_authority,
-        )
+    pub fn emit_event(&self) -> Result<(), ProgramError> {
+        emit_cpi!(TakeEvent {
+            escrow: *self.escrow.address(),
+        })
     }
 
     #[inline(always)]
