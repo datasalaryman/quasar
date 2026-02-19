@@ -1615,7 +1615,6 @@ dependencies = [
  "solana-instruction",
  "solana-program-pack",
  "spl-token-interface",
- "wincode",
 ]
 
 [[package]]

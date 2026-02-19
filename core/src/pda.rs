@@ -76,7 +76,7 @@ pub fn find_program_address(
         };
         match result {
             0 => (unsafe { bytes.assume_init() }, bump),
-            _ => panic!("Unable to find a viable program address bump seed"),
+            _ => unsafe { core::hint::unreachable_unchecked() },
         }
     }
 

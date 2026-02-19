@@ -42,9 +42,16 @@ impl<'a, const ACCTS: usize, const DATA: usize> CpiCall<'a, ACCTS, DATA> {
 
     #[inline(always)]
     fn invoke_inner(&self, signers: &[Signer]) -> ProgramResult {
-        let cpi_accounts: [CpiAccount; ACCTS] = core::array::from_fn(|i| {
-            CpiAccount::from(self.views[i])
-        });
+        let cpi_accounts = {
+            let mut arr = core::mem::MaybeUninit::<[CpiAccount; ACCTS]>::uninit();
+            let ptr = arr.as_mut_ptr() as *mut CpiAccount;
+            let mut i = 0;
+            while i < ACCTS {
+                unsafe { core::ptr::write(ptr.add(i), CpiAccount::from(self.views[i])) };
+                i += 1;
+            }
+            unsafe { arr.assume_init() }
+        };
 
         let instruction = InstructionView {
             program_id: self.program_id,

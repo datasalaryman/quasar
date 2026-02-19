@@ -14,4 +14,16 @@ impl Rent {
     pub fn get(&self) -> Result<solana_account_view::Ref<'_, crate::sysvars::rent::Rent>, ProgramError> {
         crate::sysvars::rent::Rent::from_account_view(self.to_account_view())
     }
+
+    /// Access rent data without borrow tracking or address verification.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure this Rent account was already validated via
+    /// `from_account_view` (which checks the address). Account data must
+    /// not be mutably borrowed.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self) -> &crate::sysvars::rent::Rent {
+        crate::sysvars::rent::Rent::from_bytes_unchecked(self.to_account_view().borrow_unchecked())
+    }
 }

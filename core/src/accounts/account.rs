@@ -2,6 +2,8 @@ use core::marker::PhantomData;
 use crate::sysvars::Sysvar;
 use crate::prelude::*;
 
+static ZERO_ADDRESS: Address = Address::new_from_array([0u8; 32]);
+
 #[repr(transparent)]
 pub struct Account<T: Owner> {
     view: AccountView,
@@ -69,7 +71,7 @@ impl<T: QuasarAccount + Owner> Account<T> {
         let view = self.to_account_view();
         destination.set_lamports(destination.lamports() + view.lamports());
         view.set_lamports(0);
-        unsafe { view.assign(&Address::new_from_array([0u8; 32])) };
+        unsafe { view.assign(&ZERO_ADDRESS) };
         view.resize(0)?;
         Ok(())
     }

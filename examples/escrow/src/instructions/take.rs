@@ -14,8 +14,8 @@ pub struct Take<'info> {
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &'info Account<EscrowAccount>,
-    pub maker: &'info UncheckedAccount,
+    pub escrow: &'info mut Account<EscrowAccount>,
+    pub maker: &'info mut UncheckedAccount,
     pub taker_ta_a: &'info mut Account<TokenAccount>,
     pub taker_ta_b: &'info mut Account<TokenAccount>,
     pub maker_ta_b: &'info mut Account<TokenAccount>,

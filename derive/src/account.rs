@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{quote, format_ident};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, Type,
+    parse_macro_input, Data, DeriveInput, Fields, Ident, Type,
 };
 
 use crate::helpers::InstructionArgs;
@@ -25,6 +25,43 @@ fn map_to_pod_type(ty: &Type) -> proc_macro2::TokenStream {
         }
     }
     quote! { #ty }
+}
+
+fn zc_serialize_field(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
+    if let Type::Path(type_path) = ty {
+        if let Some(seg) = type_path.path.segments.last() {
+            return match seg.ident.to_string().as_str() {
+                "u8" | "i8" => quote! { __zc.#field_name = self.#field_name; },
+                "bool" => quote! { __zc.#field_name = quasar_core::pod::PodBool::from(self.#field_name); },
+                "u16" => quote! { __zc.#field_name = quasar_core::pod::PodU16::from(self.#field_name); },
+                "u32" => quote! { __zc.#field_name = quasar_core::pod::PodU32::from(self.#field_name); },
+                "u64" => quote! { __zc.#field_name = quasar_core::pod::PodU64::from(self.#field_name); },
+                "u128" => quote! { __zc.#field_name = quasar_core::pod::PodU128::from(self.#field_name); },
+                "i16" => quote! { __zc.#field_name = quasar_core::pod::PodI16::from(self.#field_name); },
+                "i32" => quote! { __zc.#field_name = quasar_core::pod::PodI32::from(self.#field_name); },
+                "i64" => quote! { __zc.#field_name = quasar_core::pod::PodI64::from(self.#field_name); },
+                "i128" => quote! { __zc.#field_name = quasar_core::pod::PodI128::from(self.#field_name); },
+                _ => quote! { __zc.#field_name = self.#field_name; },
+            };
+        }
+    }
+    quote! { __zc.#field_name = self.#field_name; }
+}
+
+fn zc_deserialize_field(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
+    if let Type::Path(type_path) = ty {
+        if let Some(seg) = type_path.path.segments.last() {
+            return match seg.ident.to_string().as_str() {
+                "u8" | "i8" => quote! { #field_name: __zc.#field_name },
+                "bool" => quote! { #field_name: __zc.#field_name.get() },
+                "u16" | "u32" | "u64" | "u128" | "i16" | "i32" | "i64" | "i128" => {
+                    quote! { #field_name: __zc.#field_name.get() }
+                },
+                _ => quote! { #field_name: __zc.#field_name },
+            };
+        }
+    }
+    quote! { #field_name: __zc.#field_name }
 }
 
 pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -64,9 +101,16 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { #vis #fname: #zc_ty }
     }).collect();
 
+    let serialize_stmts: Vec<proc_macro2::TokenStream> = fields_data.iter().map(|f| {
+        zc_serialize_field(f.ident.as_ref().unwrap(), &f.ty)
+    }).collect();
+
+    let deserialize_fields: Vec<proc_macro2::TokenStream> = fields_data.iter().map(|f| {
+        zc_deserialize_field(f.ident.as_ref().unwrap(), &f.ty)
+    }).collect();
+
     quote! {
         #[repr(C)]
-        #[derive(::wincode::SchemaRead, ::wincode::SchemaWrite)]
         #input
 
         #[repr(C)]
@@ -116,12 +160,17 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl QuasarAccount for #name {
             #[inline(always)]
             fn deserialize(data: &[u8]) -> Result<Self, ProgramError> {
-                ::wincode::deserialize(data).map_err(|_| ProgramError::InvalidAccountData)
+                let __zc = unsafe { &*(data.as_ptr() as *const #zc_name) };
+                Ok(Self {
+                    #(#deserialize_fields,)*
+                })
             }
 
             #[inline(always)]
             fn serialize(&self, data: &mut [u8]) -> Result<(), ProgramError> {
-                ::wincode::serialize_into(data, self).map_err(|_| ProgramError::InvalidAccountData)
+                let __zc = unsafe { &mut *(data.as_mut_ptr() as *mut #zc_name) };
+                #(#serialize_stmts)*
+                Ok(())
             }
         }
 
@@ -144,10 +193,12 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
-                use quasar_core::sysvars::Sysvar;
                 let lamports = match rent {
-                    Some(rent_account) => rent_account.get()?.try_minimum_balance(Self::SPACE)?,
-                    None => quasar_core::sysvars::rent::Rent::get()?.try_minimum_balance(Self::SPACE)?,
+                    Some(rent_account) => unsafe { rent_account.get_unchecked() }.minimum_balance_unchecked(Self::SPACE),
+                    None => {
+                        use quasar_core::sysvars::Sysvar;
+                        quasar_core::sysvars::rent::Rent::get()?.minimum_balance_unchecked(Self::SPACE)
+                    }
                 };
 
                 if view.lamports() == 0 {
@@ -164,7 +215,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
                     unsafe { view.resize_unchecked(Self::SPACE) }?;
                 }
 
-                let mut data = view.try_borrow_mut()?;
+                let data = unsafe { view.borrow_unchecked_mut() };
                 data[..Self::DISCRIMINATOR.len()].copy_from_slice(Self::DISCRIMINATOR);
                 self.serialize(&mut data[Self::DISCRIMINATOR.len()..])?;
                 Ok(())

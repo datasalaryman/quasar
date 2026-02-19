@@ -11,7 +11,7 @@ pub struct Refund<'info> {
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &'info Account<EscrowAccount>,
+    pub escrow: &'info mut Account<EscrowAccount>,
     pub maker_ta_a: &'info mut Account<TokenAccount>,
     pub vault_ta_a: &'info mut Account<TokenAccount>,
     pub token_program: &'info TokenProgram,

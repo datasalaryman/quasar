@@ -14,7 +14,6 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [dependencies]
 quasar-core = { path = "../../core" }
 quasar-spl = { path = "../../spl" }
-wincode = { version = "0.4.4", features = ["derive"] }
 solana-address = { version = "2.2.0" }
 solana-instruction = { version = "3.1.0" }
 
