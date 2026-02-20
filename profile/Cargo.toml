@@ -1,0 +1,16 @@
+[package]
+name = "quasar-profile"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "quasar-profile"
+path = "src/main.rs"
+
+[dependencies]
+goblin = "0.9"
+addr2line = "0.24"
+object = { version = "0.36", default-features = false, features = ["read", "elf"] }
+memmap2 = "0.9"
+inferno = "0.12"
+rustc-demangle = "0.1"
