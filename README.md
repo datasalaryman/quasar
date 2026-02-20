@@ -11,14 +11,25 @@ Quasar is a `no_std` Solana program framework that brings everything the ecosyst
 
 It provides `#[account]`, `#[derive(Accounts)]`, `#[instruction]`, `#[program]`, `#[event]` — but the generated code is zero-copy and zero-allocation, operating directly on the SVM input buffer with no deserialization step.
 
-The framework is a workspace of four crates:
+The framework is a workspace of six crates:
 
 | Crate | Path | Purpose |
 |-------|------|---------|
-| `quasar-core` | `core/` | Account types, CPI builder, Pod types, events, sysvars, error handling |
+| `quasar` | `quasar/` | Facade crate — the single dependency for programs |
+| `quasar-core` | `core/` | Account types, CPI builder, events, sysvars, error handling |
 | `quasar-derive` | `derive/` | Proc macros for accounts, instructions, programs, events, errors |
+| `quasar-pod` | `pod/` | Alignment-1 integer types — usable independently of the framework |
 | `quasar-spl` | `spl/` | SPL Token program CPI and zero-copy `TokenAccountState` |
 | `quasar-idl` | `idl/` | IDL generator with discriminator collision detection |
+
+Add to your program's `Cargo.toml`:
+
+```toml
+[dependencies]
+quasar = "0.1"
+```
+
+This re-exports `quasar-core` and `quasar-spl` (via the `spl` feature, on by default).
 
 ## Writing a Program
 
@@ -146,15 +157,74 @@ Two emission paths:
 
 Event serialization is `memcpy` from the `#[repr(C)]` struct. A compile-time assertion guarantees no padding exists — if a field introduces padding, the build fails.
 
+## What Gets Generated
+
+Understanding what macros produce is critical for trusting a framework. Here's what `#[account(discriminator = 1)]` generates for `EscrowAccount`:
+
+**Zero-copy companion struct** — `u64` → `PodU64`, `u8` → stays `u8`. Alignment 1 enforced at compile time:
+```rust
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct EscrowAccountZc {
+    pub maker: Address,
+    pub mint_a: Address,
+    pub mint_b: Address,
+    pub maker_ta_b: Address,
+    pub receive: PodU64,
+    pub bump: u8,
+}
+
+const _: () = assert!(align_of::<EscrowAccountZc>() == 1);
+```
+
+**Discriminator validation** — byte-level check, no slice comparison:
+```rust
+impl AccountCheck for EscrowAccount {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
+        let data = unsafe { view.borrow_unchecked() };
+        if data.len() < 1 + size_of::<EscrowAccountZc>() {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        if unsafe { *data.get_unchecked(0) } != 1 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(())
+    }
+}
+```
+
+**Zero-copy `Deref`** — `Account<EscrowAccount>` dereferences to `&EscrowAccountZc`. No deserialization, no allocation. Fields are accessed through `PodU64::get()` which reads little-endian bytes:
+```rust
+impl ZeroCopyDeref for EscrowAccount {
+    type Target = EscrowAccountZc;
+    const DATA_OFFSET: usize = 1; // discriminator length
+}
+```
+
+**Re-initialization protection** — `init()` checks the discriminator region is all-zero before writing. All-zero discriminators are banned at compile time, so uninitialized data can never match a valid account:
+```rust
+pub fn init(self, account: &mut Initialize<Self>, payer: &AccountView, rent: Option<&Rent>)
+    -> Result<(), ProgramError>
+{
+    let existing = unsafe { view.borrow_unchecked() };
+    if existing.len() >= 1 {
+        if unsafe { *existing.get_unchecked(0) } != 0 {
+            return Err(QuasarError::AccountAlreadyInitialized.into());
+        }
+    }
+    // ... create_account CPI, write discriminator + data
+}
+```
+
 ## Compute Units
 
 Both programs implement the same escrow logic and run against the same test harness:
 
 | Instruction | Quasar | Pinocchio (hand-written) | Delta |
 |-------------|--------|--------------------------|-------|
-| Make        | 9,247  | 11,267                   | -2,020 |
-| Take        | 17,688 | 17,791                   | -103   |
-| Refund      | 11,868 | 11,975                   | -107   |
+| Make        | 9,409  | 9,853                    | -444   |
+| Take        | 17,800 | 17,862                   | -62    |
+| Refund      | 11,945 | 12,033                   | -88    |
 
 The codegen advantages come from decisions that are tedious to make by hand: byte-level discriminator checks instead of slice comparisons, eliding borrow tracking when the access pattern is statically known, and folding account header arithmetic at compile time.
 
@@ -200,12 +270,29 @@ The `examples/escrow/` directory contains the full reference implementation used
 
 Quasar uses `unsafe` for zero-copy access, raw CPI syscalls, and pointer casts. Every `unsafe` block has a `// SAFETY:` comment explaining the invariant.
 
-The safety model:
+### Miri Validation
+
+Every unsafe code path is tested under [Miri](https://github.com/rust-lang/miri) with Tree Borrows and symbolic alignment checking:
+
+```bash
+MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
+  cargo +nightly miri test -p quasar-core --test miri
+```
+
+The test suite covers 42 patterns including `& → &mut` casts, `copy_nonoverlapping` flag extraction, `MaybeUninit` array initialization, event memcpy, CPI data construction, and remaining accounts pointer arithmetic. All pass clean under Tree Borrows.
+
+### Safety Model
 
 - **Alignment** — ZC companion structs enforce `assert!(align_of::<T>() == 1)` at compile time. Wider-type access (Rent sysvar, instruction data reads) is technically misaligned in the Rust abstract machine but handled natively by the SBF VM — this is the standard approach across all Solana frameworks.
 - **Bounds** — account data length is validated once during `AccountCheck::check`. Field access via `Deref` relies on that upstream check — no redundant bounds checking per access.
 - **Initialization** — `init()` verifies the discriminator region is all-zero before writing. All-zero discriminators are banned at compile time, so uninitialized data never passes validation.
 - **Interior mutability** — `from_account_view_mut` casts `&AccountView` to `&mut Self` (`#[repr(transparent)]`). Mutations go through `AccountView`'s raw pointers to SVM memory — same pattern as Pinocchio.
+
+### Design Choices
+
+- **Explicit discriminators** — discriminators are developer-specified integers, not sha256 hashes. You can read the discriminator from the source code. All-zero discriminators are rejected at compile time.
+- **Zero heap allocation** — the `no_alloc!()` macro installs a global allocator that panics on any heap allocation. The entire dispatch → parse → CPI path is provably zero-allocation.
+- **Component crate dependencies** — Quasar depends on decomposed `solana-*` component crates (e.g. `solana-address`, `solana-account-view`) instead of the monolithic `solana-program`. This reduces compile times and dependency surface.
 
 ## License
 

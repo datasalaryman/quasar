@@ -2,26 +2,55 @@ use solana_account_view::AccountView;
 use solana_address::Address;
 use solana_program_error::ProgramError;
 
+/// Construct a typed account wrapper from a raw [`AccountView`].
+///
+/// Implemented by the `define_account!` macro and by `Account<T>` / `Initialize<T>`.
 pub trait FromAccountView<'info>: Sized {
     fn from_account_view(view: &'info AccountView) -> Result<Self, ProgramError>;
 }
 
+/// Declares the expected on-chain owner for an account type.
+///
+/// Implemented by: `#[account]` derive macro.
+/// Used by: `Account<T>` to validate owner during parsing.
 pub trait Owner {
     const OWNER: Address;
 }
 
+/// Declares the on-chain program ID for a program account type.
+///
+/// Implemented by: `#[program]` macro, manual `impl` for CPI targets (e.g. `TokenProgram`).
+/// Used by: `checks::Address` to validate the account address matches the program ID.
 pub trait Program {
     const ID: Address;
 }
 
+/// Declares the byte-level discriminator prefix for an account or instruction.
+///
+/// Discriminators are developer-specified (not sha256-derived). All-zero
+/// discriminators are rejected at compile time to prevent uninitialized
+/// account data from passing validation.
+///
+/// Implemented by: `#[account]` and `#[instruction]` derive macros.
 pub trait Discriminator {
     const DISCRIMINATOR: &'static [u8];
 }
 
+/// Declares the expected byte size of an account's data (excluding discriminator).
+///
+/// Implemented by: `#[account]` derive macro.
+/// Used by: `create_account` CPI to allocate the correct account size.
 pub trait Space {
     const SPACE: usize;
 }
 
+/// Runtime validation hook called during account parsing.
+///
+/// The default implementation is a no-op. Override to add custom checks
+/// (e.g. verifying a mint address or checking account state).
+///
+/// Implemented by: `define_account!` macro (for check trait composition),
+/// manual `impl` for custom validation.
 pub trait AccountCheck {
     #[inline(always)]
     fn check(_view: &AccountView) -> Result<(), ProgramError> {
@@ -29,15 +58,30 @@ pub trait AccountCheck {
     }
 }
 
+/// Declares the number of accounts consumed by a struct during parsing.
+///
+/// Implemented by: `#[derive(Accounts)]` macro.
+/// Used by: `dispatch!` macro to size the `MaybeUninit` account buffer.
 pub trait AccountCount {
     const COUNT: usize;
 }
 
+/// Parse and validate a set of accounts from a raw `AccountView` slice.
+///
+/// Implemented by: `#[derive(Accounts)]` macro.
+/// Called by: `Ctx::new()` during instruction dispatch.
+///
+/// Returns the parsed struct and a `Bumps` companion containing any PDA bump
+/// seeds discovered during validation.
 pub trait ParseAccounts<'info>: Sized {
     type Bumps: Copy;
     fn parse(accounts: &'info [AccountView]) -> Result<(Self, Self::Bumps), ProgramError>;
 }
 
+/// Convert a typed account wrapper to its underlying [`AccountView`].
+///
+/// All account types (`Account<T>`, `Signer`, `UncheckedAccount`, etc.)
+/// implement this trait to provide uniform access to the raw account data.
 pub trait AsAccountView {
     fn to_account_view(&self) -> &AccountView;
 
@@ -47,16 +91,36 @@ pub trait AsAccountView {
     }
 }
 
+/// Borsh-style serialization for non-zero-copy account types.
+///
+/// Implemented by: `#[account]` macro when the type is not `#[repr(C)]`.
+/// Used by: `Account<T>::get()` and `Account<T>::set()`.
 pub trait QuasarAccount: Sized + Discriminator + Space {
     fn deserialize(data: &[u8]) -> Result<Self, ProgramError>;
     fn serialize(&self, data: &mut [u8]) -> Result<(), ProgramError>;
 }
 
+/// Zero-copy deref target for `#[repr(C)]` account types.
+///
+/// When an account type implements `ZeroCopyDeref`, `Account<T>` provides
+/// `Deref`/`DerefMut` to `T::Target` — a `#[repr(C)]` companion struct
+/// with alignment-1 Pod fields. No deserialization occurs; the account
+/// data pointer is cast directly.
+///
+/// Implemented by: `#[account]` macro for `#[repr(C)]` types.
+/// `DATA_OFFSET` is typically the discriminator length.
 pub trait ZeroCopyDeref: Owner {
     type Target;
     const DATA_OFFSET: usize;
 }
 
+/// On-chain event with a discriminator, fixed-size data, and emission logic.
+///
+/// Events support dual emission:
+/// - `emit!()` via `sol_log_data` (~100 CU) — fast but spoofable
+/// - `emit_cpi!()` via self-CPI (~1,000 CU) — spoofing-resistant
+///
+/// Implemented by: `#[event]` derive macro.
 pub trait Event {
     const DISCRIMINATOR: &'static [u8];
     const DATA_SIZE: usize;

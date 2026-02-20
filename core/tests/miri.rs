@@ -49,7 +49,7 @@
 
 use std::mem::{align_of, size_of, MaybeUninit};
 
-use quasar_core::__private::{
+use quasar_core::__internal::{
     AccountView, RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED,
 };
 use quasar_core::accounts::{Account, Initialize, Signer as SignerAccount, UncheckedAccount};

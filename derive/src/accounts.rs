@@ -451,7 +451,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             parse_steps.push(quote! {
                 {
                     let mut __inner_buf = core::mem::MaybeUninit::<
-                        [quasar_core::__private::AccountView; <#inner_ty as AccountCount>::COUNT]
+                        [quasar_core::__internal::AccountView; <#inner_ty as AccountCount>::COUNT]
                     >::uninit();
                     input = <#inner_ty>::parse_accounts(input, &mut __inner_buf);
                     let __inner = unsafe { __inner_buf.assume_init() };
@@ -467,10 +467,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             let cur_offset = buf_offset.clone();
             parse_steps.push(quote! {
                 {
-                    let raw = input as *mut quasar_core::__private::RuntimeAccount;
-                    if unsafe { (*raw).borrow_state } == quasar_core::__private::NOT_BORROWED {
+                    let raw = input as *mut quasar_core::__internal::RuntimeAccount;
+                    if unsafe { (*raw).borrow_state } == quasar_core::__internal::NOT_BORROWED {
                         unsafe {
-                            core::ptr::write(base.add(#cur_offset), quasar_core::__private::AccountView::new_unchecked(raw));
+                            core::ptr::write(base.add(#cur_offset), quasar_core::__internal::AccountView::new_unchecked(raw));
                             input = input.add(__ACCOUNT_HEADER + (*raw).data_len as usize);
                             let addr = input as usize;
                             input = ((addr + 7) & !7) as *mut u8;
@@ -729,14 +729,14 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             #[inline(always)]
             pub unsafe fn parse_accounts(
                 mut input: *mut u8,
-                buf: &mut core::mem::MaybeUninit<[quasar_core::__private::AccountView; #count_expr]>,
+                buf: &mut core::mem::MaybeUninit<[quasar_core::__internal::AccountView; #count_expr]>,
             ) -> *mut u8 {
                 const __ACCOUNT_HEADER: usize =
-                    core::mem::size_of::<quasar_core::__private::RuntimeAccount>()
-                    + quasar_core::__private::MAX_PERMITTED_DATA_INCREASE
+                    core::mem::size_of::<quasar_core::__internal::RuntimeAccount>()
+                    + quasar_core::__internal::MAX_PERMITTED_DATA_INCREASE
                     + core::mem::size_of::<u64>();
 
-                let base = buf.as_mut_ptr() as *mut quasar_core::__private::AccountView;
+                let base = buf.as_mut_ptr() as *mut quasar_core::__internal::AccountView;
 
                 #(#parse_steps)*
 

@@ -170,7 +170,7 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 // for address comparison are technically misaligned (Address is align 1), but SBF
                 // handles unaligned access natively — this 4×u64 compare saves ~20 CU vs memcmp.
                 unsafe {
-                    let raw = ptr.add(core::mem::size_of::<u64>()) as *const quasar_core::__private::RuntimeAccount;
+                    let raw = ptr.add(core::mem::size_of::<u64>()) as *const quasar_core::__internal::RuntimeAccount;
 
                     if (*raw).is_signer == 0 {
                         return Err(ProgramError::MissingRequiredSignature);

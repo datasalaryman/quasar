@@ -1,0 +1,13 @@
+[package]
+name = "quasar-pod"
+description = "Alignment-1 Pod integer types for zero-copy Solana account access"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+] }

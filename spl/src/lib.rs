@@ -1,3 +1,30 @@
+//! SPL Token program integration for Quasar.
+//!
+//! Provides zero-copy account types and CPI methods for the SPL Token program.
+//!
+//! # Account types
+//!
+//! - [`TokenProgram`] — program account type for CPI calls
+//! - [`TokenAccount`] — token account with zero-copy [`Deref`](core::ops::Deref)
+//!   to [`TokenAccountState`]
+//! - [`TokenAccountState`] — `#[repr(C)]` layout of SPL token account data
+//!
+//! # CPI methods
+//!
+//! All methods return a [`CpiCall`] that can be invoked with `.invoke()` or
+//! `.invoke_signed()`:
+//!
+//! ```ignore
+//! ctx.accounts.token_program
+//!     .transfer(&from, &to, &authority, amount)
+//!     .invoke()?;
+//! ```
+//!
+//! # Known limitations
+//!
+//! - Token-2022 is not yet supported. `TokenAccount` validates the SPL Token
+//!   program as owner; Token-2022 accounts will fail the owner check.
+
 #![no_std]
 
 mod token;
@@ -8,11 +35,13 @@ use quasar_core::prelude::*;
 
 pub use token::TokenAccountState;
 
+/// SPL Token program address.
 pub const SPL_TOKEN_ID: Address = Address::new_from_array([
     6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
     95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
 ]);
 
+/// Token-2022 program address (reserved for future use).
 pub const TOKEN_2022_ID: Address = Address::new_from_array([
     6, 221, 246, 225, 238, 130, 236, 193, 200, 168, 65, 2, 106, 93, 64, 59, 117, 155, 197, 130,
     200, 159, 250, 31, 239, 205, 35, 168, 238, 94, 220, 87,
@@ -25,12 +54,13 @@ impl Program for TokenProgram {
     const ID: Address = SPL_TOKEN_ID;
 }
 
+/// SPL Token account type with zero-copy access to [`TokenAccountState`].
 pub struct TokenAccount;
 
 impl AccountCheck for TokenAccount {}
 
 impl Owner for TokenAccount {
-    /// TODO: Only validates SPL Token owner. Token-2022 accounts will fail owner check.
+    // TODO: Only validates SPL Token owner. Token-2022 accounts will fail owner check.
     const OWNER: Address = SPL_TOKEN_ID;
 }
 
@@ -42,6 +72,7 @@ impl ZeroCopyDeref for TokenAccount {
 // --- CPI Methods ---
 
 impl TokenProgram {
+    /// Transfer tokens between accounts.
     #[inline(always)]
     pub fn transfer<'a>(
         &'a self,
@@ -71,6 +102,7 @@ impl TokenProgram {
         )
     }
 
+    /// Transfer tokens with decimal verification.
     #[inline(always)]
     pub fn transfer_checked<'a>(
         &'a self,
@@ -105,6 +137,7 @@ impl TokenProgram {
         )
     }
 
+    /// Mint tokens to an account.
     #[inline(always)]
     pub fn mint_to<'a>(
         &'a self,
@@ -134,6 +167,7 @@ impl TokenProgram {
         )
     }
 
+    /// Burn tokens from an account.
     #[inline(always)]
     pub fn burn<'a>(
         &'a self,
@@ -163,6 +197,7 @@ impl TokenProgram {
         )
     }
 
+    /// Approve a delegate to transfer tokens.
     #[inline(always)]
     pub fn approve<'a>(
         &'a self,
@@ -192,6 +227,7 @@ impl TokenProgram {
         )
     }
 
+    /// Close a token account and reclaim its lamports.
     #[inline(always)]
     pub fn close_account<'a>(
         &'a self,
@@ -215,6 +251,7 @@ impl TokenProgram {
         )
     }
 
+    /// Revoke a delegate's authority.
     #[inline(always)]
     pub fn revoke<'a>(
         &'a self,
@@ -235,6 +272,7 @@ impl TokenProgram {
         )
     }
 
+    /// Sync the lamport balance of a native SOL token account.
     #[inline(always)]
     pub fn sync_native<'a>(&'a self, token_account: &'a impl AsAccountView) -> CpiCall<'a, 1, 1> {
         let token_account = token_account.to_account_view();

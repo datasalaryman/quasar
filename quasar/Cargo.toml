@@ -1,0 +1,25 @@
+[package]
+name = "quasar"
+description = "Zero-copy Solana program framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+] }
+
+[dependencies]
+quasar-core = { path = "../core" }
+
+[dependencies.quasar-spl]
+path = "../spl"
+version = "0.1.0"
+optional = true
+
+[features]
+default = ["spl"]
+spl = ["dep:quasar-spl"]

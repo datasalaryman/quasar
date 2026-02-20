@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "derive", "spl", "idl", "profile", "examples/*"]
+members = ["quasar", "core", "derive", "pod", "spl", "idl", "profile", "examples/*"]
 
 [workspace.package]
 version = "0.1.0"
