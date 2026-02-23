@@ -43,6 +43,14 @@ impl<const N: usize> WriteBytes for [u8; N] {
     }
 }
 
+impl WriteBytes for Vec<u8> {
+    #[inline(always)]
+    fn write_bytes(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&(self.len() as u16).to_le_bytes());
+        buf.extend_from_slice(self);
+    }
+}
+
 #[inline(always)]
 pub fn build_instruction_data(disc: &[u8], write_args: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut data = Vec::from(disc);

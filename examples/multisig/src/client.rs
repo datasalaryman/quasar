@@ -54,24 +54,23 @@ impl From<DepositInstruction> for Instruction {
     }
 }
 
-pub struct SetLabelInstruction {
+pub struct SetLabelInstruction<'a> {
     pub creator: Address,
     pub config: Address,
     pub system_program: Address,
-    pub label_len: u8,
-    pub label_bytes: [u8],
+    pub label: &'a [u8],
 }
 
-impl From<SetLabelInstruction> for Instruction {
-    fn from(ix: SetLabelInstruction) -> Instruction {
+impl<'a> From<SetLabelInstruction<'a>> for Instruction {
+    fn from(ix: SetLabelInstruction<'a>) -> Instruction {
         let accounts = vec![
             AccountMeta::new(ix.creator, true),
             AccountMeta::new(ix.config, false),
             AccountMeta::new_readonly(ix.system_program, false),
         ];
         let mut data = vec![2];
-        data.push(ix.label_len as u8);
-        data.extend_from_slice(&ix.label_bytes.to_le_bytes());
+        data.extend_from_slice(&(ix.label.len() as u16).to_le_bytes());
+        data.extend_from_slice(ix.label);
         Instruction {
             program_id: crate::ID,
             accounts,

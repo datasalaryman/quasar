@@ -17,10 +17,7 @@ pub struct SetLabel<'info> {
 
 impl<'info> SetLabel<'info> {
     #[inline(always)]
-    pub fn update_label(&mut self, label_len: u8, label_bytes: &[u8; 32]) -> Result<(), ProgramError> {
-        let label = core::str::from_utf8(&label_bytes[..label_len as usize])
-            .map_err(|_| ProgramError::InvalidArgument)?;
-
+    pub fn update_label(&mut self, label: &str) -> Result<(), ProgramError> {
         self.config.set_label(self.creator, label)
     }
 }

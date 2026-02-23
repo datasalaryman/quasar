@@ -3,7 +3,7 @@ pub use crate::accounts::*;
 pub use crate::checks;
 
 // Context & parsing
-pub use crate::context::{Context, Ctx};
+pub use crate::context::{Context, Ctx, CtxWithRemaining};
 pub use crate::traits::{
     AccountCheck, AccountCount, AsAccountView, Discriminator, Event, Owner, ParseAccounts, Program,
     QuasarAccount, Space, ZeroCopyDeref,

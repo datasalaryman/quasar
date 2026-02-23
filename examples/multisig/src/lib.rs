@@ -19,7 +19,7 @@ mod quasar_multisig {
     use super::*;
 
     #[instruction(discriminator = 0)]
-    pub fn create(ctx: Ctx<Create>, threshold: u8) -> Result<(), ProgramError> {
+    pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
         ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
     }
 
@@ -29,12 +29,12 @@ mod quasar_multisig {
     }
 
     #[instruction(discriminator = 2)]
-    pub fn set_label(ctx: Ctx<SetLabel>, label_len: u8, label_bytes: [u8; 32]) -> Result<(), ProgramError> {
-        ctx.accounts.update_label(label_len, &label_bytes)
+    pub fn set_label(ctx: Ctx<SetLabel>, label: String<32>) -> Result<(), ProgramError> {
+        ctx.accounts.update_label(label)
     }
 
     #[instruction(discriminator = 3)]
-    pub fn execute_transfer(ctx: Ctx<ExecuteTransfer>, amount: u64) -> Result<(), ProgramError> {
+    pub fn execute_transfer(ctx: CtxWithRemaining<ExecuteTransfer>, amount: u64) -> Result<(), ProgramError> {
         ctx.accounts.verify_and_transfer(amount, &ctx.bumps, ctx.remaining_accounts())
     }
 }

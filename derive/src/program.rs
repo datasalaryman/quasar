@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, FnArg, Ident, Item, ItemMod, Pat, Type};
 
-use crate::helpers::{pascal_to_snake, snake_to_pascal, InstructionArgs};
+use crate::helpers::{is_ix_dynamic_string, pascal_to_snake, snake_to_pascal, InstructionArgs};
 
 /// Extracts the inner type `T` from a `Ctx<T>` first parameter.
 fn extract_ctx_inner_type(sig: &syn::Signature) -> proc_macro2::TokenStream {
@@ -119,7 +119,12 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                     Pat::Ident(pi) => pi.ident.clone(),
                                     _ => return None,
                                 };
-                                Some((name, (*pt.ty).clone()))
+                                let ty = if is_ix_dynamic_string(&pt.ty).is_some() {
+                                    syn::parse_quote!(alloc::vec::Vec<u8>)
+                                } else {
+                                    (*pt.ty).clone()
+                                };
+                                Some((name, ty))
                             }
                             _ => None,
                         })

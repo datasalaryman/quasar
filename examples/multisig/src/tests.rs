@@ -221,15 +221,12 @@ fn test_set_label() {
     };
 
     let label = "Treasury";
-    let mut label_bytes = [0u8; 32];
-    label_bytes[..label.len()].copy_from_slice(label.as_bytes());
 
     let instruction: Instruction = SetLabelInstruction {
         creator,
         config,
         system_program,
-        label_len: label.len() as u8,
-        label_bytes,
+        label: label.as_bytes().to_vec(),
     }
     .into();
 

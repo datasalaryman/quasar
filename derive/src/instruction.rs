@@ -82,7 +82,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             context.data = &context.data[#disc_len..];
         ),
         syn::parse_quote!(
-            let mut #param_name: #param_type = Ctx::new(context)?;
+            let mut #param_name: #param_type = <#param_type>::new(context)?;
         ),
     ];
 
@@ -215,9 +215,11 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         ));
                         new_stmts.push(syn::parse_quote!(
-                            let #name: &str = core::str::from_utf8(
-                                &__tail[__offset..__offset + __dyn_len]
-                            ).map_err(|_| ProgramError::InvalidInstructionData)?;
+                            let #name: &str = unsafe {
+                                core::str::from_utf8_unchecked(
+                                    &__tail[__offset..__offset + __dyn_len]
+                                )
+                            };
                         ));
                         if dyn_idx < dyn_count {
                             new_stmts.push(syn::parse_quote!(
@@ -267,6 +269,11 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let _ = __offset;
             ));
         }
+
+        // Clear ctx.data after extraction — prevents accidental access to raw bytes
+        new_stmts.push(syn::parse_quote!(
+            #param_ident.data = &[];
+        ));
     }
 
     if has_return_data {
