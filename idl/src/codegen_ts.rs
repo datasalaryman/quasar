@@ -44,11 +44,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
     }
 
     if used.contains("publicKey") {
-        codec_imports.extend_from_slice(&[
-            "getBytesCodec",
-            "fixCodecSize",
-            "transformCodec",
-        ]);
+        codec_imports.extend_from_slice(&["getBytesCodec", "fixCodecSize", "transformCodec"]);
     }
 
     if has_dyn_string {
@@ -61,11 +57,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
     }
 
     if has_dyn_vec {
-        codec_imports.extend_from_slice(&[
-            "fixCodecSize",
-            "getArrayCodec",
-            "getU16Codec",
-        ]);
+        codec_imports.extend_from_slice(&["fixCodecSize", "getArrayCodec", "getU16Codec"]);
     }
 
     codec_imports.sort();
@@ -582,20 +574,20 @@ const PUBLIC_KEY_CODEC_HELPER: &str = r#"function getPublicKeyCodec() {
 "#;
 
 const DYN_STRING_HELPER: &str = r#"function getDynStringCodec(maxLength: number) {
-    return fixCodecSize(
-        addCodecSizePrefix(getUtf8Codec(), getU16Codec()),
-        2 + maxLength,
-    );
+  return fixCodecSize(
+    addCodecSizePrefix(getUtf8Codec(), getU16Codec()),
+      2 + maxLength,
+  );
 }
 "#;
 
 const DYN_VEC_HELPER: &str = r#"function getDynVecCodec<TFrom, TTo extends TFrom = TFrom>(
-    itemCodec: FixedSizeCodec<TFrom, TTo>,
-    maxLength: number,
+  itemCodec: FixedSizeCodec<TFrom, TTo>,
+  maxLength: number,
 ) {
-    return fixCodecSize(
-        getArrayCodec(itemCodec, { size: getU16Codec() }),
-        2 + maxLength * itemCodec.fixedSize,
-    );
+  return fixCodecSize(
+    getArrayCodec(itemCodec, { size: getU16Codec() }),
+    2 + maxLength * itemCodec.fixedSize,
+  );
 }
 "#;
