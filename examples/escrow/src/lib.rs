@@ -21,6 +21,7 @@ mod quasar_escrow {
 
     #[instruction(discriminator = 0)]
     pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+        ctx.accounts.init_accounts()?;
         ctx.accounts.make_escrow(receive, &ctx.bumps)?;
         ctx.accounts.emit_event(deposit, receive)?;
         ctx.accounts.deposit_tokens(deposit)
@@ -28,6 +29,7 @@ mod quasar_escrow {
 
     #[instruction(discriminator = 1)]
     pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
+        ctx.accounts.init_accounts()?;
         ctx.accounts.transfer_tokens()?;
         ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
         ctx.accounts.emit_event()?;
@@ -36,8 +38,10 @@ mod quasar_escrow {
 
     #[instruction(discriminator = 2)]
     pub fn refund(ctx: Ctx<Refund>) -> Result<(), ProgramError> {
+        ctx.accounts.init_accounts()?;
         ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
         ctx.accounts.emit_event()?;
         ctx.accounts.close_escrow()
     }
+
 }

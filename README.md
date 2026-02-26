@@ -66,7 +66,7 @@ No validation. Used for accounts where you handle validation yourself — PDAs o
 pub maker: &'info mut UncheckedAccount,
 ```
 
-### `SystemProgram` / `TokenProgram`
+### `SystemProgram` / `TokenProgram` / `TokenInterface`
 
 Program account wrappers that validate the account address matches the expected program ID. Provide typed CPI methods.
 
@@ -74,6 +74,140 @@ Program account wrappers that validate the account address matches the expected 
 pub system_program: &'info SystemProgram,
 pub token_program: &'info TokenProgram,
 ```
+
+`TokenInterface` accepts either SPL Token or Token-2022:
+
+```rust
+pub token_program: &'info TokenInterface,
+```
+
+Both `TokenProgram` and `TokenInterface` expose the same CPI methods (`transfer`, `close_account`, `initialize_account3`, etc.).
+
+### Interface Accounts
+
+When an account can be owned by multiple programs, use interface types instead of single-owner types. Quasar provides built-in interface types for SPL Token:
+
+| Type | Accepts | Deref target |
+|------|---------|-------------|
+| `Account<TokenAccount>` | SPL Token only | `TokenAccountState` |
+| `Account<InterfaceTokenAccount>` | SPL Token **or** Token-2022 | `TokenAccountState` |
+| `Account<MintAccount>` | SPL Token only | `MintAccountState` |
+| `Account<InterfaceMintAccount>` | SPL Token **or** Token-2022 | `MintAccountState` |
+
+```rust
+// Single-owner — only accepts SPL Token accounts
+pub vault: &'info Account<TokenAccount>,
+
+// Interface — accepts either SPL Token or Token-2022
+pub vault: &'info Account<InterfaceTokenAccount>,
+```
+
+Both types deref to the same `TokenAccountState` — field access is identical:
+
+```rust
+let mint = ctx.accounts.vault.mint();
+let amount = ctx.accounts.vault.amount();
+```
+
+#### Building Custom Interface Types
+
+Interface accounts use two traits instead of `Owner`:
+
+- **`CheckOwner`** — validates the account is owned by one of the accepted programs
+- **`ZeroCopyDeref`** — pointer-casts account data to a `#[repr(C)]` struct
+
+For single-owner types, `CheckOwner` is implemented automatically via a blanket impl on `Owner`. Interface types implement `CheckOwner` directly:
+
+```rust
+pub struct InterfaceTokenAccount;
+
+impl CheckOwner for InterfaceTokenAccount {
+    fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
+        if !view.owned_by(&SPL_TOKEN_ID) && !view.owned_by(&TOKEN_2022_ID) {
+            return Err(ProgramError::IllegalOwner);
+        }
+        Ok(())
+    }
+}
+
+impl AccountCheck for InterfaceTokenAccount {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
+        if view.data_len() < TokenAccountState::LEN {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        Ok(())
+    }
+}
+
+impl ZeroCopyDeref for InterfaceTokenAccount {
+    type Target = TokenAccountState;
+
+    fn deref_from(view: &AccountView) -> &Self::Target {
+        unsafe { &*(view.data_ptr() as *const TokenAccountState) }
+    }
+
+    fn deref_from_mut(view: &AccountView) -> &mut Self::Target {
+        unsafe { &mut *(view.data_ptr() as *mut TokenAccountState) }
+    }
+}
+```
+
+This pattern works for any multi-owner account. For example, a custom oracle interface that accepts accounts from Pyth or Switchboard:
+
+```rust
+pub struct OracleInterface;
+
+impl CheckOwner for OracleInterface {
+    fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
+        if !view.owned_by(&PYTH_PROGRAM_ID) && !view.owned_by(&SWITCHBOARD_PROGRAM_ID) {
+            return Err(ProgramError::IllegalOwner);
+        }
+        Ok(())
+    }
+}
+```
+
+#### Polymorphic Dispatch with `resolve()`
+
+When interface accounts have different layouts or behaviors depending on which program owns them, implement `InterfaceResolve` to dispatch at runtime:
+
+```rust
+pub enum OraclePrice<'a> {
+    Pyth(&'a PythPriceState),
+    Switchboard(&'a SwitchboardState),
+}
+
+impl InterfaceResolve for OracleInterface {
+    type Resolved<'a> = OraclePrice<'a>;
+
+    fn resolve<'a>(view: &'a AccountView) -> Result<OraclePrice<'a>, ProgramError> {
+        if view.owned_by(&PYTH_PROGRAM_ID) {
+            Ok(OraclePrice::Pyth(unsafe {
+                &*(view.data_ptr() as *const PythPriceState)
+            }))
+        } else {
+            Ok(OraclePrice::Switchboard(unsafe {
+                &*(view.data_ptr() as *const SwitchboardState)
+            }))
+        }
+    }
+}
+```
+
+Then in your instruction:
+
+```rust
+pub oracle: &'info Account<OracleInterface>,
+```
+
+```rust
+match ctx.accounts.oracle.resolve()? {
+    OraclePrice::Pyth(price) => { /* read Pyth fields */ }
+    OraclePrice::Switchboard(price) => { /* read Switchboard fields */ }
+}
+```
+
+The owner check runs once during account parsing. `resolve()` is a second pointer cast — no re-validation, no allocation.
 
 ### `Sysvar<T>`
 
@@ -524,24 +658,25 @@ require_eq!(authority, expected, MyError::InvalidAuthority);
 
 ## Compute Units
 
-Both programs implement the same escrow logic and run against the same test harness:
+Both programs implement the same vault logic (SOL deposit via system program CPI, withdrawal via direct lamport manipulation) and run against the same test harness with the same program ID:
 
 | Instruction | Quasar | Pinocchio (hand-written) | Delta |
 |-------------|--------|--------------------------|-------|
-| Make        | 9,395  | 9,853                    | -458   |
-| Take        | 17,789 | 17,862                   | -73    |
-| Refund      | 11,930 | 12,033                   | -103   |
+| Deposit     | 2,819  | 2,833                    | -14   |
+| Withdraw    | 1,618  | 1,635                    | -17   |
 
-The codegen advantages come from decisions that are tedious to make by hand: byte-level discriminator checks instead of slice comparisons, eliding borrow tracking when the access pattern is statically known, and folding account header arithmetic at compile time.
+The codegen advantages come from decisions that are tedious to make by hand: skipping CPI borrow checking when the access pattern is statically known, byte-level discriminator checks instead of slice comparisons, and folding account header arithmetic at compile time.
 
 ## Building
 
 ```bash
-# Build SBF binary
-cargo build-sbf --manifest-path examples/escrow/Cargo.toml
+# Build SBF binaries
+cargo build-sbf --manifest-path examples/vault/Cargo.toml
+cargo build-sbf --manifest-path examples/pinocchio-vault/Cargo.toml
 
 # Run tests (prints CU consumption)
-cargo test -p quasar-escrow -- --nocapture
+cargo test -p quasar-vault -- --nocapture
+cargo test -p pinocchio-vault -- --nocapture
 
 # Check workspace
 cargo check --workspace
@@ -558,7 +693,7 @@ MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
   cargo +nightly miri test -p quasar-core --test miri
 ```
 
-The `examples/escrow/` directory contains the full reference implementation used for CU benchmarking. `examples/pinocchio-escrow/` contains the hand-written Pinocchio equivalent for comparison.
+The `examples/vault/` directory contains the Quasar vault used for CU benchmarking. `examples/pinocchio-vault/` contains the hand-written Pinocchio equivalent for apples-to-apples framework overhead comparison. `examples/escrow/` contains the full escrow reference implementation.
 
 ## Safety
 

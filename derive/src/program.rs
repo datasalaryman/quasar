@@ -2,32 +2,32 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, FnArg, Ident, Item, ItemMod, Pat, Type};
 
-use crate::helpers::{is_ix_dynamic_string, pascal_to_snake, snake_to_pascal, InstructionArgs};
+use crate::helpers::{
+    extract_generic_inner_type, is_dynamic_string, pascal_to_snake, snake_to_pascal,
+    parse_discriminator_bytes, InstructionArgs,
+};
 
-/// Extracts the inner type `T` from a `Ctx<T>` first parameter.
-fn extract_ctx_inner_type(sig: &syn::Signature) -> proc_macro2::TokenStream {
+/// Extracts the inner type `T` from a `Ctx<T>` or `CtxWithRemaining<T>` first parameter.
+fn extract_ctx_inner_type(sig: &syn::Signature) -> syn::Result<proc_macro2::TokenStream> {
     let first_arg = match sig.inputs.first() {
         Some(FnArg::Typed(pt)) => pt,
-        _ => panic!("#[program]: instruction function must have ctx: Ctx<T> as first parameter"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &sig.ident,
+                "#[program]: instruction function must have ctx: Ctx<T> as first parameter",
+            ));
+        }
     };
 
-    match &*first_arg.ty {
-        Type::Path(type_path) => {
-            let last_seg = type_path
-                .path
-                .segments
-                .last()
-                .expect("Ctx type must have segments");
-            match &last_seg.arguments {
-                syn::PathArguments::AngleBracketed(args) => match args.args.first() {
-                    Some(syn::GenericArgument::Type(ty)) => quote!(#ty),
-                    _ => panic!("Ctx must have a type argument"),
-                },
-                _ => panic!("Ctx must have angle-bracketed arguments"),
-            }
-        }
-        _ => panic!("First parameter must be Ctx<T>"),
-    }
+    extract_generic_inner_type(&first_arg.ty, "Ctx")
+        .or_else(|| extract_generic_inner_type(&first_arg.ty, "CtxWithRemaining"))
+        .map(|ty| Ok(quote!(#ty)))
+        .unwrap_or_else(|| {
+            Err(syn::Error::new_spanned(
+                &first_arg.ty,
+                "first parameter must be Ctx<T> or CtxWithRemaining<T>",
+            ))
+        })
 }
 
 pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -55,7 +55,10 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         .expect("failed to parse #[instruction] attribute");
                     let disc_bytes = &args.discriminator;
                     let fn_name = &func.sig.ident;
-                    let accounts_type = extract_ctx_inner_type(&func.sig);
+                    let accounts_type = match extract_ctx_inner_type(&func.sig) {
+                        Ok(ty) => ty,
+                        Err(e) => return e.to_compile_error().into(),
+                    };
 
                     // Validate same length across all instructions
                     match disc_len {
@@ -74,13 +77,7 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
 
                     // Check for duplicates
-                    let disc_values: Vec<u8> = disc_bytes
-                        .iter()
-                        .map(|lit| {
-                            lit.base10_parse::<u8>()
-                                .expect("discriminator byte must be 0-255")
-                        })
-                        .collect();
+                    let disc_values = parse_discriminator_bytes(disc_bytes);
                     if let Some((_, prev_fn)) =
                         seen_discriminators.iter().find(|(v, _)| *v == disc_values)
                     {
@@ -119,7 +116,7 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                     Pat::Ident(pi) => pi.ident.clone(),
                                     _ => return None,
                                 };
-                                let ty = if is_ix_dynamic_string(&pt.ty).is_some() {
+                                let ty = if is_dynamic_string(&pt.ty, false).is_some() {
                                     syn::parse_quote!(alloc::vec::Vec<u8>)
                                 } else {
                                     (*pt.ty).clone()

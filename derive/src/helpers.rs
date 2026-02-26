@@ -4,6 +4,14 @@ use syn::{
     Expr, ExprLit, GenericArgument, Ident, Lit, LitInt, PathArguments, Token, Type,
 };
 
+// --- Dynamic field classification (shared by account, instruction) ---
+
+pub(crate) enum DynKind {
+    Fixed,
+    Str { max: usize },
+    Vec { elem: Box<Type>, max: usize },
+}
+
 // --- Discriminator argument parsing (shared by instruction, account, event, program) ---
 
 pub(crate) struct InstructionArgs {
@@ -38,6 +46,33 @@ impl Parse for InstructionArgs {
     }
 }
 
+// --- Discriminator validation ---
+
+/// Parse discriminator `LitInt`s into byte values.
+pub(crate) fn parse_discriminator_bytes(disc_bytes: &[LitInt]) -> Vec<u8> {
+    disc_bytes
+        .iter()
+        .map(|lit| {
+            lit.base10_parse::<u8>()
+                .expect("discriminator byte must be 0-255")
+        })
+        .collect()
+}
+
+/// Parse discriminator bytes and validate that at least one is non-zero.
+/// Rejects all-zero discriminators which are indistinguishable from
+/// uninitialized account data. Used for `#[account]` only (not instructions).
+pub(crate) fn validate_discriminator_not_zero(disc_bytes: &[LitInt]) -> syn::Result<Vec<u8>> {
+    let values = parse_discriminator_bytes(disc_bytes);
+    if values.iter().all(|&b| b == 0) {
+        return Err(syn::Error::new_spanned(
+            &disc_bytes[0],
+            "discriminator must contain at least one non-zero byte; all-zero discriminators are indistinguishable from uninitialized account data",
+        ));
+    }
+    Ok(values)
+}
+
 // --- Type helpers ---
 
 /// Expand a seed expression into a byte slice for use inside parse (fields are local variables).
@@ -70,6 +105,48 @@ pub(crate) fn is_signer_type(ty: &Type) -> bool {
     false
 }
 
+/// Extract the first generic type argument from a named wrapper type.
+/// E.g. `extract_generic_inner_type(ty, "Option")` returns `Some(&T)` for `Option<T>`.
+pub(crate) fn extract_generic_inner_type<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
+    if let Type::Path(type_path) = ty {
+        if let Some(last) = type_path.path.segments.last() {
+            if last.ident == wrapper {
+                if let PathArguments::AngleBracketed(args) = &last.arguments {
+                    if let Some(GenericArgument::Type(inner)) = args.args.first() {
+                        return Some(inner);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check if a type is a composite (non-reference, non-Option type with a lifetime parameter).
+pub(crate) fn is_composite_type(ty: &Type) -> bool {
+    if matches!(ty, Type::Reference(_)) {
+        return false;
+    }
+    if extract_generic_inner_type(ty, "Option").is_some() {
+        return false;
+    }
+    if let Type::Path(type_path) = ty {
+        if let Some(last) = type_path.path.segments.last() {
+            if let PathArguments::AngleBracketed(args) = &last.arguments {
+                return args
+                    .args
+                    .iter()
+                    .any(|arg| matches!(arg, GenericArgument::Lifetime(_)));
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(t) if t.elems.is_empty())
+}
+
 pub(crate) fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
     match ty {
         Type::Path(type_path) => {
@@ -81,7 +158,8 @@ pub(crate) fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
                 .collect();
             quote! { #(#segments)::* }
         }
-        _ => panic!("Unsupported field type"),
+        _ => syn::Error::new_spanned(ty, "unsupported field type: expected a path type")
+            .to_compile_error(),
     }
 }
 
@@ -110,14 +188,18 @@ pub(crate) fn snake_to_pascal(s: &str) -> String {
 
 // --- Dynamic field detection ---
 
-/// Detects `String<'a, N>` and returns `Some(N)` (the max byte length).
-pub(crate) fn is_dynamic_string(ty: &Type) -> Option<usize> {
+/// Detects `String<'a, N>` (with lifetime) or `String<N>` (without) and returns `Some(N)`.
+/// Pass `expect_lifetime = true` for account fields (`String<'a, N>`),
+/// `false` for instruction args (`String<N>`).
+pub(crate) fn is_dynamic_string(ty: &Type, expect_lifetime: bool) -> Option<usize> {
     if let Type::Path(type_path) = ty {
         if let Some(seg) = type_path.path.segments.last() {
             if seg.ident == "String" {
                 if let PathArguments::AngleBracketed(args) = &seg.arguments {
                     let mut iter = args.args.iter();
-                    if !matches!(iter.next(), Some(GenericArgument::Lifetime(_))) {
+                    if expect_lifetime
+                        && !matches!(iter.next(), Some(GenericArgument::Lifetime(_)))
+                    {
                         return None;
                     }
                     if let Some(GenericArgument::Const(Expr::Lit(ExprLit {
@@ -134,65 +216,19 @@ pub(crate) fn is_dynamic_string(ty: &Type) -> Option<usize> {
     None
 }
 
-/// Detects `Vec<'a, T, N>` and returns `Some((T, N))` (element type, max count).
-pub(crate) fn is_dynamic_vec(ty: &Type) -> Option<(Type, usize)> {
+/// Detects `Vec<'a, T, N>` (with lifetime) or `Vec<T, N>` (without) and returns `Some((T, N))`.
+/// Pass `expect_lifetime = true` for account fields, `false` for instruction args.
+pub(crate) fn is_dynamic_vec(ty: &Type, expect_lifetime: bool) -> Option<(Type, usize)> {
     if let Type::Path(type_path) = ty {
         if let Some(seg) = type_path.path.segments.last() {
             if seg.ident == "Vec" {
                 if let PathArguments::AngleBracketed(args) = &seg.arguments {
                     let mut iter = args.args.iter();
-                    if !matches!(iter.next(), Some(GenericArgument::Lifetime(_))) {
+                    if expect_lifetime
+                        && !matches!(iter.next(), Some(GenericArgument::Lifetime(_)))
+                    {
                         return None;
                     }
-                    let elem_ty = match iter.next() {
-                        Some(GenericArgument::Type(ty)) => ty.clone(),
-                        _ => return None,
-                    };
-                    if let Some(GenericArgument::Const(Expr::Lit(ExprLit {
-                        lit: Lit::Int(lit_int),
-                        ..
-                    }))) = iter.next()
-                    {
-                        let max = lit_int.base10_parse::<usize>().ok()?;
-                        return Some((elem_ty, max));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-// --- Instruction-level dynamic field detection (no lifetime) ---
-
-/// Detects `String<N>` (no lifetime) in instruction args and returns `Some(N)`.
-pub(crate) fn is_ix_dynamic_string(ty: &Type) -> Option<usize> {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "String" {
-                if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                    let mut iter = args.args.iter();
-                    if let Some(GenericArgument::Const(Expr::Lit(ExprLit {
-                        lit: Lit::Int(lit_int),
-                        ..
-                    }))) = iter.next()
-                    {
-                        return lit_int.base10_parse::<usize>().ok();
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Detects `Vec<T, N>` (no lifetime) in instruction args and returns `Some((T, N))`.
-pub(crate) fn is_ix_dynamic_vec(ty: &Type) -> Option<(Type, usize)> {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "Vec" {
-                if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                    let mut iter = args.args.iter();
                     let elem_ty = match iter.next() {
                         Some(GenericArgument::Type(ty)) => ty.clone(),
                         _ => return None,

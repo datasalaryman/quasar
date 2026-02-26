@@ -4,12 +4,43 @@ use mollusk_svm::{program::keyed_account_for_system_program, Mollusk};
 
 use solana_account::Account;
 use solana_address::Address;
-use solana_instruction::Instruction;
+use solana_instruction::{AccountMeta, Instruction};
 
-use crate::client::{DepositInstruction, WithdrawInstruction};
+fn program_id() -> Address {
+    crate::ID
+}
 
 fn setup() -> Mollusk {
-    Mollusk::new(&crate::ID, "../../target/deploy/quasar_vault")
+    Mollusk::new(&program_id(), "../../target/deploy/pinocchio_vault")
+}
+
+fn deposit_instruction(user: Address, vault: Address, system_program: Address, amount: u64) -> Instruction {
+    let accounts = std::vec![
+        AccountMeta::new(user, true),
+        AccountMeta::new(vault, false),
+        AccountMeta::new_readonly(system_program, false),
+    ];
+    let mut data = std::vec![0u8];
+    data.extend_from_slice(&amount.to_le_bytes());
+    Instruction {
+        program_id: program_id(),
+        accounts,
+        data,
+    }
+}
+
+fn withdraw_instruction(user: Address, vault: Address, amount: u64) -> Instruction {
+    let accounts = std::vec![
+        AccountMeta::new(user, true),
+        AccountMeta::new(vault, false),
+    ];
+    let mut data = std::vec![1u8];
+    data.extend_from_slice(&amount.to_le_bytes());
+    Instruction {
+        program_id: program_id(),
+        accounts,
+        data,
+    }
 }
 
 #[test]
@@ -21,26 +52,19 @@ fn test_deposit() {
     let user = Address::new_unique();
     let user_account = Account::new(10_000_000_000, 0, &system_program);
 
-    let (vault, _vault_bump) =
-        Address::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
+    let (vault, _bump) = Address::find_program_address(&[b"vault", user.as_ref()], &program_id());
     let vault_account = Account::new(0, 0, &system_program);
 
     let deposit_amount: u64 = 1_000_000_000;
 
-    let instruction: Instruction = DepositInstruction {
-        user,
-        vault,
-        system_program,
-        amount: deposit_amount,
-    }
-    .into();
+    let instruction = deposit_instruction(user, vault, system_program, deposit_amount);
 
     let result = mollusk.process_instruction(
         &instruction,
         &[
-            (user, user_account.clone()),
-            (vault, vault_account.clone()),
-            (system_program, system_program_account.clone()),
+            (user, user_account),
+            (vault, vault_account),
+            (system_program, system_program_account),
         ],
     );
 
@@ -53,12 +77,8 @@ fn test_deposit() {
     let user_after = result.resulting_accounts[0].1.lamports;
     let vault_after = result.resulting_accounts[1].1.lamports;
 
-    assert_eq!(
-        user_after,
-        10_000_000_000 - deposit_amount,
-        "user lamports after deposit"
-    );
-    assert_eq!(vault_after, deposit_amount, "vault lamports after deposit");
+    assert_eq!(user_after, 10_000_000_000 - deposit_amount);
+    assert_eq!(vault_after, deposit_amount);
 
     std::println!("\n========================================");
     std::println!("  DEPOSIT CU: {}", result.compute_units_consumed);
@@ -74,20 +94,13 @@ fn test_withdraw() {
     let user = Address::new_unique();
     let user_account = Account::new(10_000_000_000, 0, &system_program);
 
-    let (vault, _vault_bump) =
-        Address::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
-    let vault_account = Account::new(0, 0, &crate::ID);
+    let (vault, _bump) = Address::find_program_address(&[b"vault", user.as_ref()], &program_id());
+    let vault_account = Account::new(0, 0, &program_id());
 
     let deposit_amount: u64 = 1_000_000_000;
 
     // First deposit
-    let deposit_ix: Instruction = DepositInstruction {
-        user,
-        vault,
-        system_program,
-        amount: deposit_amount,
-    }
-    .into();
+    let deposit_ix = deposit_instruction(user, vault, system_program, deposit_amount);
 
     let result = mollusk.process_instruction(
         &deposit_ix,
@@ -109,12 +122,7 @@ fn test_withdraw() {
     // Now withdraw
     let withdraw_amount: u64 = 500_000_000;
 
-    let withdraw_ix: Instruction = WithdrawInstruction {
-        user,
-        vault,
-        amount: withdraw_amount,
-    }
-    .into();
+    let withdraw_ix = withdraw_instruction(user, vault, withdraw_amount);
 
     let result = mollusk.process_instruction(
         &withdraw_ix,
@@ -133,16 +141,8 @@ fn test_withdraw() {
     let user_final = result.resulting_accounts[0].1.lamports;
     let vault_final = result.resulting_accounts[1].1.lamports;
 
-    assert_eq!(
-        user_final,
-        user_after_deposit.lamports + withdraw_amount,
-        "user lamports after withdraw"
-    );
-    assert_eq!(
-        vault_final,
-        deposit_amount - withdraw_amount,
-        "vault lamports after withdraw"
-    );
+    assert_eq!(user_final, user_after_deposit.lamports + withdraw_amount);
+    assert_eq!(vault_final, deposit_amount - withdraw_amount);
 
     std::println!("\n========================================");
     std::println!("  WITHDRAW CU: {}", result.compute_units_consumed);

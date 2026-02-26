@@ -5,8 +5,8 @@ pub use crate::checks;
 // Context & parsing
 pub use crate::context::{Context, Ctx, CtxWithRemaining};
 pub use crate::traits::{
-    AccountCheck, AccountCount, AsAccountView, Discriminator, Event, Owner, ParseAccounts, Program,
-    QuasarAccount, Space, ZeroCopyDeref,
+    AccountCheck, AccountCount, AsAccountView, CheckOwner, Discriminator, Event, InterfaceResolve,
+    Owner, ParseAccounts, Program, QuasarAccount, Space, ZeroCopyDeref,
 };
 
 // CPI

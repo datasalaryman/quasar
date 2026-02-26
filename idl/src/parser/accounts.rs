@@ -68,7 +68,6 @@ fn has_derive_accounts(attrs: &[syn::Attribute]) -> bool {
 fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccountField {
     let name = field.ident.as_ref().unwrap().to_string();
     let writable = helpers::is_mut_ref(&field.ty);
-    let signer = helpers::is_signer_type(&field.ty);
 
     // Collect sibling field names for seed reference detection
     let sibling_names: Vec<String> = match &parent.fields {
@@ -82,6 +81,8 @@ fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccou
 
     let pda = parse_pda_from_attrs(&field.attrs, &sibling_names);
     let address = detect_known_address(&field.ty);
+
+    let signer = helpers::is_signer_type(&field.ty);
 
     RawAccountField {
         name,

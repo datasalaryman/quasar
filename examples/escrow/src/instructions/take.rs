@@ -1,5 +1,5 @@
 use quasar_core::prelude::*;
-use quasar_spl::{TokenAccount, TokenProgram};
+use quasar_spl::{InitToken, MintAccount, TokenAccount, TokenClose, TokenCpi, TokenProgram};
 
 use crate::events::TakeEvent;
 use crate::state::EscrowAccount;
@@ -16,14 +16,41 @@ pub struct Take<'info> {
     )]
     pub escrow: &'info mut Account<EscrowAccount>,
     pub maker: &'info mut UncheckedAccount,
-    pub taker_ta_a: &'info mut Account<TokenAccount>,
+    pub mint_a: &'info Account<MintAccount>,
+    pub mint_b: &'info Account<MintAccount>,
+    pub taker_ta_a: &'info mut Initialize<TokenAccount>,
     pub taker_ta_b: &'info mut Account<TokenAccount>,
-    pub maker_ta_b: &'info mut Account<TokenAccount>,
+    pub maker_ta_b: &'info mut Initialize<TokenAccount>,
     pub vault_ta_a: &'info mut Account<TokenAccount>,
+    pub rent: &'info Sysvar<Rent>,
     pub token_program: &'info TokenProgram,
+    pub system_program: &'info SystemProgram,
 }
 
 impl<'info> Take<'info> {
+    #[inline(always)]
+    pub fn init_accounts(&self) -> Result<(), ProgramError> {
+        let rent = Some(&**self.rent);
+
+        self.taker_ta_a.init_if_needed(
+            self.system_program,
+            self.taker,
+            self.token_program,
+            self.mint_a,
+            self.taker.address(),
+            rent,
+        )?;
+
+        self.maker_ta_b.init_if_needed(
+            self.system_program,
+            self.taker,
+            self.token_program,
+            self.mint_b,
+            self.maker.address(),
+            rent,
+        )
+    }
+
     #[inline(always)]
     pub fn transfer_tokens(&mut self) -> Result<(), ProgramError> {
         self.token_program
@@ -49,8 +76,8 @@ impl<'info> Take<'info> {
             )
             .invoke_signed(&seeds)?;
 
-        self.token_program
-            .close_account(self.vault_ta_a, self.taker, self.escrow)
+        self.vault_ta_a
+            .close(self.token_program, self.taker, self.escrow)
             .invoke_signed(&seeds)
     }
 

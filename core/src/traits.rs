@@ -100,6 +100,35 @@ pub trait QuasarAccount: Sized + Discriminator + Space {
     fn serialize(&self, data: &mut [u8]) -> Result<(), ProgramError>;
 }
 
+/// Validate that an account is owned by the expected program(s).
+///
+/// Single-owner types get a blanket implementation via [`Owner`].
+/// Multi-owner (interface) types implement this directly with explicit
+/// comparison chains, avoiding the ~20-40 CU cost of slice iteration.
+pub trait CheckOwner {
+    fn check_owner(view: &AccountView) -> Result<(), ProgramError>;
+}
+
+impl<T: Owner> CheckOwner for T {
+    #[inline(always)]
+    fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
+        if !view.owned_by(&T::OWNER) {
+            return Err(ProgramError::IllegalOwner);
+        }
+        Ok(())
+    }
+}
+
+/// Polymorphic zero-copy dispatch for interface account types.
+///
+/// When an account can be owned by multiple programs with different layouts
+/// or behaviors, `InterfaceResolve` provides a way to dispatch to the
+/// correct resolved type based on the runtime owner.
+pub trait InterfaceResolve {
+    type Resolved<'a>;
+    fn resolve<'a>(view: &'a AccountView) -> Result<Self::Resolved<'a>, ProgramError>;
+}
+
 /// Zero-copy deref target for `#[repr(C)]` account types.
 ///
 /// When an account type implements `ZeroCopyDeref`, `Account<T>` provides
@@ -114,7 +143,7 @@ pub trait QuasarAccount: Sized + Discriminator + Space {
 /// struct for fixed field access.
 ///
 /// Implemented by: `#[account]` macro.
-pub trait ZeroCopyDeref: Owner {
+pub trait ZeroCopyDeref {
     type Target;
     fn deref_from(view: &AccountView) -> &Self::Target;
     #[allow(clippy::mut_from_ref)]

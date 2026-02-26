@@ -1,5 +1,5 @@
 use quasar_core::prelude::*;
-use quasar_spl::{TokenAccount, TokenProgram};
+use quasar_spl::{InitToken, MintAccount, TokenAccount, TokenClose, TokenCpi, TokenProgram};
 
 use crate::{events::RefundEvent, state::EscrowAccount};
 
@@ -12,12 +12,27 @@ pub struct Refund<'info> {
         bump = escrow.bump
     )]
     pub escrow: &'info mut Account<EscrowAccount>,
-    pub maker_ta_a: &'info mut Account<TokenAccount>,
+    pub mint_a: &'info Account<MintAccount>,
+    pub maker_ta_a: &'info mut Initialize<TokenAccount>,
     pub vault_ta_a: &'info mut Account<TokenAccount>,
+    pub rent: &'info Sysvar<Rent>,
     pub token_program: &'info TokenProgram,
+    pub system_program: &'info SystemProgram,
 }
 
 impl<'info> Refund<'info> {
+    #[inline(always)]
+    pub fn init_accounts(&self) -> Result<(), ProgramError> {
+        self.maker_ta_a.init_if_needed(
+            self.system_program,
+            self.maker,
+            self.token_program,
+            self.mint_a,
+            self.maker.address(),
+            Some(&**self.rent),
+        )
+    }
+
     #[inline(always)]
     pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), ProgramError> {
         let seeds = bumps.escrow_seeds();
@@ -31,8 +46,8 @@ impl<'info> Refund<'info> {
             )
             .invoke_signed(&seeds)?;
 
-        self.token_program
-            .close_account(self.vault_ta_a, self.maker, self.escrow)
+        self.vault_ta_a
+            .close(self.token_program, self.maker, self.escrow)
             .invoke_signed(&seeds)
     }
 

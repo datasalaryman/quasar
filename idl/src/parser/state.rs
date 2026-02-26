@@ -1,6 +1,6 @@
 use syn::{Fields, Item};
 
-use crate::parser::helpers;
+use super::helpers;
 use crate::types::{IdlAccountDef, IdlField, IdlTypeDef, IdlTypeDefType};
 
 /// Raw parsed data for a `#[account(discriminator = N)]` struct.
@@ -58,33 +58,9 @@ fn get_account_discriminator(attrs: &[syn::Attribute]) -> Option<Vec<u8>> {
             continue;
         }
 
-        return parse_discriminator_value(&tokens);
+        return helpers::parse_discriminator_value(&tokens);
     }
     None
-}
-
-fn parse_discriminator_value(tokens_str: &str) -> Option<Vec<u8>> {
-    let eq_pos = tokens_str.find('=')?;
-    let value_str = tokens_str[eq_pos + 1..].trim();
-
-    if value_str.starts_with('[') {
-        let inner = value_str.trim_start_matches('[').trim_end_matches(']');
-        let bytes: Vec<u8> = inner
-            .split(',')
-            .filter_map(|s| s.trim().parse::<u8>().ok())
-            .collect();
-        if bytes.is_empty() {
-            None
-        } else {
-            Some(bytes)
-        }
-    } else {
-        let byte: u8 = value_str
-            .trim_end_matches(|c: char| !c.is_ascii_digit())
-            .parse()
-            .ok()?;
-        Some(vec![byte])
-    }
 }
 
 /// Convert a `RawStateAccount` to an `IdlAccountDef` (for the "accounts" array).

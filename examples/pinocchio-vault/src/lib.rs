@@ -5,14 +5,13 @@ use pinocchio::{no_allocator, program_entrypoint, AccountView, Address, ProgramR
 mod constants;
 mod errors;
 mod instructions;
-mod state;
 mod utils;
 
 #[cfg(test)]
 mod tests;
 
 pub use constants::{ID, ID_BYTES};
-pub use errors::EscrowError;
+pub use errors::VaultError;
 
 use utils::Context;
 
@@ -29,14 +28,13 @@ fn process_instruction(
 ) -> ProgramResult {
     let (discriminator, data) = instruction_data
         .split_first()
-        .ok_or(EscrowError::InvalidInstructionData)?;
+        .ok_or(VaultError::InvalidInstructionData)?;
 
     let ctx = Context { accounts, data };
 
     match *discriminator {
-        0 => instructions::Make::process(ctx),
-        1 => instructions::Take::process(ctx),
-        2 => instructions::Refund::process(ctx),
-        _ => Err(EscrowError::InvalidInstructionData.into()),
+        0 => instructions::Deposit::process(ctx),
+        1 => instructions::Withdraw::process(ctx),
+        _ => Err(VaultError::InvalidInstructionData.into()),
     }
 }

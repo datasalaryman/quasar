@@ -141,6 +141,34 @@ pub fn is_signer_type(ty: &syn::Type) -> bool {
     type_base_name(ty).as_deref() == Some("Signer")
 }
 
+/// Parse a discriminator value from a token string containing `discriminator = N` or
+/// `discriminator = [N, M, ...]`.
+///
+/// Shared by event, account, and instruction parsers.
+pub fn parse_discriminator_value(tokens_str: &str) -> Option<Vec<u8>> {
+    let eq_pos = tokens_str.find('=')?;
+    let value_str = tokens_str[eq_pos + 1..].trim();
+
+    if value_str.starts_with('[') {
+        let inner = value_str.trim_start_matches('[').trim_end_matches(']');
+        let bytes: Vec<u8> = inner
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u8>().ok())
+            .collect();
+        if bytes.is_empty() {
+            None
+        } else {
+            Some(bytes)
+        }
+    } else {
+        let byte: u8 = value_str
+            .trim_end_matches(|c: char| !c.is_ascii_digit())
+            .parse()
+            .ok()?;
+        Some(vec![byte])
+    }
+}
+
 /// Extract the simple type name string from a syn::Type for IDL field types.
 /// Strips references and returns just the final identifier.
 pub fn simple_type_name(ty: &syn::Type) -> String {

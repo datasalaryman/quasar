@@ -1,33 +1,11 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    parse_macro_input, FnArg, GenericArgument, Ident, ItemFn, Pat, PathArguments, ReturnType, Type,
-};
+use syn::{parse_macro_input, FnArg, Ident, ItemFn, Pat, ReturnType};
 
 use crate::helpers::{
-    is_ix_dynamic_string, is_ix_dynamic_vec, map_to_pod_type, zc_deserialize_expr, InstructionArgs,
+    extract_generic_inner_type, is_dynamic_string, is_dynamic_vec, is_unit_type, map_to_pod_type,
+    zc_deserialize_expr, DynKind, InstructionArgs,
 };
-
-fn extract_result_ok_type(output: &ReturnType) -> Option<&Type> {
-    if let ReturnType::Type(_, ty) = output {
-        if let Type::Path(type_path) = ty.as_ref() {
-            if let Some(last) = type_path.path.segments.last() {
-                if last.ident == "Result" {
-                    if let PathArguments::AngleBracketed(args) = &last.arguments {
-                        if let Some(GenericArgument::Type(ok_ty)) = args.args.first() {
-                            return Some(ok_ty);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn is_unit_type(ty: &Type) -> bool {
-    matches!(ty, Type::Tuple(t) if t.elems.is_empty())
-}
 
 pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as InstructionArgs);
@@ -37,19 +15,37 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let first_arg = match func.sig.inputs.first() {
         Some(FnArg::Typed(pt)) => pt.clone(),
-        _ => panic!("#[instruction] requires ctx: Ctx<T> as first parameter"),
+        _ => {
+            return syn::Error::new_spanned(
+                &func.sig.ident,
+                "#[instruction] requires ctx: Ctx<T> as first parameter",
+            )
+            .to_compile_error()
+            .into();
+        }
     };
 
     let param_name = &first_arg.pat;
     let param_ident = match &*first_arg.pat {
         Pat::Ident(pat_ident) => pat_ident.ident.clone(),
-        _ => panic!("#[instruction] ctx parameter must be an identifier"),
+        _ => {
+            return syn::Error::new_spanned(
+                &first_arg.pat,
+                "#[instruction] ctx parameter must be an identifier",
+            )
+            .to_compile_error()
+            .into();
+        }
     };
     let param_type = &first_arg.ty;
 
-    let has_return_data =
-        extract_result_ok_type(&func.sig.output).is_some_and(|ok_ty| !is_unit_type(ok_ty));
-    let return_ok_type = extract_result_ok_type(&func.sig.output).cloned();
+    let return_ok_type = match &func.sig.output {
+        ReturnType::Type(_, ty) => extract_generic_inner_type(ty, "Result").cloned(),
+        _ => None,
+    };
+    let has_return_data = return_ok_type
+        .as_ref()
+        .is_some_and(|ok_ty| !is_unit_type(ok_ty));
 
     if has_return_data {
         func.sig.output = syn::parse_quote!(-> Result<(), ProgramError>);
@@ -87,34 +83,35 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     ];
 
     if !remaining.is_empty() {
-        let field_names: Vec<Ident> = remaining
-            .iter()
-            .map(|pt| match &*pt.pat {
-                Pat::Ident(pat_ident) => pat_ident.ident.clone(),
-                _ => panic!("#[instruction] parameters must be simple identifiers"),
-            })
-            .collect();
-
-        enum IxDynKind {
-            Fixed,
-            Str { max: usize },
-            Vec { elem: Box<Type>, max: usize },
+        let mut field_names: Vec<Ident> = Vec::with_capacity(remaining.len());
+        for pt in &remaining {
+            match &*pt.pat {
+                Pat::Ident(pat_ident) => field_names.push(pat_ident.ident.clone()),
+                _ => {
+                    return syn::Error::new_spanned(
+                        &pt.pat,
+                        "#[instruction] parameters must be simple identifiers",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+            }
         }
 
-        let kinds: Vec<IxDynKind> = remaining
+        let kinds: Vec<DynKind> = remaining
             .iter()
             .map(|pt| {
-                if let Some(max) = is_ix_dynamic_string(&pt.ty) {
-                    IxDynKind::Str { max }
-                } else if let Some((elem, max)) = is_ix_dynamic_vec(&pt.ty) {
-                    IxDynKind::Vec { elem: Box::new(elem), max }
+                if let Some(max) = is_dynamic_string(&pt.ty, false) {
+                    DynKind::Str { max }
+                } else if let Some((elem, max)) = is_dynamic_vec(&pt.ty, false) {
+                    DynKind::Vec { elem: Box::new(elem), max }
                 } else {
-                    IxDynKind::Fixed
+                    DynKind::Fixed
                 }
             })
             .collect();
 
-        let has_dynamic = kinds.iter().any(|k| !matches!(k, IxDynKind::Fixed));
+        let has_dynamic = kinds.iter().any(|k| !matches!(k, DynKind::Fixed));
 
         // Build ZC struct: fixed fields as Pod types + PodU16 descriptors for dynamic fields
         let mut zc_field_names: Vec<Ident> = Vec::new();
@@ -122,17 +119,17 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         for (i, kind) in kinds.iter().enumerate() {
             match kind {
-                IxDynKind::Fixed => {
+                DynKind::Fixed => {
                     zc_field_names.push(field_names[i].clone());
                     zc_field_types.push(map_to_pod_type(&remaining[i].ty));
                 }
-                IxDynKind::Str { .. } => {
+                DynKind::Str { .. } => {
                     let len_name =
                         Ident::new(&format!("{}_len", field_names[i]), field_names[i].span());
                     zc_field_names.push(len_name);
                     zc_field_types.push(quote! { quasar_core::pod::PodU16 });
                 }
-                IxDynKind::Vec { .. } => {
+                DynKind::Vec { .. } => {
                     let count_name =
                         Ident::new(&format!("{}_count", field_names[i]), field_names[i].span());
                     zc_field_names.push(count_name);
@@ -168,7 +165,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         // Extract fixed fields from ZC header
         for (i, kind) in kinds.iter().enumerate() {
-            if matches!(kind, IxDynKind::Fixed) {
+            if matches!(kind, DynKind::Fixed) {
                 let name = &field_names[i];
                 let expr = zc_deserialize_expr(name, &remaining[i].ty);
                 new_stmts.push(syn::parse_quote!(
@@ -189,15 +186,15 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             // Count dynamic fields to avoid unused offset update on last one
             let dyn_count = kinds
                 .iter()
-                .filter(|k| !matches!(k, IxDynKind::Fixed))
+                .filter(|k| !matches!(k, DynKind::Fixed))
                 .count();
             let mut dyn_idx = 0usize;
 
             for (i, kind) in kinds.iter().enumerate() {
                 let name = &field_names[i];
                 match kind {
-                    IxDynKind::Fixed => {}
-                    IxDynKind::Str { max } => {
+                    DynKind::Fixed => {}
+                    DynKind::Str { max } => {
                         dyn_idx += 1;
                         let len_name = Ident::new(&format!("{}_len", name), name.span());
                         let max_lit = *max;
@@ -215,10 +212,12 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         ));
                         new_stmts.push(syn::parse_quote!(
-                            let #name: &str = unsafe {
-                                core::str::from_utf8_unchecked(
-                                    &__tail[__offset..__offset + __dyn_len]
-                                )
+                            let #name: &str = {
+                                let __bytes = &__tail[__offset..__offset + __dyn_len];
+                                #[cfg(target_os = "solana")]
+                                { unsafe { core::str::from_utf8_unchecked(__bytes) } }
+                                #[cfg(not(target_os = "solana"))]
+                                { core::str::from_utf8(__bytes).expect("instruction string arg contains invalid UTF-8") }
                             };
                         ));
                         if dyn_idx < dyn_count {
@@ -227,7 +226,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                             ));
                         }
                     }
-                    IxDynKind::Vec { elem, max } => {
+                    DynKind::Vec { elem, max } => {
                         dyn_idx += 1;
                         let count_name = Ident::new(&format!("{}_count", name), name.span());
                         let max_lit = *max;

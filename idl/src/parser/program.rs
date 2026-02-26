@@ -1,5 +1,7 @@
 use syn::{FnArg, Item, Pat, Type};
 
+use super::helpers;
+
 /// Raw instruction data extracted from a `#[instruction(...)]` function.
 pub struct RawInstruction {
     pub name: String,
@@ -89,35 +91,10 @@ fn extract_instruction(func: &syn::ItemFn) -> Option<RawInstruction> {
     })
 }
 
-/// Parse `#[instruction(discriminator = N)]` or `#[instruction(discriminator = [N, M])]`.
 fn parse_discriminator_attr(attr: &syn::Attribute) -> Option<Vec<u8>> {
     let tokens = attr.meta.require_list().ok()?.tokens.clone();
     let tokens_str = tokens.to_string();
-
-    // Find "discriminator = ..." pattern
-    let eq_pos = tokens_str.find('=')?;
-    let value_str = tokens_str[eq_pos + 1..].trim();
-
-    if value_str.starts_with('[') {
-        // Array form: [0, 1, 2]
-        let inner = value_str.trim_start_matches('[').trim_end_matches(']');
-        let bytes: Vec<u8> = inner
-            .split(',')
-            .filter_map(|s| s.trim().parse::<u8>().ok())
-            .collect();
-        if bytes.is_empty() {
-            None
-        } else {
-            Some(bytes)
-        }
-    } else {
-        // Single value form: 0
-        let byte: u8 = value_str
-            .trim_end_matches(|c: char| !c.is_ascii_digit())
-            .parse()
-            .ok()?;
-        Some(vec![byte])
-    }
+    helpers::parse_discriminator_value(&tokens_str)
 }
 
 /// Extract the inner type name `T` from `Ctx<T>` in the first parameter.
