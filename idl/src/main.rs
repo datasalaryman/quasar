@@ -1,4 +1,5 @@
 mod codegen;
+mod codegen_ts;
 mod parser;
 mod types;
 
@@ -25,6 +26,9 @@ fn main() {
     // Build the IDL
     let idl = parser::build_idl(parsed);
 
+    // Generate TypeScript client from IDL
+    let ts_code = codegen_ts::generate_ts_client(&idl);
+
     // Write IDL JSON to target/idl/
     let output_dir = PathBuf::from("target").join("idl");
     std::fs::create_dir_all(&output_dir).expect("Failed to create target/idl directory");
@@ -33,6 +37,11 @@ fn main() {
     let json = serde_json::to_string_pretty(&idl).expect("Failed to serialize IDL");
     std::fs::write(&idl_path, &json).expect("Failed to write IDL file");
     println!("{}", idl_path.display());
+
+    // Write TypeScript client to target/idl/
+    let ts_path = output_dir.join(format!("{}.ts", idl.metadata.name));
+    std::fs::write(&ts_path, &ts_code).expect("Failed to write TS client");
+    println!("{}", ts_path.display());
 
     // Write client module into program crate src/
     let client_path = crate_path.join("src").join("client.rs");
