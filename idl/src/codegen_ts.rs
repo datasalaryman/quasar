@@ -40,6 +40,12 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         codec_imports.push("getBooleanCodec");
     }
 
+    if used.contains("publicKey") {
+        codec_imports.push("getBytesCodec");
+        codec_imports.push("fixCodecSize");
+        codec_imports.push("transformCodec");
+    }
+
     out.push_str(&format!(
         "import {{ {} }} from \"@solana/codecs\";\n",
         codec_imports.join(", ")
@@ -552,15 +558,11 @@ fn format_disc_array(disc: &[u8]) -> String {
 }
 
 const PUBLIC_KEY_CODEC_HELPER: &str = r#"function getPublicKeyCodec() {
-  return {
-    encode(value: Address): Uint8Array {
-      return value.toBytes();
-    },
-    decode(bytes: Uint8Array, offset = 0): [Address, number] {
-      return [new Address(bytes.slice(offset, offset + 32)), offset + 32];
-    },
-    fixedSize: 32,
-  };
+  return transformCodec(
+    fixCodecSize(getBytesCodec(), 32),
+    (value: Address) => value.toBytes(),
+    bytes => new Address(bytes),
+  );
 }
 "#;
 
