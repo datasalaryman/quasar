@@ -1822,7 +1822,7 @@ dependencies = [
  "rustc-demangle",
  "serde",
  "serde_json",
- "toml",
+ "toml 0.8.23",
 ]
 
 [[package]]
