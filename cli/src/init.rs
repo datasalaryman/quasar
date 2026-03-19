@@ -214,26 +214,14 @@ fn print_banner() {
 
                     // Text character at this position
                     let text_ch = match li {
-                        1..=7 => {
-                            if ci >= fig_off && ci - fig_off < fig_w {
-                                fig[li - 1].get(ci - fig_off).copied().unwrap_or(' ')
-                            } else {
-                                ' '
-                            }
+                        1..=7 if ci >= fig_off && ci - fig_off < fig_w => {
+                            fig[li - 1].get(ci - fig_off).copied().unwrap_or(' ')
                         }
-                        9 => {
-                            if ci >= tag_off && ci - tag_off < tag_chars.len() {
-                                tag_chars[ci - tag_off]
-                            } else {
-                                ' '
-                            }
+                        9 if ci >= tag_off && ci - tag_off < tag_chars.len() => {
+                            tag_chars[ci - tag_off]
                         }
-                        10 => {
-                            if ci >= by_off && ci - by_off < by_chars.len() {
-                                by_chars[ci - by_off]
-                            } else {
-                                ' '
-                            }
+                        10 if ci >= by_off && ci - by_off < by_chars.len() => {
+                            by_chars[ci - by_off]
                         }
                         _ => ' ',
                     };
