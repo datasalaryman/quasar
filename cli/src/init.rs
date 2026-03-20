@@ -804,7 +804,7 @@ solana-instruction = {{ version = "3.2.0", features = ["bincode"] }}
             out.push_str(&format!(
                 r#"
 [dev-dependencies]
-{client_dep}quasar-svm = "{{ version = "0.1" }}"
+{client_dep}quasar-svm = {{ version = "0.1" }}
 solana-account = {{ version = "3.4.0" }}
 solana-address = {{ version = "2.2.0", features = ["decode"] }}
 solana-instruction = {{ version = "3.2.0", features = ["bincode"] }}
