@@ -10,6 +10,8 @@ use {
 /// - `target/idl/<name>.idl.json` (always)
 /// - `target/client/rust/<name>-client/` when languages contains "rust"
 /// - `target/client/typescript/<name>/` when languages contains "typescript"
+/// - `target/client/python/<name>/` when languages contains "python"
+/// - `target/client/golang/<name>/` when languages contains "golang"
 pub fn generate(crate_path: &Path, languages: &[&str]) -> CliResult {
     // Parse the program
     let parsed = parser::parse_program(crate_path);
@@ -93,6 +95,40 @@ pub fn generate(crate_path: &Path, languages: &[&str]) -> CliResult {
         std::fs::write(client_src_dir.join("lib.rs"), &code)?;
     }
 
+    // Python client
+    if languages.contains(&"python") {
+        let py_code = codegen::python::generate_python_client(&idl);
+        let crate_name = &idl.metadata.crate_name;
+        let py_dir = PathBuf::from("target")
+            .join("client")
+            .join("python")
+            .join(crate_name);
+        std::fs::create_dir_all(&py_dir)?;
+
+        std::fs::write(py_dir.join("client.py"), &py_code)?;
+        std::fs::write(py_dir.join("__init__.py"), format!(
+            "from .client import *  # noqa: F401,F403\n"
+        ))?;
+    }
+
+    // Go client
+    if languages.contains(&"golang") {
+        let go_code = codegen::golang::generate_go_client(&idl);
+        let crate_name = &idl.metadata.crate_name;
+        let go_pkg = crate_name.replace('-', "_");
+        let go_dir = PathBuf::from("target")
+            .join("client")
+            .join("golang")
+            .join(&go_pkg);
+        std::fs::create_dir_all(&go_dir)?;
+
+        std::fs::write(go_dir.join("client.go"), &go_code)?;
+        std::fs::write(
+            go_dir.join("go.mod"),
+            codegen::golang::generate_go_mod(&go_pkg),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -105,7 +141,7 @@ pub fn run(command: IdlCommand) -> CliResult {
     }
 
     // `quasar idl` generates all available languages
-    generate(crate_path, &["rust", "typescript"])?;
+    generate(crate_path, &["rust", "typescript", "python", "golang"])?;
     println!("  {}", crate::style::success("IDL generated"));
     Ok(())
 }

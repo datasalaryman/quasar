@@ -777,8 +777,8 @@ pub fn run(
 
         let all_optional: &[(&str, &str)] = &[
             ("TypeScript", "typescript"),
-            ("Golang", "golang"),
-            ("Python", "python"),
+            ("Golang (Experimental)", "golang"),
+            ("Python (Experimental)", "python"),
         ];
         let optional: Vec<(&str, &str)> = all_optional
             .iter()
