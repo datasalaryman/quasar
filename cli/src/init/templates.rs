@@ -76,13 +76,13 @@ pub enum MyError {
 
 pub(super) const TS_TEST_TSCONFIG: &str = r#"{
   "compilerOptions": {
-    "target": "es2020",
-    "module": "commonjs",
-    "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,
+    "module": "preserve",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ESNext",
     "types": ["node"]
   },
   "include": ["tests/*.test.ts"]

@@ -365,7 +365,9 @@ fn generate_package_json(name: &str, ts_sdk: TypeScriptSdk) -> String {
   "name": "{name}",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {{
+    "check-types": "tsc --noEmit",
     "test": "vitest run"
   }},
   "dependencies": {{
@@ -376,7 +378,7 @@ fn generate_package_json(name: &str, ts_sdk: TypeScriptSdk) -> String {
   "devDependencies": {{
     "@types/node": "^22.13.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.1.0"
+    "vitest": "^4.1.1"
   }}
 }}
 "#
