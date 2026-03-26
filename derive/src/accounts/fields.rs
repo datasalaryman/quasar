@@ -9,7 +9,7 @@ use {
     super::attrs::{parse_field_attrs, AccountFieldAttrs},
     crate::helpers::{extract_generic_inner_type, seed_slice_expr_for_parse, strip_generics},
     quote::{format_ident, quote},
-    syn::{Expr, Ident, Type},
+    syn::{Expr, ExprLit, Ident, Lit, Type},
 };
 
 /// Info for a single `#[account(close = dest)]` field.
@@ -1159,16 +1159,39 @@ pub(super) fn process_fields(
             let seed_len_checks: Vec<proc_macro2::TokenStream> = seed_idents
                 .iter()
                 .zip(seed_slices.iter())
-                .map(|(ident, seed)| {
-                    quote! {
-                        let #ident: &[u8] = #seed;
-                        if #ident.len() > 32 {
-                            return Err(QuasarError::InvalidSeeds.into());
+                .zip(seed_exprs.iter())
+                .map(|((ident, seed), expr)| {
+                    match expr {
+                        // static byte string (b"quasar") — compile time check
+                        Expr::Lit(ExprLit {
+                            lit: Lit::ByteStr(b),
+                            ..
+                        }) => {
+                            let len = b.value().len();
+                            if len > 32 {
+                                return syn::Error::new_spanned(
+                                    expr,
+                                    format!(
+                                        "seed b\"{}\" is {} bytes, exceeds MAX_SEED_LEN of 32",
+                                        String::from_utf8_lossy(&b.value()),
+                                        len
+                                    ),
+                                )
+                                .to_compile_error();
+                            }
+                            quote! { let #ident: &[u8] = #seed; }
                         }
+
+                        // dynamic — runtime check
+                        _ => quote! {
+                            let #ident: &[u8] = #seed;
+                            if #ident.len() > 32 {
+                                return Err(QuasarError::InvalidSeeds.into());
+                            }
+                        },
                     }
                 })
                 .collect();
-
             // Choose target: init_pda_checks for init fields, pda_checks for others
             let target_checks = if is_init_field {
                 &mut init_pda_checks
