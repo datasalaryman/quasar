@@ -217,7 +217,8 @@ pub(super) fn scaffold(
         eprintln!(
             "  {}",
             crate::style::dim(
-                "note: could not generate Cargo.lock — run `cargo generate-lockfile` before building"
+                "note: could not generate Cargo.lock — run `cargo generate-lockfile` before \
+                 building"
             )
         );
     }

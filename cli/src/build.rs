@@ -514,10 +514,7 @@ fn ensure_lockfile(sp: &indicatif::ProgressBar) {
     if !lock_exists {
         sp.finish_and_clear();
         eprintln!();
-        eprintln!(
-            "  {}",
-            style::fail("failed to generate Cargo.lock")
-        );
+        eprintln!("  {}", style::fail("failed to generate Cargo.lock"));
         if let Some(msg) = &failed {
             let trimmed = msg.trim();
             if !trimmed.is_empty() {
@@ -529,15 +526,11 @@ fn ensure_lockfile(sp: &indicatif::ProgressBar) {
         eprintln!();
         eprintln!(
             "  {}",
-            style::dim(
-                "The Solana toolchain bundles an older cargo that cannot resolve"
-            )
+            style::dim("The Solana toolchain bundles an older cargo that cannot resolve")
         );
         eprintln!(
             "  {}",
-            style::dim(
-                "some newer crate versions. Ensure your system cargo is up to date:"
-            )
+            style::dim("some newer crate versions. Ensure your system cargo is up to date:")
         );
         eprintln!("    {}", style::bold("rustup update"));
         eprintln!();
@@ -549,9 +542,7 @@ fn ensure_lockfile(sp: &indicatif::ProgressBar) {
     // incompatible crate.
     eprintln!(
         "  {}",
-        style::dim(
-            "warning: could not refresh Cargo.lock — building with existing lockfile"
-        )
+        style::dim("warning: could not refresh Cargo.lock — building with existing lockfile")
     );
 }
 
