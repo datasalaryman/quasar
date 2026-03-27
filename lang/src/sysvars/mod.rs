@@ -46,7 +46,7 @@ macro_rules! impl_sysvar_get {
             let mut var = core::mem::MaybeUninit::<Self>::uninit();
             let var_addr = var.as_mut_ptr() as *mut _ as *mut u8;
 
-            #[cfg(target_os = "solana")]
+            #[cfg(any(target_os = "solana", target_arch = "bpf"))]
             // SAFETY: `var_addr` points to `MaybeUninit<Self>` which has
             // enough space. The syscall writes `length` bytes; we zero the
             // trailing `$padding` bytes so the full struct is initialized.
@@ -61,7 +61,7 @@ macro_rules! impl_sysvar_get {
                 )
             };
 
-            #[cfg(not(target_os = "solana"))]
+            #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
             let result = {
                 // SAFETY: Zero-init the full struct for off-chain use.
                 unsafe { var_addr.write_bytes(0, core::mem::size_of::<Self>()) };

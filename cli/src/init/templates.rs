@@ -22,7 +22,6 @@ build-std = ["core", "alloc"]
 
 [target.bpfel-unknown-none]
 rustflags = [
-"--cfg", "target_os=\"solana\"",
 "--cfg", "feature=\"mem_unaligned\"",
 "-C", "linker=sbpf-linker",
 "-C", "panic=abort",

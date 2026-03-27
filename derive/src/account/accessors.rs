@@ -63,9 +63,9 @@ pub(super) fn generate_accessors(
                             let __len = #read;
                             let __start = __offset + #pb;
                             let __bytes = &__data[__start..__start + __len];
-                            #[cfg(target_os = "solana")]
+                            #[cfg(any(target_os = "solana", target_arch = "bpf"))]
                             { unsafe { core::str::from_utf8_unchecked(__bytes) } }
-                            #[cfg(not(target_os = "solana"))]
+                            #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
                             { core::str::from_utf8(__bytes).expect("account string field contains invalid UTF-8") }
                         }
                     }
@@ -93,9 +93,9 @@ pub(super) fn generate_accessors(
                                     let __data = unsafe { self.__view.borrow_unchecked() };
                                     let __offset = #off_expr;
                                     let __bytes = &__data[__offset..];
-                                    #[cfg(target_os = "solana")]
+                                    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
                                     { unsafe { core::str::from_utf8_unchecked(__bytes) } }
-                                    #[cfg(not(target_os = "solana"))]
+                                    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
                                     { core::str::from_utf8(__bytes).expect("account tail field contains invalid UTF-8") }
                                 }
                             }
