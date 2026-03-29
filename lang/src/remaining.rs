@@ -261,6 +261,7 @@ impl Iterator for RemainingIter<'_> {
 
         // SAFETY: `self.index < MAX_REMAINING_ACCOUNTS` (checked above),
         // so the write is within the `MaybeUninit` cache allocation.
+        // `ptr::read` creates a bitwise copy (AccountView is not Copy).
         unsafe {
             let copy = core::ptr::read(&view);
             core::ptr::write(self.cache_mut_ptr().add(self.index), copy);

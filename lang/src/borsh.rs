@@ -16,11 +16,6 @@ impl<'a> BorshString<'a> {
         Self(bytes)
     }
 
-    #[inline(always)]
-    pub const fn from_str(s: &'a str) -> Self {
-        Self(s.as_bytes())
-    }
-
     /// Write this string in Borsh format at `ptr + offset`.
     /// Returns the offset after the last written byte.
     ///
@@ -54,83 +49,6 @@ impl<'a> From<&'a str> for BorshString<'a> {
     #[inline(always)]
     fn from(s: &'a str) -> Self {
         Self(s.as_bytes())
-    }
-}
-
-/// A Borsh vector: u32 LE element count followed by pre-serialized element
-/// bytes.
-///
-/// The caller is responsible for ensuring the `bytes` slice contains exactly
-/// `count` elements in their Borsh-serialized form (e.g., `#[repr(C)]` Pod
-/// types whose memory layout matches the wire format).
-pub struct BorshVec<'a> {
-    bytes: &'a [u8],
-    count: u32,
-}
-
-impl<'a> BorshVec<'a> {
-    #[inline(always)]
-    pub const fn new(bytes: &'a [u8], count: u32) -> Self {
-        Self { bytes, count }
-    }
-
-    /// An empty Borsh vector (count = 0, no payload).
-    #[inline(always)]
-    pub const fn empty() -> Self {
-        Self {
-            bytes: &[],
-            count: 0,
-        }
-    }
-
-    /// Create a BorshVec from a typed slice of fixed-size elements.
-    ///
-    /// Reinterprets the slice as raw bytes. This is the conversion path
-    /// for Quasar's `Vec<'a, T, N>` fields, which become `&'a [T]` at
-    /// runtime where `T` is always `#[repr(C)]` alignment-1 Pod.
-    ///
-    /// # Safety
-    ///
-    /// `T` must be `#[repr(C)]` with alignment 1 and no padding.
-    #[inline(always)]
-    pub unsafe fn from_slice<T: Sized>(slice: &'a [T]) -> Self {
-        Self {
-            bytes: core::slice::from_raw_parts(
-                slice.as_ptr() as *const u8,
-                core::mem::size_of_val(slice),
-            ),
-            count: slice.len() as u32,
-        }
-    }
-
-    /// Write this vector in Borsh format at `ptr + offset`.
-    /// Returns the offset after the last written byte.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure `ptr.add(offset)..ptr.add(offset + 4 +
-    /// self.bytes.len())` is valid for writes.
-    #[inline(always)]
-    pub unsafe fn write_to(self, ptr: *mut u8, offset: usize) -> usize {
-        core::ptr::copy_nonoverlapping(self.count.to_le_bytes().as_ptr(), ptr.add(offset), 4);
-        core::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr.add(offset + 4), self.bytes.len());
-        offset + 4 + self.bytes.len()
-    }
-
-    /// Total bytes this value occupies when serialized.
-    #[inline(always)]
-    pub const fn serialized_len(&self) -> usize {
-        4 + self.bytes.len()
-    }
-}
-
-impl<'a> From<&'a [u8]> for BorshVec<'a> {
-    #[inline(always)]
-    fn from(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            count: bytes.len() as u32,
-        }
     }
 }
 
@@ -246,26 +164,4 @@ impl<'a, const N: usize> CpiEncode<N> for RawEncoded<'a, N> {
         core::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr.add(offset), self.bytes.len());
         offset + self.bytes.len()
     }
-}
-
-/// Helper to encode a `RawEncoded` with a different target prefix size.
-///
-/// When source prefix size differs from target, this re-writes the prefix
-/// while memcpy-ing the data. Call via `cpi_reencode::<TARGET>(&raw)`.
-///
-/// # Safety
-///
-/// Caller must ensure `ptr.add(offset)..ptr.add(offset + TARGET +
-/// raw.data().len())` is valid for writes.
-#[inline(always)]
-pub unsafe fn cpi_reencode<const TARGET: usize, const SOURCE: usize>(
-    raw: &RawEncoded<'_, SOURCE>,
-    ptr: *mut u8,
-    offset: usize,
-) -> usize {
-    let value = raw.prefix_value();
-    let data = raw.data();
-    write_prefix::<TARGET>(ptr, offset, value);
-    core::ptr::copy_nonoverlapping(data.as_ptr(), ptr.add(offset + TARGET), data.len());
-    offset + TARGET + data.len()
 }

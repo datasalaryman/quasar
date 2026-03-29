@@ -149,21 +149,6 @@ pub(super) fn generate_fixed_account(
             }
         }
 
-        // --- Keep ZeroCopyDeref for backward compat (InterfaceAccount, SPL types) ---
-
-        impl ZeroCopyDeref for #name {
-            type Target = #zc_mod::#zc_name;
-
-            #[inline(always)]
-            fn deref_from(view: &AccountView) -> &Self::Target {
-                unsafe { &*(view.data_ptr().add(#disc_len) as *const #zc_mod::#zc_name) }
-            }
-
-            #[inline(always)]
-            fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-                unsafe { &mut *(view.data_mut_ptr().add(#disc_len) as *mut #zc_mod::#zc_name) }
-            }
-        }
     }
     .into()
 }

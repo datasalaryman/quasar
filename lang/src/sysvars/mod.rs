@@ -4,10 +4,6 @@
 //! `impl_sysvar_get!` macro for implementing it. Concrete implementations
 //! live in the `clock` and `rent` submodules.
 
-#[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
-use core::hint::black_box;
-#[cfg(any(target_os = "solana", target_arch = "bpf"))]
-use solana_define_syscall::definitions::sol_get_sysvar;
 use {solana_address::Address, solana_program_error::ProgramError};
 
 pub mod clock;
@@ -88,45 +84,4 @@ macro_rules! impl_sysvar_get {
             }
         }
     };
-}
-
-/// Read raw sysvar bytes at a given offset.
-///
-/// # Safety
-///
-/// - `dst` must point to a buffer of at least `len` bytes.
-/// - The caller is responsible for interpreting the raw bytes correctly.
-#[inline]
-pub unsafe fn get_sysvar_unchecked(
-    dst: *mut u8,
-    sysvar_id: &Address,
-    offset: usize,
-    len: usize,
-) -> Result<(), ProgramError> {
-    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
-    {
-        // SAFETY: Caller guarantees `dst` is valid for `len` bytes.
-        // `sysvar_id` points to a valid 32-byte address.
-        let result = unsafe {
-            sol_get_sysvar(
-                sysvar_id as *const _ as *const u8,
-                dst,
-                offset as u64,
-                len as u64,
-            )
-        };
-
-        match result {
-            0 => Ok(()),
-            OFFSET_LENGTH_EXCEEDS_SYSVAR => Err(ProgramError::InvalidArgument),
-            SYSVAR_NOT_FOUND => Err(ProgramError::UnsupportedSysvar),
-            _ => Err(ProgramError::UnsupportedSysvar),
-        }
-    }
-
-    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
-    {
-        black_box((dst, sysvar_id, offset, len));
-        Ok(())
-    }
 }

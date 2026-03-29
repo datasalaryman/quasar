@@ -689,18 +689,38 @@ pub(super) fn process_fields(
         // Generate type-specific validation (owner, discriminator, address).
         // Flags are already validated via u32 header in parse_accounts.
         //
-        // For init/init_if_needed fields with token/mint/ATA attrs, skip
-        // Account<T> and InterfaceAccount<T> checks here — the init block's
-        // inline validation handles everything (owner, data_len,
-        // is_initialized, field-specific). This avoids redundant key
-        // comparisons and saves CUs. Generic Account<T> init_if_needed
-        // also validates inline (owner + discriminator in the else-branch).
+        // Skip the generic Account<T>/InterfaceAccount<T> owner + data_len
+        // checks when a more specific validation will run for the same field:
+        //
+        //   1. init / init_if_needed — the init block's inline validation covers owner,
+        //      data_len, is_initialized, and field-specific checks. Generic Account<T>
+        //      init_if_needed also validates inline (owner + discriminator in the
+        //      else-branch).
+        //
+        //   2. Non-init fields with token/mint/ATA attrs — `validate_token_account`,
+        //      `validate_mint`, or `validate_ata` already checks owner + data_len as
+        //      their first two operations. Running CheckOwner + AccountCheck beforehand
+        //      is pure redundancy (~60 CU per field).
+        //
+        //   3. Dynamic Account<T<'info>> fields — `T::from_account_view()` in the field
+        //      construct already calls check_owner + AccountCheck::check
+        //      (dynamic.rs:421-422). Running them again in field_checks is redundant
+        //      (~50-80 CU per dynamic field).
+        let has_validate_call = attrs.token_mint.is_some()
+            || attrs.associated_token_mint.is_some()
+            || attrs.mint_decimals.is_some();
         let skip_mut_checks = attrs.is_init
             || (attrs.init_if_needed
                 && matches!(
                     kind,
                     FieldKind::Account { .. } | FieldKind::InterfaceAccount { .. }
-                ));
+                ))
+            || (has_validate_call
+                && matches!(
+                    kind,
+                    FieldKind::Account { .. } | FieldKind::InterfaceAccount { .. }
+                ))
+            || (is_dynamic && matches!(kind, FieldKind::Account { .. }));
         let mut this_field_checks: Vec<proc_macro2::TokenStream> = Vec::new();
 
         match &kind {

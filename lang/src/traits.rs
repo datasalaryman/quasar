@@ -11,7 +11,6 @@
 //! **Parsing and validation** — drive the account deserialization pipeline:
 //! - `ParseAccounts` — parse and validate a set of accounts from raw
 //!   `AccountView` slices
-//! - `FromAccountView` — construct a single typed wrapper from an `AccountView`
 //! - `AccountCheck` — runtime validation hook called during parsing
 //! - `CheckOwner` — verify an account's on-chain owner matches expectations
 //! - `AccountCount` — declare how many accounts a struct consumes
@@ -30,13 +29,6 @@
 //! **Events** — `Event` supports dual emission (log-based and self-CPI).
 
 use crate::prelude::{AccountView, Address, ProgramError};
-
-/// Construct a typed account wrapper from a raw [`AccountView`].
-///
-/// Implemented by the `define_account!` macro and by `Account<T>`.
-pub trait FromAccountView<'info>: Sized {
-    fn from_account_view(view: &'info AccountView) -> Result<Self, ProgramError>;
-}
 
 /// Declares the expected on-chain owner for an account type.
 ///

@@ -309,7 +309,12 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                 let inner_ty = composite_types[fi].as_ref().unwrap();
                 let bumps_var = format_ident!("__composite_bumps_{}", field_name);
                 field_lets.push(quote! {
-                    let (__chunk, __rest) = __accounts_rest.split_at_mut(<#inner_ty as AccountCount>::COUNT);
+                    // SAFETY: dispatch! guarantees the total slice has COUNT
+                    // elements; each split_at_mut_unchecked carves off exactly
+                    // the inner type's COUNT.
+                    let (__chunk, __rest) = unsafe {
+                        __accounts_rest.split_at_mut_unchecked(<#inner_ty as AccountCount>::COUNT)
+                    };
                     __accounts_rest = __rest;
                     let (#field_name, #bumps_var) = <#inner_ty as ParseAccounts>::parse(
                         __chunk,
@@ -322,9 +327,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     .push(quote! { #field_name: #bumps_var });
             } else {
                 field_lets.push(quote! {
-                    let (__chunk, __rest) = __accounts_rest.split_at_mut(1);
+                    // SAFETY: dispatch! guarantees sufficient elements remain.
+                    let (__chunk, __rest) = unsafe { __accounts_rest.split_at_mut_unchecked(1) };
                     __accounts_rest = __rest;
-                    let #field_name = &mut __chunk[0];
+                    let #field_name = unsafe { __chunk.get_unchecked_mut(0) };
                 });
             }
         }
@@ -397,12 +403,13 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    // SAFETY: `dispatch!` in the entrypoint verifies `__num_accounts >= COUNT`
+    // and creates an `[AccountView; COUNT]` buffer before calling `parse()`.
+    // The slice always has exactly `COUNT` elements, so length checks and
+    // pattern-match fallbacks are unreachable.
     let parse_body = if has_composites {
         if has_any_checks {
             quote! {
-                if accounts.len() < Self::COUNT {
-                    return Err(ProgramError::NotEnoughAccountKeys);
-                }
                 #(#field_lets)*
                 #(#seed_addr_captures)*
                 #(#bump_init_vars)*
@@ -423,9 +430,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             }
         } else {
             quote! {
-                if accounts.len() < Self::COUNT {
-                    return Err(ProgramError::NotEnoughAccountKeys);
-                }
                 #(#field_lets)*
 
                 Ok((Self {
@@ -435,8 +439,9 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     } else if has_any_checks {
         quote! {
+            // SAFETY: dispatch! guarantees accounts.len() == Self::COUNT.
             let [#(#field_names),*] = accounts else {
-                return Err(ProgramError::NotEnoughAccountKeys);
+                unsafe { core::hint::unreachable_unchecked() }
             };
 
             #(#seed_addr_captures)*
@@ -458,8 +463,9 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
+            // SAFETY: dispatch! guarantees accounts.len() == Self::COUNT.
             let [#(#field_names),*] = accounts else {
-                return Err(ProgramError::NotEnoughAccountKeys);
+                unsafe { core::hint::unreachable_unchecked() }
             };
 
             Ok((Self {
@@ -574,6 +580,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 fn parse(accounts: &'info mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
                     Self::parse_with_instruction_data(accounts, &[], program_id)
                 }
 
@@ -583,6 +590,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     __ix_data: &'info [u8],
                     __program_id: &Address,
                 ) -> Result<(Self, Self::Bumps), ProgramError> {
+                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
                     #ix_arg_extraction
                     #parse_body
                 }
@@ -597,6 +605,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 fn parse(accounts: &'info mut [AccountView], __program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
                     #parse_body
                 }
 

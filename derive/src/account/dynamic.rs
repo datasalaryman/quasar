@@ -316,6 +316,94 @@ pub(super) fn generate_dynamic_account(
         }
     }
 
+    // --- 9b. Fused check+parse stmts — validate AND cache offsets in a
+    // single pass (saves re-walking all dynamic prefixes). Used by
+    // `from_account_view` instead of separate check() + __parse().
+    let mut fused_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+    for (dyn_idx, (_f, kind)) in dyn_fields.iter().enumerate() {
+        match kind {
+            DynFieldKind::Str { prefix, max, .. } => {
+                let read = prefix.gen_read_len();
+                let pb = prefix.bytes();
+                let cache = if dyn_idx < num_offsets {
+                    quote! { __off[#dyn_idx] = __offset as u32; }
+                } else {
+                    quote! {}
+                };
+                fused_stmts.push(quote! {
+                    {
+                        if __offset + #pb > __data_len {
+                            return Err(ProgramError::AccountDataTooSmall);
+                        }
+                        let __len = #read;
+                        __offset += #pb;
+                        if __len > #max {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                        if __offset + __len > __data_len {
+                            return Err(ProgramError::AccountDataTooSmall);
+                        }
+                        if core::str::from_utf8(&__data[__offset..__offset + __len]).is_err() {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                        __offset += __len;
+                        #cache
+                    }
+                });
+            }
+            DynFieldKind::Tail { element } => {
+                let validate_utf8 = matches!(element, TailElement::Str);
+                if validate_utf8 {
+                    fused_stmts.push(quote! {
+                        {
+                            let __tail = &__data[__offset..__data_len];
+                            if core::str::from_utf8(__tail).is_err() {
+                                return Err(ProgramError::InvalidAccountData);
+                            }
+                            __offset = __data_len;
+                        }
+                    });
+                } else {
+                    fused_stmts.push(quote! {
+                        {
+                            __offset = __data_len;
+                        }
+                    });
+                }
+                // Tail is always last — no offset to cache
+            }
+            DynFieldKind::Vec { elem, prefix, max } => {
+                let read = prefix.gen_read_len();
+                let pb = prefix.bytes();
+                let cache = if dyn_idx < num_offsets {
+                    quote! { __off[#dyn_idx] = __offset as u32; }
+                } else {
+                    quote! {}
+                };
+                fused_stmts.push(quote! {
+                    {
+                        if __offset + #pb > __data_len {
+                            return Err(ProgramError::AccountDataTooSmall);
+                        }
+                        let __count = #read;
+                        __offset += #pb;
+                        if __count > #max {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                        let __byte_len = __count
+                            .checked_mul(core::mem::size_of::<#elem>())
+                            .ok_or(ProgramError::InvalidAccountData)?;
+                        if __offset + __byte_len > __data_len {
+                            return Err(ProgramError::AccountDataTooSmall);
+                        }
+                        __offset += __byte_len;
+                        #cache
+                    }
+                });
+            }
+        }
+    }
+
     // --- 10. Accessor methods (O(1) via cached offsets) ---
     let acc = accessors::generate_accessors(disc_len, fields_data, field_kinds, &zc_name);
 
@@ -414,15 +502,33 @@ pub(super) fn generate_dynamic_account(
 
             /// Parse an AccountView into an offset-cached view, wrapped in Account<T>.
             ///
-            /// Validates discriminator and walks inline prefixes ONCE to cache
-            /// byte offsets for O(1) field access.
+            /// Validates owner, discriminator, and dynamic field prefixes in a
+            /// fused pass that also caches byte offsets for O(1) field access.
             #[inline(always)]
             pub fn from_account_view(view: &#lt mut AccountView) -> Result<Account<Self>, ProgramError> {
                 <Self as CheckOwner>::check_owner(view)?;
-                <Self as AccountCheck>::check(view)?;
-                Self::__parse(view)
+                // Fused check+parse: validates AND caches offsets in one walk,
+                // avoiding the double prefix traversal of check() + __parse().
+                let __data = unsafe { view.borrow_unchecked() };
+                let __data_len = __data.len();
+                let __min = #disc_len + core::mem::size_of::<#zc_name>() + #prefix_space;
+                if __data_len < __min {
+                    return Err(ProgramError::AccountDataTooSmall);
+                }
+                #(
+                    if unsafe { *__data.get_unchecked(#disc_indices) } != #disc_bytes {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                )*
+                let mut __offset = #disc_len + core::mem::size_of::<#zc_name>();
+                let mut __off = #off_array_init;
+                #(#fused_stmts)*
+                let _ = __offset;
+                Ok(Account::wrap(Self { __view: view, __off }))
             }
 
+            /// Parse without validation (offsets only). Used when check_owner +
+            /// AccountCheck::check have already been called separately.
             #[inline(always)]
             fn __parse(view: &#lt mut AccountView) -> Result<Account<Self>, ProgramError> {
                 let __data = unsafe { view.borrow_unchecked() };
@@ -439,17 +545,17 @@ pub(super) fn generate_dynamic_account(
                     return Err(ProgramError::Immutable);
                 }
 
-                let zero_len = self.__view.data_len().min(#disc_len);
-                if zero_len > 0 {
-                    unsafe {
-                        core::ptr::write_bytes(self.__view.data_mut_ptr(), 0, zero_len);
-                    }
+                // disc_len >= 1 (compile-time enforced) and data_len >= disc_len
+                // (from AccountCheck::check during parse), so #disc_len is
+                // always in bounds.
+                unsafe {
+                    core::ptr::write_bytes(self.__view.data_mut_ptr(), 0, #disc_len);
                 }
 
+                // wrapping_add: total SOL supply (~5.8e17) fits within u64::MAX.
                 let new_lamports = destination
                     .lamports()
-                    .checked_add(self.__view.lamports())
-                    .ok_or(ProgramError::InvalidArgument)?;
+                    .wrapping_add(self.__view.lamports());
                 quasar_lang::accounts::account::set_lamports(destination, new_lamports);
                 self.__view.set_lamports(0);
                 unsafe { self.__view.assign(&quasar_lang::cpi::system::SYSTEM_PROGRAM_ID) };

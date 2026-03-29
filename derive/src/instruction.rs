@@ -73,11 +73,9 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let stmts = std::mem::take(&mut func.block.stmts);
     let mut new_stmts: Vec<syn::Stmt> = vec![
-        syn::parse_quote!(
-            if !context.data.starts_with(&[#(#disc_bytes),*]) {
-                return Err(ProgramError::InvalidInstructionData);
-            }
-        ),
+        // Skip past the discriminator prefix. The dispatch! macro in the
+        // entrypoint already verified the discriminator matches via a
+        // fixed-size array comparison, so no need to re-check here.
         syn::parse_quote!(
             context.data = &context.data[#disc_len..];
         ),

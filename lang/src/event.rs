@@ -4,7 +4,9 @@
 //! - **Self-CPI** (`emit_cpi!`) — ~1,000 CU, unforgeable (program ID in trace).
 
 use {
-    crate::cpi::{cpi_account_from_view, invoke_raw, InstructionAccount, Seed, Signer},
+    crate::cpi::{
+        cpi_account_from_view, invoke_raw, result_from_raw, InstructionAccount, Seed, Signer,
+    },
     solana_account_view::AccountView,
     solana_program_error::ProgramError,
 };
@@ -34,7 +36,7 @@ pub fn emit_event_cpi(
     // SAFETY: All pointer/length arguments are derived from stack-local
     // values that outlive the syscall. Single account (count = 1) ensures
     // the pointer-to-element casts are valid.
-    unsafe {
+    let result = unsafe {
         invoke_raw(
             program.address(),
             &instruction_account as *const _,
@@ -44,8 +46,8 @@ pub fn emit_event_cpi(
             &cpi_account as *const _,
             1,
             &[signer],
-        );
-    }
+        )
+    };
 
-    Ok(())
+    result_from_raw(result)
 }
