@@ -4,10 +4,7 @@
 //! `extract_generic_inner_type` + string-matching call sites with a single
 //! enum that enables exhaustive `match` dispatch.
 
-use {
-    crate::helpers::extract_generic_inner_type,
-    syn::Type,
-};
+use {crate::helpers::extract_generic_inner_type, syn::Type};
 
 /// The wrapper type of an account field, with inner type where applicable.
 ///
@@ -87,16 +84,17 @@ impl<'a> FieldKind<'a> {
     }
 
     pub fn is_executable(&self) -> bool {
-        matches!(self, FieldKind::Program { .. } | FieldKind::Interface { .. })
+        matches!(
+            self,
+            FieldKind::Program { .. } | FieldKind::Interface { .. }
+        )
     }
 
     /// Check if the inner type (for Account/InterfaceAccount) matches any of
     /// the given names.
     pub fn inner_name_matches(&self, names: &[&str]) -> bool {
         let inner = match self {
-            FieldKind::Account { inner_ty } | FieldKind::InterfaceAccount { inner_ty } => {
-                inner_ty
-            }
+            FieldKind::Account { inner_ty } | FieldKind::InterfaceAccount { inner_ty } => inner_ty,
             _ => return false,
         };
         type_base_name(inner)
@@ -104,7 +102,8 @@ impl<'a> FieldKind<'a> {
             .is_some_and(|n| names.contains(&n))
     }
 
-    /// Check if this is a token or mint type (Token, Token2022, Mint, Mint2022).
+    /// Check if this is a token or mint type (Token, Token2022, Mint,
+    /// Mint2022).
     pub fn is_token_or_mint(&self) -> bool {
         self.inner_name_matches(&["Token", "Token2022", "Mint", "Mint2022"])
     }
@@ -142,9 +141,7 @@ impl FieldFlags {
         is_ref_mut: bool,
     ) -> Self {
         let is_signer = matches!(kind, FieldKind::Signer)
-            || (attrs.is_init
-                && attrs.seeds.is_none()
-                && attrs.associated_token_mint.is_none());
+            || (attrs.is_init && attrs.seeds.is_none() && attrs.associated_token_mint.is_none());
 
         let is_writable = is_ref_mut || attrs.is_mut;
 
@@ -170,7 +167,8 @@ impl FieldFlags {
         }
     }
 
-    /// The expected u32 header value (little-endian: [borrow, signer, writable, exec]).
+    /// The expected u32 header value (little-endian: [borrow, signer, writable,
+    /// exec]).
     pub fn header_constant(&self) -> u32 {
         let mut h: u32 = 0xFF; // byte 0: NOT_BORROWED
         if self.is_signer {
@@ -184,12 +182,31 @@ impl FieldFlags {
         }
         h
     }
-
 }
 
 /// Mask for the dup-aware path: covers all flag bytes (skips borrow_state).
 /// Used for single-comparison flag validation in mod.rs Task 3.
 pub(super) const FLAG_MASK: u32 = 0xFFFFFF00;
+
+/// DRY codegen helper: emit a boolean-condition guard with debug logging.
+///
+/// Generates `if unlikely(condition) { [debug: log msg]; return Err(error); }`.
+/// Use for checks where the condition and error are explicit (address
+/// mismatches, interface checks, etc.) rather than wrapping a Result-returning
+/// expression.
+pub(super) fn debug_guard(
+    condition: proc_macro2::TokenStream,
+    debug_msg: proc_macro2::TokenStream,
+    error: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    quote::quote! {
+        if quasar_lang::utils::hint::unlikely(#condition) {
+            #[cfg(feature = "debug")]
+            quasar_lang::prelude::log(&#debug_msg);
+            return Err(#error);
+        }
+    }
+}
 
 /// DRY codegen helper: emit a check with debug logging on failure.
 ///
@@ -197,7 +214,6 @@ pub(super) const FLAG_MASK: u32 = 0xFFFFFF00;
 /// In release: just `check_expr?;`
 ///
 /// This replaces the 8-line debug/non-debug pattern repeated ~20 times.
-#[allow(dead_code)]
 pub(super) fn debug_checked(
     field_name_str: &str,
     check_expr: proc_macro2::TokenStream,

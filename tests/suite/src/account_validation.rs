@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Account, Instruction, Pubkey, ProgramError},
+    quasar_svm::{Account, Instruction, ProgramError, Pubkey},
     quasar_test_errors::cpi::*,
 };
 
@@ -15,9 +15,7 @@ fn valid_account() {
     let authority = Pubkey::new_unique();
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        error_test_account(account, authority, 42),
-    ]);
+    let result = svm.process_instruction(&ix, &[error_test_account(account, authority, 42)]);
     assert!(result.is_ok(), "valid: {:?}", result.raw_result);
 }
 
@@ -30,9 +28,15 @@ fn valid_with_extra_data() {
     data.extend_from_slice(&[0u8; 100]); // extra bytes
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            data,
+            quasar_test_errors::ID,
+        )],
+    );
     // Current behavior: oversized data is accepted
     assert!(result.is_ok(), "extra data: {:?}", result.raw_result);
 }
@@ -48,14 +52,15 @@ fn wrong_owner() {
     let authority = Pubkey::new_unique();
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
             account,
             1_000_000,
             build_error_test_data(authority, 42),
             Pubkey::new_unique(), // wrong owner
-        ),
-    ]);
+        )],
+    );
     assert!(result.is_err(), "wrong owner");
     // SVM returns Runtime("IllegalOwner") for owner mismatches
 }
@@ -67,14 +72,15 @@ fn system_program_owner() {
     let authority = Pubkey::new_unique();
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
             account,
             1_000_000,
             build_error_test_data(authority, 42),
             quasar_svm::system_program::ID,
-        ),
-    ]);
+        )],
+    );
     assert!(result.is_err(), "system program owner");
 }
 
@@ -90,9 +96,15 @@ fn wrong_discriminator() {
     data[0] = 99; // wrong disc
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            data,
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "wrong discriminator");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -104,9 +116,15 @@ fn zero_discriminator() {
     let data = vec![0u8; 41]; // disc = 0
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            data,
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "zero discriminator");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -123,9 +141,15 @@ fn data_too_small() {
     data[0] = 1; // correct disc
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            data,
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "data too small");
     result.assert_error(ProgramError::AccountDataTooSmall);
 }
@@ -136,9 +160,15 @@ fn empty_data() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, vec![], quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            vec![],
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "empty data");
     result.assert_error(ProgramError::AccountDataTooSmall);
 }
@@ -151,9 +181,15 @@ fn one_byte_short() {
     data[0] = 1;
 
     let ix: Instruction = AccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            data,
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "one byte short");
     result.assert_error(ProgramError::AccountDataTooSmall);
 }
@@ -174,9 +210,7 @@ fn duplicate_same_address() {
         second: account,
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        error_test_account(account, authority, 42),
-    ]);
+    let result = svm.process_instruction(&ix, &[error_test_account(account, authority, 42)]);
     assert!(result.is_err(), "duplicate should fail");
 }
 
@@ -188,10 +222,13 @@ fn two_distinct_accounts() {
     let authority = Pubkey::new_unique();
 
     let ix: Instruction = TwoAccountsCheckInstruction { first, second }.into();
-    let result = svm.process_instruction(&ix, &[
-        error_test_account(first, authority, 42),
-        error_test_account(second, authority, 99),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            error_test_account(first, authority, 42),
+            error_test_account(second, authority, 99),
+        ],
+    );
     assert!(result.is_ok(), "distinct accounts: {:?}", result.raw_result);
 }
 
@@ -204,7 +241,8 @@ fn system_account_success() {
     let mut svm = svm_errors();
     let target = Pubkey::new_unique();
 
-    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let ix: Instruction =
+        quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
     let result = svm.process_instruction(&ix, &[signer_account(target)]);
     assert!(result.is_ok(), "system account: {:?}", result.raw_result);
 }
@@ -214,10 +252,12 @@ fn system_account_wrong_owner() {
     let mut svm = svm_errors();
     let target = Pubkey::new_unique();
 
-    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(target, 1_000_000, vec![], Pubkey::new_unique()),
-    ]);
+    let ix: Instruction =
+        quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(target, 1_000_000, vec![], Pubkey::new_unique())],
+    );
     assert!(result.is_err(), "wrong owner");
 }
 
@@ -226,10 +266,17 @@ fn system_account_owned_by_program() {
     let mut svm = svm_errors();
     let target = Pubkey::new_unique();
 
-    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(target, 1_000_000, vec![], quasar_test_errors::ID),
-    ]);
+    let ix: Instruction =
+        quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            target,
+            1_000_000,
+            vec![],
+            quasar_test_errors::ID,
+        )],
+    );
     assert!(result.is_err(), "owned by program");
 }
 
@@ -253,15 +300,16 @@ fn program_wrong_id() {
     let wrong = Pubkey::new_unique();
 
     let ix: Instruction = ProgramCheckInstruction { program: wrong }.into();
-    let result = svm.process_instruction(&ix, &[
-        Account {
+    let result = svm.process_instruction(
+        &ix,
+        &[Account {
             address: wrong,
             lamports: 1_000_000,
             data: vec![],
             owner: Pubkey::default(),
             executable: true,
-        },
-    ]);
+        }],
+    );
     assert!(result.is_err(), "wrong program ID");
     result.assert_error(ProgramError::IncorrectProgramId);
 }
@@ -272,15 +320,16 @@ fn program_not_executable() {
     let system = quasar_svm::system_program::ID;
 
     let ix: Instruction = ProgramCheckInstruction { program: system }.into();
-    let result = svm.process_instruction(&ix, &[
-        Account {
+    let result = svm.process_instruction(
+        &ix,
+        &[Account {
             address: system,
             lamports: 1,
             data: vec![],
             owner: Pubkey::default(),
             executable: false,
-        },
-    ]);
+        }],
+    );
     assert!(result.is_err(), "not executable");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -295,10 +344,20 @@ fn unchecked_any_owner_passes() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = UncheckedAccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, vec![1, 2, 3], Pubkey::new_unique()),
-    ]);
-    assert!(result.is_ok(), "unchecked any owner: {:?}", result.raw_result);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            vec![1, 2, 3],
+            Pubkey::new_unique(),
+        )],
+    );
+    assert!(
+        result.is_ok(),
+        "unchecked any owner: {:?}",
+        result.raw_result
+    );
 }
 
 #[test]
@@ -307,8 +366,14 @@ fn unchecked_empty_passes() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = UncheckedAccountCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 0, vec![], quasar_svm::system_program::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            0,
+            vec![],
+            quasar_svm::system_program::ID,
+        )],
+    );
     assert!(result.is_ok(), "unchecked empty: {:?}", result.raw_result);
 }

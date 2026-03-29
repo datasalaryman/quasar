@@ -13,7 +13,8 @@ use {
     syn::{Ident, Type},
 };
 
-/// Context needed by init codegen, gathered from DetectedFields + per-field locals.
+/// Context needed by init codegen, gathered from DetectedFields + per-field
+/// locals.
 pub(super) struct InitContext<'a> {
     pub payer: &'a Ident,
     pub system_program: &'a Ident,
@@ -225,14 +226,18 @@ pub(super) fn gen_init_block(
     // --- Mint init ---
     if let Some(decimals_expr) = attrs.mint_decimals.as_ref() {
         let tok_field = ctx.token_program.unwrap();
-        let auth_field = attrs.mint_init_authority.as_ref().ok_or_else(|| -> proc_macro::TokenStream {
-            syn::Error::new_spanned(
-                field_name,
-                "`mint::decimals` requires `mint::authority = <field>`",
-            )
-            .to_compile_error()
-            .into()
-        })?;
+        let auth_field =
+            attrs
+                .mint_init_authority
+                .as_ref()
+                .ok_or_else(|| -> proc_macro::TokenStream {
+                    syn::Error::new_spanned(
+                        field_name,
+                        "`mint::decimals` requires `mint::authority = <field>`",
+                    )
+                    .to_compile_error()
+                    .into()
+                })?;
         let freeze_expr = if let Some(ff) = &attrs.mint_freeze_authority {
             quote! { Some(#ff.address()) }
         } else {
@@ -291,7 +296,7 @@ pub(super) fn gen_init_block(
             pay,
             field_name,
             space_expr,
-            quote! { &crate::ID },
+            quote! { __program_id },
             &signers_setup,
             &signers_ref,
             quote! {
@@ -306,7 +311,15 @@ pub(super) fn gen_init_block(
                 }
             },
         );
-        let block = wrap_init_block(field_name, attrs.init_if_needed, cpi_body, None);
+        let validate = if attrs.init_if_needed {
+            Some(quote! {
+                <#inner_type as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view())?;
+                <#inner_type as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
+            })
+        } else {
+            None
+        };
+        let block = wrap_init_block(field_name, attrs.init_if_needed, cpi_body, validate);
         return Ok(Some(InitBlockResult {
             tokens: block,
             uses_rent: true,
@@ -315,9 +328,9 @@ pub(super) fn gen_init_block(
 
     Err(syn::Error::new_spanned(
         field_name,
-        "#[account(init)] on non-Account<T> type requires `token::mint` and \
-         `token::authority`, `associated_token::mint` and \
-         `associated_token::authority`, or `mint::decimals` and `mint::authority`",
+        "#[account(init)] on non-Account<T> type requires `token::mint` and `token::authority`, \
+         `associated_token::mint` and `associated_token::authority`, or `mint::decimals` and \
+         `mint::authority`",
     )
     .to_compile_error()
     .into())
@@ -365,7 +378,8 @@ pub(super) fn gen_metadata_init(
     })
 }
 
-/// Generate master edition CPI init block. Returns None if no master_edition attrs.
+/// Generate master edition CPI init block. Returns None if no master_edition
+/// attrs.
 pub(super) fn gen_master_edition_init(
     field_name: &Ident,
     attrs: &AccountFieldAttrs,

@@ -4,6 +4,14 @@ use {
     solana_program_error::ProgramError,
 };
 
+// `data_len` (u64) → usize cast in `advance_past_account` is lossless on
+// 64-bit targets (SBF, x86-64, aarch64). Fail compilation on 32-bit where
+// the cast would silently truncate.
+const _: () = assert!(
+    core::mem::size_of::<usize>() >= core::mem::size_of::<u64>(),
+    "remaining accounts buffer navigation requires 64-bit usize"
+);
+
 /// Size of a non-duplicate account entry in the SVM input buffer:
 /// `RuntimeAccount` header + 10 KiB realloc region + u64 padding.
 const ACCOUNT_HEADER: usize = core::mem::size_of::<RuntimeAccount>()

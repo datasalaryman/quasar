@@ -115,7 +115,9 @@ pub(super) fn generate_dynamic_account(
                         {
                             #write_prefix
                             __offset += #pb;
-                            let __bytes = #fname.len() * core::mem::size_of::<#elem>();
+                            let __bytes = #fname.len()
+                                .checked_mul(core::mem::size_of::<#elem>())
+                                .ok_or(ProgramError::InvalidAccountData)?;
                             if __bytes > 0 {
                                 unsafe {
                                     core::ptr::copy_nonoverlapping(
@@ -165,7 +167,9 @@ pub(super) fn generate_dynamic_account(
                     quote! { + #fname.len() }
                 }
                 DynFieldKind::Vec { elem, .. } => {
-                    quote! { + #fname.len() * core::mem::size_of::<#elem>() }
+                    quote! { + #fname.len()
+                    .checked_mul(core::mem::size_of::<#elem>())
+                    .ok_or(ProgramError::InvalidAccountData)? }
                 }
             }
         })
@@ -435,7 +439,7 @@ pub(super) fn generate_dynamic_account(
                     return Err(ProgramError::Immutable);
                 }
 
-                let zero_len = self.__view.data_len().min(8);
+                let zero_len = self.__view.data_len().min(#disc_len);
                 if zero_len > 0 {
                     unsafe {
                         core::ptr::write_bytes(self.__view.data_mut_ptr(), 0, zero_len);

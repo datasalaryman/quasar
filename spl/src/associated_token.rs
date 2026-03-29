@@ -37,7 +37,10 @@ impl Id for AssociatedTokenProgram {
 /// `find_program_address` syscall (~1,500 CU).
 /// Off-chain, use [`get_associated_token_address_const`] instead.
 #[inline(always)]
-pub fn get_associated_token_address(wallet: &Address, mint: &Address) -> (Address, u8) {
+pub fn get_associated_token_address(
+    wallet: &Address,
+    mint: &Address,
+) -> Result<(Address, u8), quasar_lang::prelude::ProgramError> {
     get_associated_token_address_with_program(wallet, mint, &SPL_TOKEN_ID)
 }
 
@@ -54,14 +57,11 @@ pub fn get_associated_token_address_with_program(
     wallet: &Address,
     mint: &Address,
     token_program: &Address,
-) -> (Address, u8) {
-    match quasar_lang::pda::based_try_find_program_address(
+) -> Result<(Address, u8), quasar_lang::prelude::ProgramError> {
+    quasar_lang::pda::based_try_find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
         &ATA_PROGRAM_ID,
-    ) {
-        Ok(result) => result,
-        Err(_) => panic!("ATA address derivation failed"),
-    }
+    )
 }
 
 /// Const-compatible ATA address derivation (works off-chain and in const

@@ -20,25 +20,25 @@ mod token_state;
 
 // Core account lifecycle
 #[cfg(test)]
+mod close;
+#[cfg(test)]
+mod discriminator;
+#[cfg(test)]
 mod init;
 #[cfg(test)]
 mod init_if_needed;
 #[cfg(test)]
-mod close;
+mod optional_accounts;
 #[cfg(test)]
 mod realloc;
-#[cfg(test)]
-mod discriminator;
-#[cfg(test)]
-mod optional_accounts;
 
 // Validation & constraints
 #[cfg(test)]
-mod constraints;
+mod account_flags;
 #[cfg(test)]
 mod account_validation;
 #[cfg(test)]
-mod account_flags;
+mod constraints;
 
 // CPI & errors
 #[cfg(test)]

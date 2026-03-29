@@ -3,7 +3,8 @@ use {
     solana_account_view::{RuntimeAccount, MAX_PERMITTED_DATA_INCREASE},
 };
 
-// keys_eq and all 32-byte comparisons assume Address is [u8; 32] with alignment 1.
+// keys_eq and all 32-byte comparisons assume Address is [u8; 32] with alignment
+// 1.
 const _: () = {
     assert!(core::mem::size_of::<solana_address::Address>() == 32);
     assert!(core::mem::align_of::<solana_address::Address>() == 1);
@@ -211,7 +212,9 @@ impl<T: Owner + AsAccountView + crate::traits::Discriminator> Account<T> {
         // SAFETY: Zero the discriminator region at the start of account data.
         // `data_mut_ptr()` is valid for `data_len` bytes, and `zero_len` is
         // capped at min(data_len, discriminator_len).
-        let zero_len = view.data_len().min(<T as crate::traits::Discriminator>::DISCRIMINATOR.len());
+        let zero_len = view
+            .data_len()
+            .min(<T as crate::traits::Discriminator>::DISCRIMINATOR.len());
         unsafe { core::ptr::write_bytes(view.data_mut_ptr(), 0, zero_len) };
 
         // wrapping_add: total SOL supply (~5.8e17) fits within u64::MAX.

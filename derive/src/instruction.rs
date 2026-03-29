@@ -309,7 +309,9 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         ));
                         new_stmts.push(syn::parse_quote!(
-                            let __dyn_byte_len = __dyn_count * core::mem::size_of::<#elem>();
+                            let __dyn_byte_len = __dyn_count
+                                .checked_mul(core::mem::size_of::<#elem>())
+                                .ok_or(ProgramError::InvalidInstructionData)?;
                         ));
                         new_stmts.push(syn::parse_quote!(
                             if __data.len() < __offset + __dyn_byte_len {

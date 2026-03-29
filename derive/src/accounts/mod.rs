@@ -161,9 +161,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             let account_index = buf_offset.to_string();
 
             if is_optional || attrs.dup {
-                // Dup-aware path: single masked u32 comparison replaces 2-3 separate flag checks.
-                // For optional accounts: sentinel guard wraps ALL checks (address == program_id
-                // means None, skip validation entirely).
+                // Dup-aware path: single masked u32 comparison replaces 2-3 separate flag
+                // checks. For optional accounts: sentinel guard wraps ALL
+                // checks (address == program_id means None, skip validation
+                // entirely).
                 let flag_mask: u32 = field_kind::FLAG_MASK;
                 let expected_masked = expected_header & flag_mask;
                 let flag_check = quote! {
@@ -343,9 +344,8 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     // --- Parse body generation (3 code paths) ---
 
-    let has_any_checks = !pf.field_checks.is_empty()
-        || !pf.init_pda_checks.is_empty()
-        || !pf.init_blocks.is_empty();
+    let has_any_checks =
+        !pf.field_checks.is_empty() || !pf.init_pda_checks.is_empty() || !pf.init_blocks.is_empty();
 
     let seed_addr_captures = &pf.seed_addr_captures;
     let bump_init_vars = &pf.bump_init_vars;

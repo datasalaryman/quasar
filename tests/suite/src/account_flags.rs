@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Instruction, Pubkey, ProgramError},
+    quasar_svm::{Instruction, ProgramError, Pubkey},
     quasar_test_misc::cpi::*,
 };
 
@@ -45,9 +45,8 @@ fn mut_success() {
         new_value: 99,
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, Pubkey::new_unique(), 42, 0),
-    ]);
+    let result =
+        svm.process_instruction(&ix, &[simple_account(account, Pubkey::new_unique(), 42, 0)]);
     assert!(result.is_ok(), "mut: {:?}", result.raw_result);
 }
 
@@ -62,13 +61,15 @@ fn mut_write_persists() {
         new_value: 99,
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, authority, 42, 0),
-    ]);
+    let result = svm.process_instruction(&ix, &[simple_account(account, authority, 42, 0)]);
     assert!(result.is_ok(), "mut write: {:?}", result.raw_result);
 
     let acc = result.account(&account).expect("account");
-    assert_eq!(&acc.data[33..41], &99u64.to_le_bytes(), "written value persisted");
+    assert_eq!(
+        &acc.data[33..41],
+        &99u64.to_le_bytes(),
+        "written value persisted"
+    );
 }
 
 #[test]
@@ -83,9 +84,8 @@ fn mut_not_writable() {
     .into();
     ix.accounts[0].is_writable = false;
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, Pubkey::new_unique(), 42, 0),
-    ]);
+    let result =
+        svm.process_instruction(&ix, &[simple_account(account, Pubkey::new_unique(), 42, 0)]);
     assert!(result.is_err(), "not writable");
     result.assert_error(ProgramError::Immutable);
 }
@@ -106,10 +106,13 @@ fn signer_and_mut_success() {
         new_value: 99,
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, Pubkey::new_unique(), 42, 0),
-        signer_account(signer),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(account, Pubkey::new_unique(), 42, 0),
+            signer_account(signer),
+        ],
+    );
     assert!(result.is_ok(), "signer+mut: {:?}", result.raw_result);
 }
 
@@ -127,10 +130,13 @@ fn signer_and_mut_missing_signer() {
     .into();
     ix.accounts[1].is_signer = false;
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, Pubkey::new_unique(), 42, 0),
-        signer_account(signer),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(account, Pubkey::new_unique(), 42, 0),
+            signer_account(signer),
+        ],
+    );
     assert!(result.is_err(), "missing signer");
     result.assert_error(ProgramError::MissingRequiredSignature);
 }
@@ -149,10 +155,13 @@ fn signer_and_mut_not_writable() {
     .into();
     ix.accounts[0].is_writable = false;
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, Pubkey::new_unique(), 42, 0),
-        signer_account(signer),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(account, Pubkey::new_unique(), 42, 0),
+            signer_account(signer),
+        ],
+    );
     assert!(result.is_err(), "not writable");
     result.assert_error(ProgramError::Immutable);
 }
@@ -174,7 +183,11 @@ fn dup_mut_same_account_succeeds() {
     }
     .into();
     let result = svm.process_instruction(&ix, &[signer_account(account)]);
-    assert!(result.is_ok(), "dup mut same account: {:?}", result.raw_result);
+    assert!(
+        result.is_ok(),
+        "dup mut same account: {:?}",
+        result.raw_result
+    );
 }
 
 #[test]
@@ -190,7 +203,11 @@ fn dup_signer_same_account_succeeds() {
     }
     .into();
     let result = svm.process_instruction(&ix, &[signer_account(account)]);
-    assert!(result.is_ok(), "dup signer same account: {:?}", result.raw_result);
+    assert!(
+        result.is_ok(),
+        "dup signer same account: {:?}",
+        result.raw_result
+    );
 }
 
 #[test]
@@ -207,10 +224,13 @@ fn three_accounts_no_dup_rejects_same() {
         third: shared, // same as second
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        signer_account(signer),
-        signer_account(shared), // just needs some account
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            signer_account(signer),
+            signer_account(shared), // just needs some account
+        ],
+    );
     assert!(result.is_err(), "should reject dup without #[account(dup)]");
 }
 
@@ -232,10 +252,13 @@ fn double_mut_distinct_accounts() {
         account_b: b,
     }
     .into();
-    let result = svm.process_instruction(&ix, &[
-        signer_account(signer),
-        simple_account(a, authority, 42, 0),
-        simple_account(b, authority, 99, 0),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            signer_account(signer),
+            simple_account(a, authority, 42, 0),
+            simple_account(b, authority, 99, 0),
+        ],
+    );
     assert!(result.is_ok(), "double mut: {:?}", result.raw_result);
 }

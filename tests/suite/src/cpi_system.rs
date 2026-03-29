@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Account, Instruction, Pubkey, ProgramError},
+    quasar_svm::{Account, Instruction, ProgramError, Pubkey},
     quasar_test_misc::cpi::*,
 };
 
@@ -25,10 +25,10 @@ fn create_success() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(payer),
-        empty_account(new_account),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[rich_signer_account(payer), empty_account(new_account)],
+    );
     assert!(result.is_ok(), "create: {:?}", result.raw_result);
 
     let acc = result.account(&new_account).expect("created account");
@@ -54,10 +54,10 @@ fn create_zero_space() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(payer),
-        empty_account(new_account),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[rich_signer_account(payer), empty_account(new_account)],
+    );
     assert!(result.is_ok(), "zero space: {:?}", result.raw_result);
 }
 
@@ -78,10 +78,10 @@ fn create_large_space() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(payer),
-        empty_account(new_account),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[rich_signer_account(payer), empty_account(new_account)],
+    );
     assert!(result.is_ok(), "large space: {:?}", result.raw_result);
     let acc = result.account(&new_account).expect("account");
     assert_eq!(acc.data.len(), 10_000);
@@ -103,16 +103,19 @@ fn create_insufficient_funds() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        Account {
-            address: payer,
-            lamports: 1,
-            data: vec![],
-            owner: quasar_svm::system_program::ID,
-            executable: false,
-        },
-        empty_account(new_account),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            Account {
+                address: payer,
+                lamports: 1,
+                data: vec![],
+                owner: quasar_svm::system_program::ID,
+                executable: false,
+            },
+            empty_account(new_account),
+        ],
+    );
     assert!(result.is_err(), "insufficient funds");
 }
 
@@ -134,10 +137,7 @@ fn transfer_success() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(from),
-        signer_account(to),
-    ]);
+    let result = svm.process_instruction(&ix, &[rich_signer_account(from), signer_account(to)]);
     assert!(result.is_ok(), "transfer: {:?}", result.raw_result);
 }
 
@@ -155,10 +155,7 @@ fn transfer_zero() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(from),
-        signer_account(to),
-    ]);
+    let result = svm.process_instruction(&ix, &[rich_signer_account(from), signer_account(to)]);
     assert!(result.is_ok(), "transfer zero: {:?}", result.raw_result);
 }
 
@@ -177,16 +174,19 @@ fn transfer_full_balance() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        Account {
-            address: from,
-            lamports: balance,
-            data: vec![],
-            owner: quasar_svm::system_program::ID,
-            executable: false,
-        },
-        signer_account(to),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            Account {
+                address: from,
+                lamports: balance,
+                data: vec![],
+                owner: quasar_svm::system_program::ID,
+                executable: false,
+            },
+            signer_account(to),
+        ],
+    );
     assert!(result.is_ok(), "full balance: {:?}", result.raw_result);
 
     let from_acc = result.account(&from).expect("from");
@@ -206,10 +206,11 @@ fn transfer_to_self_borrow_fail() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(account),
-    ]);
-    assert!(result.is_err(), "self-transfer should fail (borrow conflict)");
+    let result = svm.process_instruction(&ix, &[rich_signer_account(account)]);
+    assert!(
+        result.is_err(),
+        "self-transfer should fail (borrow conflict)"
+    );
 }
 
 // ============================================================================
@@ -229,9 +230,7 @@ fn assign_success() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        signer_account(account),
-    ]);
+    let result = svm.process_instruction(&ix, &[signer_account(account)]);
     assert!(result.is_ok(), "assign: {:?}", result.raw_result);
 
     let acc = result.account(&account).expect("account");
@@ -250,8 +249,6 @@ fn assign_to_system_program() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        signer_account(account),
-    ]);
+    let result = svm.process_instruction(&ix, &[signer_account(account)]);
     assert!(result.is_ok(), "assign to system: {:?}", result.raw_result);
 }

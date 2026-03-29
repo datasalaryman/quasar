@@ -1,15 +1,13 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Instruction, Pubkey, ProgramError},
+    quasar_svm::{Instruction, ProgramError, Pubkey},
     quasar_test_misc::cpi::*,
 };
 
 fn setup_account(svm: &mut quasar_svm::QuasarSvm) -> (Pubkey, Pubkey, Pubkey) {
     let payer = Pubkey::new_unique();
-    let (account, _bump) = Pubkey::find_program_address(
-        &[b"simple", payer.as_ref()],
-        &quasar_test_misc::ID,
-    );
+    let (account, _bump) =
+        Pubkey::find_program_address(&[b"simple", payer.as_ref()], &quasar_test_misc::ID);
 
     // Init first
     let ix: Instruction = InitializeInstruction {
@@ -19,15 +17,17 @@ fn setup_account(svm: &mut quasar_svm::QuasarSvm) -> (Pubkey, Pubkey, Pubkey) {
         value: 42,
     }
     .into();
-    let r = svm.process_instruction(&ix, &[
-        rich_signer_account(payer),
-        empty_account(account),
-    ]);
+    let r = svm.process_instruction(&ix, &[rich_signer_account(payer), empty_account(account)]);
     assert!(r.is_ok(), "setup init: {:?}", r.raw_result);
     (payer, account, quasar_svm::system_program::ID)
 }
 
-fn realloc(svm: &mut quasar_svm::QuasarSvm, account: Pubkey, payer: Pubkey, new_space: u64) -> quasar_svm::ExecutionResult {
+fn realloc(
+    svm: &mut quasar_svm::QuasarSvm,
+    account: Pubkey,
+    payer: Pubkey,
+    new_space: u64,
+) -> quasar_svm::ExecutionResult {
     let ix: Instruction = ReallocCheckInstruction {
         account,
         payer,

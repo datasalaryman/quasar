@@ -6,8 +6,12 @@
 //! field attribute combination produces distinct codegen paths.
 
 use {
-    super::attrs::{parse_field_attrs, AccountFieldAttrs},
-    super::field_kind::{strip_ref, type_base_name, FieldFlags, FieldKind},
+    super::{
+        attrs::{parse_field_attrs, AccountFieldAttrs},
+        field_kind::{
+            debug_checked, debug_guard, strip_ref, type_base_name, FieldFlags, FieldKind,
+        },
+    },
     crate::helpers::{extract_generic_inner_type, seed_slice_expr_for_parse, strip_generics},
     quote::{format_ident, quote},
     syn::{Expr, ExprLit, Ident, Lit, Type},
@@ -535,12 +539,9 @@ pub(super) fn process_fields(
     }
 
     // Close on token/mint types requires a token program field for CPI close.
-    let has_any_token_close = field_attrs
-        .iter()
-        .zip(fields.iter())
-        .any(|(a, f)| {
-            a.close.is_some() && FieldKind::classify(strip_ref(&f.ty)).is_token_or_mint()
-        });
+    let has_any_token_close = field_attrs.iter().zip(fields.iter()).any(|(a, f)| {
+        a.close.is_some() && FieldKind::classify(strip_ref(&f.ty)).is_token_or_mint()
+    });
 
     // Sweep requires a token program field for transfer_checked CPI.
     let has_any_sweep = field_attrs.iter().any(|a| a.sweep.is_some());
@@ -556,7 +557,9 @@ pub(super) fn process_fields(
                     && a.associated_token_token_program.is_none())
                 || a.mint_decimals.is_some();
             let ty = strip_ref(&f.ty);
-            !is_init && needs_program && matches!(FieldKind::classify(ty), FieldKind::InterfaceAccount { .. })
+            !is_init
+                && needs_program
+                && matches!(FieldKind::classify(ty), FieldKind::InterfaceAccount { .. })
         });
 
     let token_program_field = if has_any_token_init
@@ -690,123 +693,113 @@ pub(super) fn process_fields(
         // Account<T> and InterfaceAccount<T> checks here — the init block's
         // inline validation handles everything (owner, data_len,
         // is_initialized, field-specific). This avoids redundant key
-        // comparisons and saves CUs. For generic Account<T> init_if_needed
-        // (no token/mint attrs), keep mut_checks since the init block has
-        // no validate_existing and these are the only defense.
-        let has_inline_validation = attrs.token_mint.is_some()
-            || attrs.associated_token_mint.is_some()
-            || attrs.mint_decimals.is_some();
-        let skip_mut_checks = (attrs.is_init || attrs.init_if_needed) && has_inline_validation;
+        // comparisons and saves CUs. Generic Account<T> init_if_needed
+        // also validates inline (owner + discriminator in the else-branch).
+        let skip_mut_checks = attrs.is_init
+            || (attrs.init_if_needed
+                && matches!(
+                    kind,
+                    FieldKind::Account { .. } | FieldKind::InterfaceAccount { .. }
+                ));
         let mut this_field_checks: Vec<proc_macro2::TokenStream> = Vec::new();
 
         match &kind {
             FieldKind::Account { inner_ty } => {
                 if !skip_mut_checks {
                     let field_name_str = field_name.to_string();
+                    let owner = debug_checked(
+                        &field_name_str,
+                        quote! { <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view()) },
+                        "Owner check failed for account '{}'",
+                    );
+                    let disc = debug_checked(
+                        &field_name_str,
+                        quote! { <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) },
+                        "Discriminator check failed for account '{}': data may be uninitialized \
+                         or corrupted",
+                    );
                     this_field_checks.push(quote! {
-                        #[cfg(feature = "debug")]
-                        if let Err(e) = <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view()) {
-                            quasar_lang::prelude::log(&::alloc::format!("Owner check failed for account '{}'", #field_name_str));
-                            return Err(e);
-                        }
-                        #[cfg(not(feature = "debug"))]
-                        <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view())?;
-
-                        #[cfg(feature = "debug")]
-                        if let Err(e) = <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) {
-                            quasar_lang::prelude::log(&::alloc::format!("Discriminator check failed for account '{}': data may be uninitialized or corrupted", #field_name_str));
-                            return Err(e);
-                        }
-                        #[cfg(not(feature = "debug"))]
-                        <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
+                        #owner
+                        #disc
                     });
                 }
             }
             FieldKind::InterfaceAccount { inner_ty } => {
                 if !skip_mut_checks {
                     let field_name_str = field_name.to_string();
-                    this_field_checks.push(quote! {
-                        {
-                            let __owner = #field_name.to_account_view().owner();
-                            if quasar_lang::utils::hint::unlikely(
+                    let disc = debug_checked(
+                        &field_name_str,
+                        quote! { <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) },
+                        "Account check failed for interface account '{}': data may be \
+                         uninitialized or corrupted",
+                    );
+                    let owner_guard = debug_guard(
+                        quote! {
+                            {
+                                let __owner = #field_name.to_account_view().owner();
                                 !quasar_lang::keys_eq(__owner, &quasar_spl::SPL_TOKEN_ID)
                                     && !quasar_lang::keys_eq(__owner, &quasar_spl::TOKEN_2022_ID)
-                            ) {
-                                #[cfg(feature = "debug")]
-                                quasar_lang::prelude::log(&::alloc::format!(
-                                    "Owner check failed for interface account '{}': not owned by SPL Token or Token-2022",
-                                    #field_name_str
-                                ));
-                                return Err(ProgramError::IllegalOwner);
                             }
-                        }
-
-                        #[cfg(feature = "debug")]
-                        if let Err(e) = <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) {
-                            quasar_lang::prelude::log(&::alloc::format!("Account check failed for interface account '{}': data may be uninitialized or corrupted", #field_name_str));
-                            return Err(e);
-                        }
-                        #[cfg(not(feature = "debug"))]
-                        <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
+                        },
+                        quote! { ::alloc::format!(
+                            "Owner check failed for interface account '{}': not owned by SPL Token or Token-2022",
+                            #field_name_str
+                        ) },
+                        quote! { ProgramError::IllegalOwner },
+                    );
+                    this_field_checks.push(quote! {
+                        #owner_guard
+                        #disc
                     });
                 }
             }
             FieldKind::Sysvar { inner_ty } => {
                 let field_name_str = field_name.to_string();
-                this_field_checks.push(quote! {
-                    if !quasar_lang::keys_eq(#field_name.to_account_view().address(), &<#inner_ty as quasar_lang::sysvars::Sysvar>::ID) {
-                        #[cfg(feature = "debug")]
-                        quasar_lang::prelude::log(&::alloc::format!(
-                            "Incorrect sysvar address for account '{}': expected {}, got {}",
-                            #field_name_str,
-                            <#inner_ty as quasar_lang::sysvars::Sysvar>::ID,
-                            #field_name.to_account_view().address()
-                        ));
-                        return Err(ProgramError::IncorrectProgramId);
-                    }
-                });
+                this_field_checks.push(debug_guard(
+                    quote! { !quasar_lang::keys_eq(#field_name.to_account_view().address(), &<#inner_ty as quasar_lang::sysvars::Sysvar>::ID) },
+                    quote! { ::alloc::format!(
+                        "Incorrect sysvar address for account '{}': expected {}, got {}",
+                        #field_name_str,
+                        <#inner_ty as quasar_lang::sysvars::Sysvar>::ID,
+                        #field_name.to_account_view().address()
+                    ) },
+                    quote! { ProgramError::IncorrectProgramId },
+                ));
             }
             FieldKind::Program { inner_ty } => {
                 let field_name_str = field_name.to_string();
-                this_field_checks.push(quote! {
-                    if !quasar_lang::keys_eq(#field_name.to_account_view().address(), &<#inner_ty as quasar_lang::traits::Id>::ID) {
-                        #[cfg(feature = "debug")]
-                        quasar_lang::prelude::log(&::alloc::format!(
-                            "Incorrect program ID for account '{}': expected {}, got {}",
-                            #field_name_str,
-                            <#inner_ty as quasar_lang::traits::Id>::ID,
-                            #field_name.to_account_view().address()
-                        ));
-                        return Err(ProgramError::IncorrectProgramId);
-                    }
-                });
+                this_field_checks.push(debug_guard(
+                    quote! { !quasar_lang::keys_eq(#field_name.to_account_view().address(), &<#inner_ty as quasar_lang::traits::Id>::ID) },
+                    quote! { ::alloc::format!(
+                        "Incorrect program ID for account '{}': expected {}, got {}",
+                        #field_name_str,
+                        <#inner_ty as quasar_lang::traits::Id>::ID,
+                        #field_name.to_account_view().address()
+                    ) },
+                    quote! { ProgramError::IncorrectProgramId },
+                ));
             }
             FieldKind::Interface { inner_ty } => {
                 let field_name_str = field_name.to_string();
-                this_field_checks.push(quote! {
-                    if !<#inner_ty as quasar_lang::traits::ProgramInterface>::matches(#field_name.to_account_view().address()) {
-                        #[cfg(feature = "debug")]
-                        quasar_lang::prelude::log(&::alloc::format!(
-                            "Program interface mismatch for account '{}': address {} does not match any allowed programs",
-                            #field_name_str,
-                            #field_name.to_account_view().address()
-                        ));
-                        return Err(ProgramError::IncorrectProgramId);
-                    }
-                });
+                this_field_checks.push(debug_guard(
+                    quote! { !<#inner_ty as quasar_lang::traits::ProgramInterface>::matches(#field_name.to_account_view().address()) },
+                    quote! { ::alloc::format!(
+                        "Program interface mismatch for account '{}': address {} does not match any allowed programs",
+                        #field_name_str,
+                        #field_name.to_account_view().address()
+                    ) },
+                    quote! { ProgramError::IncorrectProgramId },
+                ));
             }
             FieldKind::SystemAccount => {
                 let field_name_str = field_name.to_string();
                 let base_type = strip_generics(underlying_ty);
-                this_field_checks.push(quote! {
-                    #[cfg(feature = "debug")]
-                    if let Err(e) = <#base_type as quasar_lang::checks::Owner>::check(#field_name.to_account_view()) {
-                        quasar_lang::prelude::log(&::alloc::format!("Owner check failed for account '{}': not owned by system program", #field_name_str));
-                        return Err(e);
-                    }
-                    #[cfg(not(feature = "debug"))]
-                    <#base_type as quasar_lang::checks::Owner>::check(#field_name.to_account_view())?;
-                });
+                let owner = debug_checked(
+                    &field_name_str,
+                    quote! { <#base_type as quasar_lang::checks::Owner>::check(#field_name.to_account_view()) },
+                    "Owner check failed for account '{}': not owned by system program",
+                );
+                this_field_checks.push(owner);
             }
             FieldKind::Signer | FieldKind::Other => {}
         }
@@ -849,16 +842,21 @@ pub(super) fn process_fields(
             ));
         }
 
+        let field_name_str = field_name.to_string();
         for (target, custom_error) in &attrs.has_ones {
             let error = match custom_error {
                 Some(err) => quote! { #err.into() },
                 None => quote! { QuasarError::HasOneMismatch.into() },
             };
-            this_field_checks.push(quote! {
-                if !quasar_lang::keys_eq(&#field_name.#target, #target.to_account_view().address()) {
-                    return Err(#error);
-                }
-            });
+            let target_str = target.to_string();
+            this_field_checks.push(debug_guard(
+                quote! { !quasar_lang::keys_eq(&#field_name.#target, #target.to_account_view().address()) },
+                quote! { ::alloc::format!(
+                    "has_one mismatch: '{}.{}' does not match account '{}'",
+                    #field_name_str, #target_str, #target_str,
+                ) },
+                quote! { #error },
+            ));
         }
 
         for (expr, custom_error) in &attrs.constraints {
@@ -866,11 +864,15 @@ pub(super) fn process_fields(
                 Some(err) => quote! { #err.into() },
                 None => quote! { QuasarError::ConstraintViolation.into() },
             };
-            this_field_checks.push(quote! {
-                if !(#expr) {
-                    return Err(#error);
-                }
-            });
+            let expr_str = quote!(#expr).to_string();
+            this_field_checks.push(debug_guard(
+                quote! { !(#expr) },
+                quote! { ::alloc::format!(
+                    "Constraint violated on '{}': `{}`",
+                    #field_name_str, #expr_str,
+                ) },
+                quote! { #error },
+            ));
         }
 
         if let Some((addr_expr, custom_error)) = &attrs.address {
@@ -878,11 +880,15 @@ pub(super) fn process_fields(
                 Some(err) => quote! { #err.into() },
                 None => quote! { QuasarError::AddressMismatch.into() },
             };
-            this_field_checks.push(quote! {
-                if !quasar_lang::keys_eq(#field_name.to_account_view().address(), &#addr_expr) {
-                    return Err(#error);
-                }
-            });
+            this_field_checks.push(debug_guard(
+                quote! { !quasar_lang::keys_eq(#field_name.to_account_view().address(), &#addr_expr) },
+                quote! { ::alloc::format!(
+                    "Address mismatch on '{}': got {}",
+                    #field_name_str,
+                    #field_name.to_account_view().address(),
+                ) },
+                quote! { #error },
+            ));
         }
 
         // --- Close field tracking ---
@@ -1286,8 +1292,7 @@ pub(super) fn process_fields(
             }
 
             // Master edition CPI (does not use __shared_rent)
-            if let Some(block) =
-                super::init::gen_master_edition_init(field_name, attrs, &init_ctx)
+            if let Some(block) = super::init::gen_master_edition_init(field_name, attrs, &init_ctx)
             {
                 init_blocks.push(block);
             }

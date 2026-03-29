@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Instruction, Pubkey, ProgramError},
+    quasar_svm::{Instruction, ProgramError, Pubkey},
     quasar_test_misc::cpi::*,
 };
 
@@ -11,16 +11,15 @@ fn some_valid() {
     let optional = Pubkey::new_unique();
     let authority = Pubkey::new_unique();
 
-    let ix: Instruction = OptionalAccountInstruction {
-        required,
-        optional,
-    }
-    .into();
+    let ix: Instruction = OptionalAccountInstruction { required, optional }.into();
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(required, authority, 42, 0),
-        simple_account(optional, authority, 99, 0),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(required, authority, 42, 0),
+            simple_account(optional, authority, 99, 0),
+        ],
+    );
     assert!(result.is_ok(), "both present: {:?}", result.raw_result);
 }
 
@@ -38,9 +37,7 @@ fn none_sentinel() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(required, authority, 42, 0),
-    ]);
+    let result = svm.process_instruction(&ix, &[simple_account(required, authority, 42, 0)]);
     assert!(result.is_ok(), "sentinel none: {:?}", result.raw_result);
 }
 
@@ -52,11 +49,18 @@ fn has_one_some_valid() {
 
     let ix: Instruction = OptionalHasOneInstruction { authority, account }.into();
 
-    let result = svm.process_instruction(&ix, &[
-        signer_account(authority),
-        simple_account(account, authority, 42, 0),
-    ]);
-    assert!(result.is_ok(), "has_one some valid: {:?}", result.raw_result);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            signer_account(authority),
+            simple_account(account, authority, 42, 0),
+        ],
+    );
+    assert!(
+        result.is_ok(),
+        "has_one some valid: {:?}",
+        result.raw_result
+    );
 }
 
 #[test]
@@ -71,10 +75,12 @@ fn has_one_none_skipped() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        signer_account(authority),
-    ]);
-    assert!(result.is_ok(), "has_one none skipped: {:?}", result.raw_result);
+    let result = svm.process_instruction(&ix, &[signer_account(authority)]);
+    assert!(
+        result.is_ok(),
+        "has_one none skipped: {:?}",
+        result.raw_result
+    );
 }
 
 #[test]
@@ -86,11 +92,17 @@ fn has_one_some_wrong_authority() {
 
     let ix: Instruction = OptionalHasOneInstruction { authority, account }.into();
 
-    let result = svm.process_instruction(&ix, &[
-        signer_account(authority),
-        simple_account(account, wrong_authority, 42, 0), // wrong authority stored
-    ]);
-    assert!(result.is_err(), "should reject wrong authority on present optional");
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            signer_account(authority),
+            simple_account(account, wrong_authority, 42, 0), // wrong authority stored
+        ],
+    );
+    assert!(
+        result.is_err(),
+        "should reject wrong authority on present optional"
+    );
     result.assert_error(ProgramError::Custom(3005)); // HasOneMismatch
 }
 
@@ -107,21 +119,20 @@ fn some_wrong_owner() {
     let optional = Pubkey::new_unique();
     let authority = Pubkey::new_unique();
 
-    let ix: Instruction = OptionalAccountInstruction {
-        required,
-        optional,
-    }
-    .into();
+    let ix: Instruction = OptionalAccountInstruction { required, optional }.into();
 
-    let result = svm.process_instruction(&ix, &[
-        simple_account(required, authority, 42, 0),
-        raw_account(
-            optional,
-            1_000_000,
-            build_simple_data(authority, 99, 0),
-            Pubkey::new_unique(), // wrong owner
-        ),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(required, authority, 42, 0),
+            raw_account(
+                optional,
+                1_000_000,
+                build_simple_data(authority, 99, 0),
+                Pubkey::new_unique(), // wrong owner
+            ),
+        ],
+    );
     assert!(result.is_err(), "wrong owner on present optional");
 }
 
@@ -133,18 +144,17 @@ fn some_wrong_discriminator() {
     let optional = Pubkey::new_unique();
     let authority = Pubkey::new_unique();
 
-    let ix: Instruction = OptionalAccountInstruction {
-        required,
-        optional,
-    }
-    .into();
+    let ix: Instruction = OptionalAccountInstruction { required, optional }.into();
 
     let mut bad_data = vec![0u8; 42];
     bad_data[0] = 99; // wrong disc
-    let result = svm.process_instruction(&ix, &[
-        simple_account(required, authority, 42, 0),
-        raw_account(optional, 1_000_000, bad_data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            simple_account(required, authority, 42, 0),
+            raw_account(optional, 1_000_000, bad_data, quasar_test_misc::ID),
+        ],
+    );
     assert!(result.is_err(), "wrong disc on present optional");
     result.assert_error(ProgramError::InvalidAccountData);
 }

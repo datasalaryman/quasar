@@ -149,7 +149,7 @@ pub(super) fn generate_accessors(
                             let __data = unsafe { self.__view.borrow_unchecked() };
                             let __offset = #off_expr;
                             let __count = #read;
-                            let __total = #pb + __count * core::mem::size_of::<#elem>();
+                            let __total = #pb + __count.saturating_mul(core::mem::size_of::<#elem>());
                             quasar_lang::dynamic::RawEncoded::new(&__data[__offset..__offset + __total])
                         }
                     }
@@ -281,8 +281,8 @@ pub(super) fn generate_accessors(
                                 __old_count = #read;
                                 __old_total = __data.len();
                             }
-                            let __old_data_len = __old_count * __elem_size;
-                            let __new_data_len = __value.len() * __elem_size;
+                            let __old_data_len = __old_count.saturating_mul(__elem_size);
+                            let __new_data_len = __value.len().saturating_mul(__elem_size);
                             #realloc_block
                             {
                                 let __len = self.__view.data_len();

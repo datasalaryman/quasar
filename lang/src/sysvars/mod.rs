@@ -43,6 +43,15 @@ macro_rules! impl_sysvar_get {
 
         #[inline(always)]
         fn get() -> Result<Self, ProgramError> {
+            // Guard: padding must not exceed the struct size.
+            #[allow(unused_comparisons)]
+            const {
+                assert!(
+                    $padding <= core::mem::size_of::<Self>(),
+                    "impl_sysvar_get! padding exceeds struct size"
+                )
+            };
+
             let mut var = core::mem::MaybeUninit::<Self>::uninit();
             let var_addr = var.as_mut_ptr() as *mut _ as *mut u8;
 

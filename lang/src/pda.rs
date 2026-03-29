@@ -25,7 +25,8 @@ pub fn verify_program_address(
     program_id: &Address,
     expected: &Address,
 ) -> Result<(), ProgramError> {
-    // seeds includes bump. Array has 19 slots: seeds(max 17) + program_id + PDA_MARKER.
+    // seeds includes bump. Array has 19 slots: seeds(max 17) + program_id +
+    // PDA_MARKER.
     if seeds.len() > 17 {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -93,7 +94,8 @@ pub fn based_try_find_program_address(
     seeds: &[&[u8]],
     program_id: &Address,
 ) -> Result<(Address, u8), ProgramError> {
-    // bump added internally. Array has 19 slots: seeds(max 16) + bump + program_id + PDA_MARKER.
+    // bump added internally. Array has 19 slots: seeds(max 16) + bump + program_id
+    // + PDA_MARKER.
     if seeds.len() > 16 {
         return Err(ProgramError::InvalidSeeds);
     }

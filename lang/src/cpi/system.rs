@@ -147,9 +147,10 @@ pub fn init_account(
     signers: &[Signer],
 ) -> ProgramResult {
     if account.lamports() == 0 {
-        create_account(payer, account, lamports, space, owner)
-            .invoke_with_signers(signers)
+        create_account(payer, account, lamports, space, owner).invoke_with_signers(signers)
     } else {
+        // Payer is a real signer (keypair), not a PDA — `.invoke()` is correct.
+        // Only `assign` needs `invoke_with_signers` (the *account* is the PDA).
         let required = lamports.saturating_sub(account.lamports());
         if required > 0 {
             transfer(payer, account, required).invoke()?;
@@ -227,6 +228,13 @@ impl crate::accounts::Program<System> {
         owner: &Address,
         signers: &[Signer],
     ) -> ProgramResult {
-        init_account(payer.to_account_view(), account, lamports, space, owner, signers)
+        init_account(
+            payer.to_account_view(),
+            account,
+            lamports,
+            space,
+            owner,
+            signers,
+        )
     }
 }

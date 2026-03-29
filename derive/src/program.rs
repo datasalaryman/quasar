@@ -12,42 +12,47 @@ use {
     syn::{parse_macro_input, FnArg, Ident, Item, ItemMod, Pat, Type},
 };
 
-/// Returns `true` if the first parameter is `CtxWithRemaining<T>`.
-fn is_ctx_with_remaining(sig: &syn::Signature) -> bool {
-    let first_arg = match sig.inputs.first() {
-        Some(FnArg::Typed(pt)) => pt,
-        _ => return false,
-    };
-    if let Type::Path(type_path) = &*first_arg.ty {
-        if let Some(last) = type_path.path.segments.last() {
-            return last.ident == "CtxWithRemaining";
-        }
-    }
-    false
+/// Context wrapper kind, classified once per instruction function.
+enum CtxKind<'a> {
+    Ctx { inner_ty: &'a Type },
+    CtxWithRemaining { inner_ty: &'a Type },
 }
 
-/// Extracts the inner type `T` from a `Ctx<T>` or `CtxWithRemaining<T>` first
-/// parameter.
-fn extract_ctx_inner_type(sig: &syn::Signature) -> syn::Result<proc_macro2::TokenStream> {
-    let first_arg = match sig.inputs.first() {
-        Some(FnArg::Typed(pt)) => pt,
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &sig.ident,
-                "#[program]: instruction function must have ctx: Ctx<T> as first parameter",
-            ));
-        }
-    };
+impl<'a> CtxKind<'a> {
+    /// Classify the first parameter of an instruction function.
+    fn classify(sig: &'a syn::Signature) -> syn::Result<Self> {
+        let first_arg = match sig.inputs.first() {
+            Some(FnArg::Typed(pt)) => pt,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &sig.ident,
+                    "#[program]: instruction function must have ctx: Ctx<T> as first parameter",
+                ));
+            }
+        };
 
-    extract_generic_inner_type(&first_arg.ty, "Ctx")
-        .or_else(|| extract_generic_inner_type(&first_arg.ty, "CtxWithRemaining"))
-        .map(|ty| quote!(#ty))
-        .ok_or_else(|| {
-            syn::Error::new_spanned(
-                &first_arg.ty,
-                "first parameter must be Ctx<T> or CtxWithRemaining<T>",
-            )
-        })
+        if let Some(inner) = extract_generic_inner_type(&first_arg.ty, "Ctx") {
+            return Ok(CtxKind::Ctx { inner_ty: inner });
+        }
+        if let Some(inner) = extract_generic_inner_type(&first_arg.ty, "CtxWithRemaining") {
+            return Ok(CtxKind::CtxWithRemaining { inner_ty: inner });
+        }
+
+        Err(syn::Error::new_spanned(
+            &first_arg.ty,
+            "first parameter must be Ctx<T> or CtxWithRemaining<T>",
+        ))
+    }
+
+    fn inner_ty(&self) -> &'a Type {
+        match self {
+            CtxKind::Ctx { inner_ty } | CtxKind::CtxWithRemaining { inner_ty } => inner_ty,
+        }
+    }
+
+    fn has_remaining(&self) -> bool {
+        matches!(self, CtxKind::CtxWithRemaining { .. })
+    }
 }
 
 pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -83,10 +88,12 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
                     let disc_bytes = &args.discriminator;
                     let fn_name = &func.sig.ident;
-                    let accounts_type = match extract_ctx_inner_type(&func.sig) {
-                        Ok(ty) => ty,
+                    let ctx_kind = match CtxKind::classify(&func.sig) {
+                        Ok(k) => k,
                         Err(e) => return e.to_compile_error().into(),
                     };
+                    let inner_ty = ctx_kind.inner_ty();
+                    let accounts_type = quote!(#inner_ty);
 
                     // Validate same length across all instructions
                     match disc_len {
@@ -171,7 +178,7 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let arg_names: Vec<&Ident> = remaining_args.iter().map(|(n, _)| n).collect();
                     let arg_types: Vec<&Type> = remaining_args.iter().map(|(_, t)| t).collect();
 
-                    let has_remaining = is_ctx_with_remaining(&func.sig);
+                    let has_remaining = ctx_kind.has_remaining();
                     if has_remaining {
                         client_items.push(quote! {
                             #macro_ident!(#struct_name, [#(#disc_values),*], {#(#arg_names : #arg_types),*}, remaining);

@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Instruction, Pubkey, ProgramError},
+    quasar_svm::{Instruction, ProgramError, Pubkey},
     quasar_test_errors::cpi::*,
 };
 
@@ -53,12 +53,7 @@ fn require_eq_passes() {
     let mut svm = svm_errors();
     let signer = Pubkey::new_unique();
 
-    let ix: Instruction = RequireEqCheckInstruction {
-        signer,
-        a: 5,
-        b: 5,
-    }
-    .into();
+    let ix: Instruction = RequireEqCheckInstruction { signer, a: 5, b: 5 }.into();
     let result = svm.process_instruction(&ix, &[signer_account(signer)]);
     assert!(result.is_ok(), "eq passes: {:?}", result.raw_result);
 }
@@ -68,12 +63,7 @@ fn require_eq_fails() {
     let mut svm = svm_errors();
     let signer = Pubkey::new_unique();
 
-    let ix: Instruction = RequireEqCheckInstruction {
-        signer,
-        a: 1,
-        b: 2,
-    }
-    .into();
+    let ix: Instruction = RequireEqCheckInstruction { signer, a: 1, b: 2 }.into();
     let result = svm.process_instruction(&ix, &[signer_account(signer)]);
     assert!(result.is_err());
     result.assert_error(ProgramError::Custom(102)); // TestError::RequireEqFailed
@@ -84,12 +74,7 @@ fn require_neq_passes() {
     let mut svm = svm_errors();
     let signer = Pubkey::new_unique();
 
-    let ix: Instruction = RequireNeqCheckInstruction {
-        signer,
-        a: 1,
-        b: 2,
-    }
-    .into();
+    let ix: Instruction = RequireNeqCheckInstruction { signer, a: 1, b: 2 }.into();
     let result = svm.process_instruction(&ix, &[signer_account(signer)]);
     assert!(result.is_ok(), "neq passes: {:?}", result.raw_result);
 }
@@ -99,12 +84,7 @@ fn require_neq_fails() {
     let mut svm = svm_errors();
     let signer = Pubkey::new_unique();
 
-    let ix: Instruction = RequireNeqCheckInstruction {
-        signer,
-        a: 5,
-        b: 5,
-    }
-    .into();
+    let ix: Instruction = RequireNeqCheckInstruction { signer, a: 5, b: 5 }.into();
     let result = svm.process_instruction(&ix, &[signer_account(signer)]);
     assert!(result.is_err());
     // require_neq uses the same error as require_eq in the test program
@@ -114,7 +94,8 @@ fn require_neq_fails() {
 // ============================================================================
 // Default framework error codes (no custom error annotation)
 // Tests the separate codegen path for default vs custom errors.
-// If the framework error mapping regresses, custom-error tests pass but these fail.
+// If the framework error mapping regresses, custom-error tests pass but these
+// fail.
 // ============================================================================
 
 #[test]
@@ -126,24 +107,27 @@ fn has_one_default_mismatch() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = HasOneDefaultInstruction { authority, account }.into();
-    let result = svm.process_instruction(&ix, &[
-        signer_account(authority),
-        error_test_account(account, wrong_authority, 42),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[
+            signer_account(authority),
+            error_test_account(account, wrong_authority, 42),
+        ],
+    );
     assert!(result.is_err(), "has_one default mismatch");
     result.assert_error(ProgramError::Custom(3005)); // HasOneMismatch
 }
 
 #[test]
 fn address_default_mismatch() {
-    // address = EXPECTED_ADDR_DEFAULT (no @ custom error) → default AddressMismatch (3012)
+    // address = EXPECTED_ADDR_DEFAULT (no @ custom error) → default AddressMismatch
+    // (3012)
     let mut svm = svm_errors();
     let wrong = Pubkey::new_unique();
 
     let ix: Instruction = AddressDefaultInstruction { target: wrong }.into();
-    let result = svm.process_instruction(&ix, &[
-        error_test_account(wrong, Pubkey::new_unique(), 42),
-    ]);
+    let result =
+        svm.process_instruction(&ix, &[error_test_account(wrong, Pubkey::new_unique(), 42)]);
     assert!(result.is_err(), "address default mismatch");
     result.assert_error(ProgramError::Custom(3012)); // AddressMismatch
 }
@@ -155,9 +139,7 @@ fn constraint_default_fail() {
     let target = Pubkey::new_unique();
 
     let ix: Instruction = ConstraintDefaultInstruction { target }.into();
-    let result = svm.process_instruction(&ix, &[
-        signer_account(target),
-    ]);
+    let result = svm.process_instruction(&ix, &[signer_account(target)]);
     assert!(result.is_err(), "constraint default fail");
     result.assert_error(ProgramError::Custom(3004)); // ConstraintViolation
 }

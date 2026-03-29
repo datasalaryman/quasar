@@ -1,6 +1,6 @@
 use {
     crate::helpers::*,
-    quasar_svm::{Instruction, Pubkey, ProgramError},
+    quasar_svm::{Instruction, ProgramError, Pubkey},
     quasar_test_misc::cpi::*,
 };
 
@@ -15,9 +15,7 @@ fn single_byte_valid() {
     let authority = Pubkey::new_unique();
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        simple_account(account, authority, 42, 0),
-    ]);
+    let result = svm.process_instruction(&ix, &[simple_account(account, authority, 42, 0)]);
     assert!(result.is_ok(), "single byte disc: {:?}", result.raw_result);
 }
 
@@ -27,9 +25,7 @@ fn multi_byte_valid() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = CheckMultiDiscInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        multi_disc_account(account, 42),
-    ]);
+    let result = svm.process_instruction(&ix, &[multi_disc_account(account, 42)]);
     assert!(result.is_ok(), "multi byte disc: {:?}", result.raw_result);
 }
 
@@ -45,9 +41,10 @@ fn single_byte_wrong() {
     data[0] = 2; // wrong disc (expected 1)
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_err(), "wrong single-byte disc");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -59,9 +56,10 @@ fn single_byte_zero() {
     let data = vec![0u8; 42]; // disc = 0 (uninitialized)
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_err(), "zero disc");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -75,9 +73,10 @@ fn multi_byte_partial_match() {
     data[1] = 0; // second byte wrong (expected 2)
 
     let ix: Instruction = CheckMultiDiscInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_err(), "partial disc match");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -91,9 +90,10 @@ fn multi_byte_reversed() {
     data[1] = 1; // swapped
 
     let ix: Instruction = CheckMultiDiscInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_err(), "reversed disc");
     result.assert_error(ProgramError::InvalidAccountData);
 }
@@ -104,9 +104,15 @@ fn zero_length_data() {
     let account = Pubkey::new_unique();
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, vec![], quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            1_000_000,
+            vec![],
+            quasar_test_misc::ID,
+        )],
+    );
     assert!(result.is_err(), "zero length data");
     result.assert_error(ProgramError::AccountDataTooSmall);
 }
@@ -118,9 +124,10 @@ fn disc_only_no_fields() {
     let data = vec![1u8]; // just the disc, no struct fields
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_err(), "disc only, no fields");
     result.assert_error(ProgramError::AccountDataTooSmall);
 }
@@ -137,10 +144,20 @@ fn oversized_data_valid() {
     data[41] = 0; // bump
 
     let ix: Instruction = OwnerCheckInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 100_000_000, data, quasar_test_misc::ID),
-    ]);
-    assert!(result.is_ok(), "oversized data should be accepted: {:?}", result.raw_result);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(
+            account,
+            100_000_000,
+            data,
+            quasar_test_misc::ID,
+        )],
+    );
+    assert!(
+        result.is_ok(),
+        "oversized data should be accepted: {:?}",
+        result.raw_result
+    );
 }
 
 // ============================================================================
@@ -151,10 +168,8 @@ fn oversized_data_valid() {
 fn no_disc_init_success() {
     let mut svm = svm_misc();
     let payer = Pubkey::new_unique();
-    let (account, _bump) = Pubkey::find_program_address(
-        &[b"nodisc", payer.as_ref()],
-        &quasar_test_misc::ID,
-    );
+    let (account, _bump) =
+        Pubkey::find_program_address(&[b"nodisc", payer.as_ref()], &quasar_test_misc::ID);
 
     let ix: Instruction = InitNoDiscInstruction {
         payer,
@@ -164,10 +179,8 @@ fn no_disc_init_success() {
     }
     .into();
 
-    let result = svm.process_instruction(&ix, &[
-        rich_signer_account(payer),
-        empty_account(account),
-    ]);
+    let result =
+        svm.process_instruction(&ix, &[rich_signer_account(payer), empty_account(account)]);
     assert!(result.is_ok(), "no_disc init: {:?}", result.raw_result);
 
     let acc = result.account(&account).expect("account");
@@ -180,10 +193,8 @@ fn no_disc_init_success() {
 fn no_disc_read_after_init() {
     let mut svm = svm_misc();
     let payer = Pubkey::new_unique();
-    let (account, _bump) = Pubkey::find_program_address(
-        &[b"nodisc", payer.as_ref()],
-        &quasar_test_misc::ID,
-    );
+    let (account, _bump) =
+        Pubkey::find_program_address(&[b"nodisc", payer.as_ref()], &quasar_test_misc::ID);
 
     // Init first
     let ix1: Instruction = InitNoDiscInstruction {
@@ -193,10 +204,7 @@ fn no_disc_read_after_init() {
         value: 99,
     }
     .into();
-    let r1 = svm.process_instruction(&ix1, &[
-        rich_signer_account(payer),
-        empty_account(account),
-    ]);
+    let r1 = svm.process_instruction(&ix1, &[rich_signer_account(payer), empty_account(account)]);
     assert!(r1.is_ok(), "init: {:?}", r1.raw_result);
 
     // Read — handler accesses .authority and .value via Deref
@@ -215,8 +223,9 @@ fn no_disc_any_data_accepted() {
     // All 0xFF data — no valid discriminator, but unsafe_no_disc skips the check
     let data = vec![0xFF; 40];
     let ix: Instruction = ReadNoDiscInstruction { account }.into();
-    let result = svm.process_instruction(&ix, &[
-        raw_account(account, 1_000_000, data, quasar_test_misc::ID),
-    ]);
+    let result = svm.process_instruction(
+        &ix,
+        &[raw_account(account, 1_000_000, data, quasar_test_misc::ID)],
+    );
     assert!(result.is_ok(), "any data accepted: {:?}", result.raw_result);
 }
