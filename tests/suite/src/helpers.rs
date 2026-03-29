@@ -188,3 +188,116 @@ pub fn raw_account(address: Pubkey, lamports: u64, data: Vec<u8>, owner: Pubkey)
         executable: false,
     }
 }
+
+// ---------------------------------------------------------------------------
+// SVM factories — test-misc & test-errors
+// ---------------------------------------------------------------------------
+
+pub fn svm_misc() -> QuasarSvm {
+    let elf = std::fs::read("../../target/deploy/quasar_test_misc.so").unwrap();
+    QuasarSvm::new().with_program(&quasar_test_misc::ID, &elf)
+}
+
+pub fn svm_errors() -> QuasarSvm {
+    let elf = std::fs::read("../../target/deploy/quasar_test_errors.so").unwrap();
+    QuasarSvm::new().with_program(&quasar_test_errors::ID, &elf)
+}
+
+// ---------------------------------------------------------------------------
+// Account constructors — test-misc state types
+// ---------------------------------------------------------------------------
+
+const SIMPLE_ACCOUNT_SIZE: usize = 42; // 1 disc + 32 addr + 8 u64 + 1 u8
+
+/// Build raw data for SimpleAccount (disc=1).
+pub fn build_simple_data(authority: Pubkey, value: u64, bump: u8) -> Vec<u8> {
+    let mut data = vec![0u8; SIMPLE_ACCOUNT_SIZE];
+    data[0] = 1;
+    data[1..33].copy_from_slice(authority.as_ref());
+    data[33..41].copy_from_slice(&value.to_le_bytes());
+    data[41] = bump;
+    data
+}
+
+/// Valid SimpleAccount owned by test-misc program.
+pub fn simple_account(address: Pubkey, authority: Pubkey, value: u64, bump: u8) -> Account {
+    raw_account(
+        address,
+        1_000_000,
+        build_simple_data(authority, value, bump),
+        quasar_test_misc::ID,
+    )
+}
+
+const MULTI_DISC_SIZE: usize = 10; // 2 disc + 8 u64
+
+/// Build raw data for MultiDiscAccount (disc=[1,2]).
+pub fn build_multi_disc_data(value: u64) -> Vec<u8> {
+    let mut data = vec![0u8; MULTI_DISC_SIZE];
+    data[0] = 1;
+    data[1] = 2;
+    data[2..10].copy_from_slice(&value.to_le_bytes());
+    data
+}
+
+/// Valid MultiDiscAccount owned by test-misc program.
+pub fn multi_disc_account(address: Pubkey, value: u64) -> Account {
+    raw_account(
+        address,
+        1_000_000,
+        build_multi_disc_data(value),
+        quasar_test_misc::ID,
+    )
+}
+
+const ERROR_TEST_ACCOUNT_SIZE: usize = 41; // 1 disc + 32 addr + 8 u64
+
+/// Build raw data for ErrorTestAccount (disc=1).
+pub fn build_error_test_data(authority: Pubkey, value: u64) -> Vec<u8> {
+    let mut data = vec![0u8; ERROR_TEST_ACCOUNT_SIZE];
+    data[0] = 1;
+    data[1..33].copy_from_slice(authority.as_ref());
+    data[33..41].copy_from_slice(&value.to_le_bytes());
+    data
+}
+
+/// Valid ErrorTestAccount owned by test-errors program.
+pub fn error_test_account(address: Pubkey, authority: Pubkey, value: u64) -> Account {
+    raw_account(
+        address,
+        1_000_000,
+        build_error_test_data(authority, value),
+        quasar_test_errors::ID,
+    )
+}
+
+/// Account with custom lamports (for pre-funded init tests).
+pub fn prefunded_account(address: Pubkey, lamports: u64) -> Account {
+    Account {
+        address,
+        lamports,
+        data: vec![],
+        owner: quasar_svm::system_program::ID,
+        executable: false,
+    }
+}
+
+const NO_DISC_ACCOUNT_SIZE: usize = 40; // 32 addr + 8 u64 (no discriminator)
+
+/// Build raw data for NoDiscAccount (unsafe_no_disc — no disc prefix).
+pub fn build_no_disc_data(authority: Pubkey, value: u64) -> Vec<u8> {
+    let mut data = vec![0u8; NO_DISC_ACCOUNT_SIZE];
+    data[0..32].copy_from_slice(authority.as_ref());
+    data[32..40].copy_from_slice(&value.to_le_bytes());
+    data
+}
+
+/// Valid NoDiscAccount owned by test-misc program.
+pub fn no_disc_account(address: Pubkey, authority: Pubkey, value: u64) -> Account {
+    raw_account(
+        address,
+        1_000_000,
+        build_no_disc_data(authority, value),
+        quasar_test_misc::ID,
+    )
+}

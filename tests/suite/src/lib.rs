@@ -1,20 +1,10 @@
 // Quasar Test Suite
 //
 // Integration tests for the Quasar Solana framework.
-// Each module tests a specific test program via Mollusk SVM.
+// Each module tests a specific concern via QuasarSVM.
 
 #[cfg(test)]
-mod account_validation;
-#[cfg(test)]
-mod accounts;
-#[cfg(test)]
-mod constraints;
-#[cfg(test)]
-mod cpi_system;
-#[cfg(test)]
 mod dynamic;
-#[cfg(test)]
-mod errors;
 #[cfg(test)]
 mod events;
 #[cfg(test)]
@@ -27,6 +17,34 @@ mod remaining;
 mod sysvar;
 #[cfg(test)]
 mod token_state;
+
+// Core account lifecycle
+#[cfg(test)]
+mod init;
+#[cfg(test)]
+mod init_if_needed;
+#[cfg(test)]
+mod close;
+#[cfg(test)]
+mod realloc;
+#[cfg(test)]
+mod discriminator;
+#[cfg(test)]
+mod optional_accounts;
+
+// Validation & constraints
+#[cfg(test)]
+mod constraints;
+#[cfg(test)]
+mod account_validation;
+#[cfg(test)]
+mod account_flags;
+
+// CPI & errors
+#[cfg(test)]
+mod cpi_system;
+#[cfg(test)]
+mod errors;
 
 // QuasarSVM-based SPL test suite
 #[cfg(test)]
