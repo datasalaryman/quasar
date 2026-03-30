@@ -15,8 +15,7 @@ pub use {initialize_account::initialize_account3, initialize_mint::initialize_mi
 /// Trait for types that can execute SPL Token CPI calls.
 ///
 /// Implemented by `Program<Token>`, `Program<Token2022>`, and `TokenInterface`.
-/// Used as a bound in lifecycle traits (`InitToken`, `InitMint`, `TokenClose`)
-/// to ensure only actual token programs are accepted — not arbitrary accounts.
+/// Ensures only actual token programs are accepted — not arbitrary accounts.
 pub trait TokenCpi: AsAccountView {
     /// Transfer tokens between accounts.
     ///

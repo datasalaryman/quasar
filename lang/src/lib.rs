@@ -75,6 +75,7 @@ pub mod __internal {
 
     /// Allocation-free logging helper for generated code.
     /// Wraps solana_program_log::log for use in derive macro output.
+    // Used by derive-generated code under #[cfg(feature = "debug")]
     #[inline(always)]
     #[allow(dead_code)]
     pub fn log_str(msg: &str) {

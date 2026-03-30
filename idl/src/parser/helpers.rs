@@ -136,7 +136,6 @@ pub fn type_base_name(ty: &syn::Type) -> Option<String> {
 
 /// Extract the first generic argument's base name from a type path.
 /// e.g. `Account<Token>` → Some("Token"), `Signer` → None
-#[allow(dead_code)]
 pub fn type_inner_name(ty: &syn::Type) -> Option<String> {
     let inner = match ty {
         syn::Type::Reference(type_ref) => &*type_ref.elem,

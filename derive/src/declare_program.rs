@@ -49,7 +49,9 @@ struct IdlField {
 enum IdlType {
     Primitive(String),
     Defined {
-        #[allow(dead_code)]
+        // Required for serde deserialization of `{"defined": "TypeName"}` JSON
+        // objects. Not used in codegen — `map_idl_type` returns an error for
+        // all defined types, but includes `defined` in the error message.
         defined: String,
     },
 }
