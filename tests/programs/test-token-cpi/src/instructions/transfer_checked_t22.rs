@@ -24,6 +24,7 @@ impl<'info> TransferCheckedT22<'info> {
                 amount,
                 decimals,
             )
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

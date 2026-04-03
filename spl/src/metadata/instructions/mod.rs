@@ -27,11 +27,6 @@ const MAX_NAME_LEN: usize = 32;
 const MAX_SYMBOL_LEN: usize = 10;
 const MAX_URI_LEN: usize = 200;
 
-const RENT_SYSVAR: Address = Address::new_from_array([
-    6, 167, 213, 23, 25, 44, 92, 81, 33, 140, 201, 76, 61, 74, 241, 127, 88, 218, 238, 8, 155, 161,
-    253, 68, 227, 219, 217, 138, 0, 0, 0, 0,
-]);
-
 /// Trait for types that can execute Metaplex Token Metadata CPI calls.
 ///
 /// Implemented by [`super::MetadataProgram`].
@@ -43,7 +38,7 @@ pub trait MetadataCpi: AsAccountView {
     /// Create a metadata account for an SPL Token mint.
     ///
     /// Accounts (7): metadata, mint, mint_authority, payer, update_authority,
-    /// system_program, rent (sysvar address).
+    /// system_program, rent.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     fn create_metadata_accounts_v3<'a>(

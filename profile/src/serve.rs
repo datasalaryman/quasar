@@ -1,18 +1,18 @@
 use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
 /// Check if something is already listening on the given port.
 pub fn is_alive(port: u16) -> bool {
-    TcpStream::connect_timeout(
-        &format!("127.0.0.1:{port}").parse().unwrap(),
-        Duration::from_millis(200),
-    )
-    .is_ok()
+    let Ok(addr) = format!("127.0.0.1:{port}").parse() else {
+        return false;
+    };
+
+    TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
 }
 
 /// Start a background HTTP server that serves static files from `root`.
@@ -119,16 +119,35 @@ fn handle_connection(mut stream: TcpStream, root: &Path) {
     // Strip query string
     let path = path.split('?').next().unwrap_or("/");
 
-    let file_path = if path == "/" {
-        root.join("index.html")
-    } else {
-        root.join(path.trim_start_matches('/'))
-    };
-
-    serve_file(&mut stream, &file_path);
+    match resolve_request_path(root, path) {
+        Some(file_path) => serve_file(&mut stream, &file_path),
+        None => serve_not_found(&mut stream),
+    }
 }
 
-fn serve_file(stream: &mut TcpStream, path: &PathBuf) {
+fn resolve_request_path(root: &Path, request_path: &str) -> Option<PathBuf> {
+    let raw_path = request_path.strip_prefix('/').unwrap_or(request_path);
+    if raw_path.is_empty() {
+        return Some(root.join("index.html"));
+    }
+
+    let mut relative = PathBuf::new();
+    for component in Path::new(raw_path).components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    if relative.as_os_str().is_empty() {
+        Some(root.join("index.html"))
+    } else {
+        Some(root.join(relative))
+    }
+}
+
+fn serve_file(stream: &mut TcpStream, path: &Path) {
     let content_type = match path.extension().and_then(|e| e.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "application/javascript",
@@ -156,31 +175,103 @@ fn serve_file(stream: &mut TcpStream, path: &PathBuf) {
                 serve_directory_listing(stream, path);
                 return;
             }
-            let body = "404 Not Found";
-            let response = format!(
-                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: \
-                 {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
+            serve_not_found(stream);
         }
     }
 }
 
-fn serve_directory_listing(stream: &mut TcpStream, dir: &Path) {
-    let mut entries: Vec<String> = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(dir) {
-        for entry in read_dir.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                entries.push(format!("\"{name}\""));
-            }
-        }
-    }
-    let body = format!("[{}]", entries.join(","));
+fn serve_not_found(stream: &mut TcpStream) {
+    let body = "404 Not Found";
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \
-         {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: \
+         close\r\n\r\n{body}",
         body.len()
     );
     let _ = stream.write_all(response.as_bytes());
+}
+
+fn directory_listing_body(dir: &Path) -> Vec<u8> {
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                entries.push(name.to_string());
+            }
+        }
+    }
+
+    serde_json::to_vec(&entries).unwrap_or_else(|_| b"[]".to_vec())
+}
+
+fn serve_directory_listing(stream: &mut TcpStream, dir: &Path) {
+    let body = directory_listing_body(dir);
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \
+         {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.write_all(&body);
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{directory_listing_body, resolve_request_path},
+        std::{
+            fs,
+            path::Path,
+            time::{SystemTime, UNIX_EPOCH},
+        },
+    };
+
+    fn temp_test_dir(name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("quasar-profile-{name}-{unique}"));
+        fs::create_dir_all(&dir).expect("create temp test dir");
+        dir
+    }
+
+    #[test]
+    fn request_path_defaults_to_index() {
+        let root = Path::new("/tmp/quasar-profile-root");
+        assert_eq!(
+            resolve_request_path(root, "/"),
+            Some(root.join("index.html"))
+        );
+        assert_eq!(
+            resolve_request_path(root, ""),
+            Some(root.join("index.html"))
+        );
+    }
+
+    #[test]
+    fn request_path_rejects_traversal() {
+        let root = Path::new("/tmp/quasar-profile-root");
+        assert_eq!(resolve_request_path(root, "/../secret.txt"), None);
+        assert_eq!(
+            resolve_request_path(root, "/profiles/../../secret.txt"),
+            None
+        );
+        assert_eq!(resolve_request_path(root, "../secret.txt"), None);
+    }
+
+    #[test]
+    fn directory_listing_body_is_valid_json() {
+        let dir = temp_test_dir("listing");
+        let quoted = dir.join("with\"quote.json");
+        let slashy = dir.join("with\\slash.json");
+        fs::write(&quoted, []).expect("write quoted test file");
+        fs::write(&slashy, []).expect("write slash test file");
+
+        let body = directory_listing_body(&dir);
+        let entries: Vec<String> = serde_json::from_slice(&body).expect("parse directory JSON");
+        assert!(entries.contains(&"with\"quote.json".to_string()));
+        assert!(entries.contains(&"with\\slash.json".to_string()));
+
+        fs::remove_dir_all(dir).expect("remove temp test dir");
+    }
 }

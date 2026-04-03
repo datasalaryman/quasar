@@ -25,6 +25,7 @@ pub(super) struct InitContext<'a> {
     pub metadata_program: Option<&'a Ident>,
     pub mint_authority: Option<&'a Ident>,
     pub update_authority: Option<&'a Ident>,
+    /// `Sysvar<Rent>` account used by metadata/master edition CPI paths.
     pub rent: Option<&'a Ident>,
     pub field_name_strings: &'a [String],
 }
@@ -86,8 +87,10 @@ fn gen_init_cpi_body(
 /// Wrap a CPI body with the init/init_if_needed guard pattern.
 ///
 /// - `init`: reject if already initialized, then run CPI body.
-/// - `init_if_needed`: if uninitialized run CPI body, else run validation (if
-///   provided).
+/// - `init_if_needed`: if uninitialized run CPI body, else run structural
+///   validation (if provided). Declarative field checks such as `has_one`,
+///   `address`, and `constraint = ...` still run later in the normal parse
+///   phase after field construction.
 pub(super) fn wrap_init_block(
     field_name: &Ident,
     init_if_needed: bool,
@@ -172,7 +175,7 @@ pub(super) fn gen_init_block(
                     ],
                     [#pay, #field_name, #auth_field, #mint_field, #sys_field, #tok_field],
                     [#instruction_byte],
-                ).invoke()?;
+                ).invoke();
             }
         };
 
@@ -217,7 +220,7 @@ pub(super) fn gen_init_block(
             quote! {
                 quasar_spl::initialize_account3(
                     #tok_field, #field_name, #mint_field, #auth_field.address(),
-                ).invoke()?;
+                ).invoke();
             },
         );
         let tok_addr = quote! { #tok_field.address() };
@@ -272,7 +275,7 @@ pub(super) fn gen_init_block(
                     (#decimals_expr) as u8,
                     #auth_field.address(),
                     #freeze_expr,
-                ).invoke()?;
+                ).invoke();
             },
         );
         let tok_addr = quote! { #tok_field.address() };
@@ -404,7 +407,7 @@ pub(super) fn gen_metadata_init(
                 (#meta_symbol) as &[u8],
                 (#meta_uri) as &[u8],
                 #seller_fee, #is_mutable, true,
-            ).invoke()?;
+            ).invoke();
         }
     })
 }
@@ -448,7 +451,7 @@ pub(super) fn gen_master_edition_init(
                 #meta_prog, #me_field, #field_name, #update_auth,
                 #mint_auth, #pay, #meta_field, #tok, #sys, #rent,
                 Some(#max_supply as u64),
-            ).invoke()?;
+            ).invoke();
         }
     })
 }

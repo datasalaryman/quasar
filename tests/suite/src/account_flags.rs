@@ -171,13 +171,14 @@ fn signer_and_mut_not_writable() {
 // ============================================================================
 
 #[test]
-fn dup_mut_same_account_succeeds() {
-    // HeaderDupMut: source=Signer, destination=dup mut UncheckedAccount
-    // Same pubkey for both should succeed because destination has #[account(dup)]
+fn dup_readonly_same_account_succeeds() {
+    // HeaderDupReadonly: source=Signer, destination=dup readonly UncheckedAccount
+    // Same pubkey for both should succeed because destination is an explicit
+    // read-only alias role.
     let mut svm = svm_errors();
     let account = Pubkey::new_unique();
 
-    let ix: Instruction = quasar_test_errors::cpi::HeaderDupMutInstruction {
+    let ix: Instruction = quasar_test_errors::cpi::HeaderDupReadonlyInstruction {
         source: account,
         destination: account,
     }
@@ -185,7 +186,7 @@ fn dup_mut_same_account_succeeds() {
     let result = svm.process_instruction(&ix, &[signer_account(account)]);
     assert!(
         result.is_ok(),
-        "dup mut same account: {:?}",
+        "dup readonly same account: {:?}",
         result.raw_result
     );
 }

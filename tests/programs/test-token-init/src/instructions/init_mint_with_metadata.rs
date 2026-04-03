@@ -22,7 +22,7 @@ pub struct InitMintWithMetadata<'info> {
     pub metadata_program: &'info Program<MetadataProgram>,
     pub token_program: &'info Program<Token>,
     pub system_program: &'info Program<System>,
-    pub rent: &'info UncheckedAccount,
+    pub rent: &'info Sysvar<Rent>,
 }
 
 impl<'info> InitMintWithMetadata<'info> {

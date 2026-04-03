@@ -19,7 +19,7 @@ pub use {
         context::{Context, Ctx, CtxWithRemaining},
         cpi::{
             system::{System, SYSTEM_PROGRAM_ID},
-            Seed,
+            CpiReturn, Seed,
         },
         dispatch,
         dynamic::{RawEncoded, String, Vec},

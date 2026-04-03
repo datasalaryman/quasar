@@ -2176,6 +2176,7 @@ dependencies = [
  "const-crypto",
  "quasar-derive",
  "quasar-pod",
+ "quasar-spl",
  "solana-account-view 2.0.0",
  "solana-address 2.3.0",
  "solana-define-syscall 5.0.0",

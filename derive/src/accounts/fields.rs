@@ -100,6 +100,10 @@ fn resolve_token_program_addr(
     effective_ty: &Type,
     token_program_field: Option<&Ident>,
 ) -> proc_macro2::TokenStream {
+    if let Some(tp) = token_program_field {
+        return quote! { #tp.to_account_view().address() };
+    }
+
     let underlying = strip_ref(effective_ty);
     if let FieldKind::Account { inner_ty } = FieldKind::classify(underlying) {
         if let Some(name) = type_base_name(inner_ty) {
@@ -114,6 +118,123 @@ fn resolve_token_program_addr(
     let tp = token_program_field
         .expect("InterfaceAccount with token/ata attrs requires a token program field");
     quote! { #tp.to_account_view().address() }
+}
+
+fn is_token_program_field(field: &syn::Field) -> bool {
+    match FieldKind::classify(strip_ref(&field.ty)) {
+        FieldKind::Program { inner_ty } | FieldKind::Interface { inner_ty } => {
+            type_base_name(inner_ty)
+                .as_deref()
+                .is_some_and(|name| matches!(name, "Token" | "Token2022" | "TokenInterface"))
+        }
+        _ => false,
+    }
+}
+
+fn resolve_explicit_token_program_field<'a>(
+    fields: &'a syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+    selector: &Ident,
+    selector_attr: &str,
+) -> Result<&'a Ident, proc_macro::TokenStream> {
+    let field = fields
+        .iter()
+        .find(|f| f.ident.as_ref() == Some(selector))
+        .ok_or_else(|| -> proc_macro::TokenStream {
+            syn::Error::new_spanned(
+                selector,
+                format!("`{selector_attr}` references unknown field `{selector}`"),
+            )
+            .to_compile_error()
+            .into()
+        })?;
+
+    if !is_token_program_field(field) {
+        return Err(syn::Error::new_spanned(
+            selector,
+            format!(
+                "`{selector_attr}` must reference `Program<Token>`, `Program<Token2022>`, or \
+                 `Interface<TokenInterface>`"
+            ),
+        )
+        .to_compile_error()
+        .into());
+    }
+
+    Ok(field
+        .ident
+        .as_ref()
+        .expect("account field must have an identifier"))
+}
+
+fn resolve_token_program_field<'a>(
+    fields: &'a syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+    detected: &DetectedFields<'a>,
+    field_name: &Ident,
+    selector: Option<&Ident>,
+    selector_attr: &str,
+    consumer_desc: &str,
+    resolution: TokenProgramResolution,
+) -> Result<Option<&'a Ident>, proc_macro::TokenStream> {
+    if let Some(selector) = selector {
+        return Ok(Some(resolve_explicit_token_program_field(
+            fields,
+            selector,
+            selector_attr,
+        )?));
+    }
+
+    if detected.token_program_count > 1 {
+        return Err(syn::Error::new_spanned(
+            field_name,
+            format!(
+                "Multiple token program fields detected. `{selector_attr} = <field>` is required \
+                 for {consumer_desc} when more than one token program field is present."
+            ),
+        )
+        .to_compile_error()
+        .into());
+    }
+
+    if resolution.fallback_to_single_field() {
+        if resolution.require_account_field() {
+            return Ok(Some(DetectedFields::require(
+                detected.token_program,
+                &format!(
+                    "{consumer_desc} requires a token program field (Program<Token>, \
+                     Program<Token2022>, or Interface<TokenInterface>)"
+                ),
+            )?));
+        }
+        return Ok(detected.token_program);
+    }
+
+    if resolution.require_account_field() {
+        return Ok(Some(DetectedFields::require(
+            detected.token_program,
+            &format!(
+                "{consumer_desc} requires a token program field (Program<Token>, \
+                 Program<Token2022>, or Interface<TokenInterface>)"
+            ),
+        )?));
+    }
+
+    Ok(None)
+}
+
+#[derive(Copy, Clone)]
+enum TokenProgramResolution {
+    ExplicitOnly,
+    FallbackRequired,
+}
+
+impl TokenProgramResolution {
+    fn fallback_to_single_field(self) -> bool {
+        matches!(self, TokenProgramResolution::FallbackRequired)
+    }
+
+    fn require_account_field(self) -> bool {
+        matches!(self, TokenProgramResolution::FallbackRequired)
+    }
 }
 
 /// Count how many fields match the given type names (checking Program<T> and
@@ -192,9 +313,6 @@ struct DetectedFields<'a> {
     mint_authority: Option<&'a Ident>,
     update_authority: Option<&'a Ident>,
 
-    // Rent sysvar (needed by metadata/master_edition CPI)
-    rent: Option<&'a Ident>,
-
     // Sysvar<Rent> field (if present, avoids sol_get_rent_sysvar syscall for init)
     rent_sysvar: Option<&'a Ident>,
 }
@@ -240,8 +358,6 @@ impl<'a> DetectedFields<'a> {
             .or_else(|| find_field_by_name(fields, "authority"));
         let update_authority = find_field_by_name(fields, "update_authority").or(mint_authority);
 
-        let rent = find_field_by_name(fields, "rent");
-
         // Find Sysvar<Rent> field by checking Sysvar<T> where T = Rent.
         let rent_sysvar = fields.iter().find_map(|field| {
             let ty = strip_ref(&field.ty);
@@ -265,7 +381,6 @@ impl<'a> DetectedFields<'a> {
             realloc_payer,
             mint_authority,
             update_authority,
-            rent,
             rent_sysvar,
         }
     }
@@ -300,6 +415,7 @@ fn validate_field_attrs(
     }
 
     let is_init = attrs.is_init || attrs.init_if_needed;
+    let is_optional = extract_generic_inner_type(&field.ty, "Option").is_some();
 
     // Mutability requirements
     reject!(
@@ -332,6 +448,19 @@ fn validate_field_attrs(
         attrs.realloc.is_some() && kind.is_token_or_mint(),
         "#[account(realloc)] cannot be used on token or mint accounts — their size is fixed by \
          the token program"
+    );
+    reject!(
+        attrs.realloc.is_some() && !matches!(kind, FieldKind::Account { .. }),
+        "#[account(realloc)] is only valid on Account<T> fields"
+    );
+    reject!(
+        attrs.realloc.is_some() && is_optional,
+        "#[account(realloc)] cannot be used on Option<Account<T>> fields"
+    );
+    reject!(
+        attrs.close.is_some() && kind.inner_name_matches(&["Mint", "Mint2022"]),
+        "#[account(close)] cannot be used on mint accounts. Mint closing is not supported through \
+         the token-account close path."
     );
 
     // Sweep validations
@@ -386,6 +515,20 @@ fn validate_field_attrs(
          `associated_token::authority`"
     );
     reject!(
+        attrs.token_token_program.is_some()
+            && attrs.token_mint.is_none()
+            && attrs.sweep.is_none()
+            && attrs.close.is_none(),
+        "`token::token_program` requires `token::mint`/`token::authority`, `sweep`, or token \
+         account `close`"
+    );
+    reject!(
+        attrs.mint_token_program.is_some()
+            && attrs.mint_decimals.is_none()
+            && attrs.master_edition_max_supply.is_none(),
+        "`mint::token_program` requires `mint::decimals` or `master_edition::max_supply`"
+    );
+    reject!(
         attrs.realloc_payer.is_some() && attrs.realloc.is_none(),
         "`realloc::payer` requires `realloc`"
     );
@@ -425,8 +568,15 @@ fn validate_field_attrs(
         reject!(
             !has_doc,
             "#[account(dup)] requires a /// CHECK: <reason> doc comment explaining why this \
-             account is safe to use as a duplicate. Duplicate accounts allow aliased mutable \
-             access to the same underlying data."
+             account is safe to use as a duplicate. Duplicate bindings are intended for read-only \
+             alias/pass-through roles; keep exactly one canonical mutable binding per unique \
+             account."
+        );
+        reject!(
+            flags.is_writable,
+            "#[account(dup)] cannot be used on writable accounts. Duplicate accounts may only be \
+             bound through read-only alias roles; keep exactly one canonical mutable binding per \
+             unique account."
         );
     }
 
@@ -461,15 +611,9 @@ pub(super) fn process_fields(
     // --- Feature flags ---
 
     let has_any_init = field_attrs.iter().any(|a| a.is_init || a.init_if_needed);
-    let has_any_token_init = field_attrs
-        .iter()
-        .any(|a| (a.is_init || a.init_if_needed) && a.token_mint.is_some());
     let has_any_ata_init = field_attrs
         .iter()
         .any(|a| (a.is_init || a.init_if_needed) && a.associated_token_mint.is_some());
-    let has_any_mint_init = field_attrs
-        .iter()
-        .any(|a| (a.is_init || a.init_if_needed) && a.mint_decimals.is_some());
     let has_any_realloc = field_attrs.iter().any(|a| a.realloc.is_some());
     let has_any_metadata_init = field_attrs
         .iter()
@@ -538,58 +682,6 @@ pub(super) fn process_fields(
         }
     }
 
-    // Close on token/mint types requires a token program field for CPI close.
-    let has_any_token_close = field_attrs.iter().zip(fields.iter()).any(|(a, f)| {
-        a.close.is_some() && FieldKind::classify(strip_ref(&f.ty)).is_token_or_mint()
-    });
-
-    // Sweep requires a token program field for transfer_checked CPI.
-    let has_any_sweep = field_attrs.iter().any(|a| a.sweep.is_some());
-
-    // Non-init InterfaceAccount fields with token/ata attrs need a runtime
-    // token_program_field. Account<Token>/Account<Token2022> resolve at compile
-    // time and do NOT require one.
-    let has_any_non_init_interface_needing_program =
-        field_attrs.iter().zip(fields.iter()).any(|(a, f)| {
-            let is_init = a.is_init || a.init_if_needed;
-            let needs_program = a.token_mint.is_some()
-                || (a.associated_token_mint.is_some()
-                    && a.associated_token_token_program.is_none())
-                || a.mint_decimals.is_some();
-            let ty = strip_ref(&f.ty);
-            !is_init
-                && needs_program
-                && matches!(FieldKind::classify(ty), FieldKind::InterfaceAccount { .. })
-        });
-
-    let token_program_field = if has_any_token_init
-        || has_any_ata_init
-        || has_any_mint_init
-        || has_any_master_edition_init
-        || has_any_non_init_interface_needing_program
-        || has_any_token_close
-        || has_any_sweep
-    {
-        // Check for multiple token program fields when InterfaceAccount ATA attrs
-        // don't specify an explicit program — ambiguity must be resolved by the user.
-        if has_any_non_init_interface_needing_program && detected.token_program_count > 1 {
-            return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Multiple token program fields detected. Use `associated_token::token_program = \
-                 <field>` to specify which one.",
-            )
-            .to_compile_error()
-            .into());
-        }
-        Some(DetectedFields::require(
-            detected.token_program,
-            "token/ATA/mint/master_edition init or InterfaceAccount validation requires a token \
-             program field (Program<Token>, Program<Token2022>, or Interface<TokenInterface>)",
-        )?)
-    } else {
-        None
-    };
-
     let ata_program_field = if has_any_ata_init {
         Some(DetectedFields::require(
             detected.associated_token_program,
@@ -656,9 +748,8 @@ pub(super) fn process_fields(
 
     let rent_field = if has_any_metadata_init || has_any_master_edition_init {
         Some(DetectedFields::require(
-            detected.rent,
-            "`metadata::*` / `master_edition::*` requires a `rent` field (UncheckedAccount for \
-             the Rent sysvar)",
+            detected.rent_sysvar,
+            "`metadata::*` / `master_edition::*` requires a `Sysvar<Rent>` field",
         )?)
     } else {
         None
@@ -692,6 +783,76 @@ pub(super) fn process_fields(
         let is_dynamic = kind.is_dynamic();
 
         validate_field_attrs(field, field_name, attrs, &kind, &flags)?;
+
+        let token_program_for_token = if attrs.token_mint.is_some()
+            || attrs.sweep.is_some()
+            || (attrs.close.is_some() && kind.is_token_account())
+        {
+            let requires_runtime_field = attrs.is_init
+                || attrs.init_if_needed
+                || attrs.sweep.is_some()
+                || (attrs.close.is_some() && kind.is_token_account())
+                || matches!(kind, FieldKind::InterfaceAccount { .. });
+            resolve_token_program_field(
+                fields,
+                &detected,
+                field_name,
+                attrs.token_token_program.as_ref(),
+                "token::token_program",
+                "`token::*` on this field",
+                if requires_runtime_field {
+                    TokenProgramResolution::FallbackRequired
+                } else {
+                    TokenProgramResolution::ExplicitOnly
+                },
+            )?
+        } else {
+            None
+        };
+
+        let token_program_for_mint =
+            if attrs.mint_decimals.is_some() || attrs.master_edition_max_supply.is_some() {
+                let requires_runtime_field = attrs.is_init
+                    || attrs.init_if_needed
+                    || attrs.master_edition_max_supply.is_some()
+                    || matches!(kind, FieldKind::InterfaceAccount { .. });
+                resolve_token_program_field(
+                    fields,
+                    &detected,
+                    field_name,
+                    attrs.mint_token_program.as_ref(),
+                    "mint::token_program",
+                    "`mint::*` / `master_edition::*` on this field",
+                    if requires_runtime_field {
+                        TokenProgramResolution::FallbackRequired
+                    } else {
+                        TokenProgramResolution::ExplicitOnly
+                    },
+                )?
+            } else {
+                None
+            };
+
+        let token_program_for_ata = if attrs.associated_token_mint.is_some() {
+            let requires_runtime_field = attrs.is_init
+                || attrs.init_if_needed
+                || matches!(kind, FieldKind::InterfaceAccount { .. });
+            resolve_token_program_field(
+                fields,
+                &detected,
+                field_name,
+                attrs.associated_token_token_program.as_ref(),
+                "associated_token::token_program",
+                "`associated_token::*` on this field",
+                if requires_runtime_field {
+                    TokenProgramResolution::FallbackRequired
+                } else {
+                    TokenProgramResolution::ExplicitOnly
+                },
+            )?
+        } else {
+            None
+        };
 
         // Generate type-specific validation (owner, discriminator, address).
         // Flags are already validated via u32 header in parse_accounts.
@@ -921,8 +1082,8 @@ pub(super) fn process_fields(
         // --- Close field tracking ---
 
         if let Some(dest) = &attrs.close {
-            let cpi_close = if kind.is_token_or_mint() {
-                // Token/mint accounts require CPI close via the token program.
+            let cpi_close = if kind.is_token_account() {
+                // Token accounts require CPI close via the token program.
                 // Resolve the authority from token::authority (or associated_token::authority).
                 let authority = attrs
                     .token_authority
@@ -931,24 +1092,14 @@ pub(super) fn process_fields(
                     .ok_or_else(|| -> proc_macro::TokenStream {
                         syn::Error::new_spanned(
                             field_name,
-                            "#[account(close)] on token/mint types requires `token::authority`",
+                            "#[account(close)] on token account types requires `token::authority`",
                         )
                         .to_compile_error()
                         .into()
                     })?;
-                // Find the token program field.
-                let tp_field: Ident =
-                    token_program_field
-                        .cloned()
-                        .ok_or_else(|| -> proc_macro::TokenStream {
-                            syn::Error::new_spanned(
-                                field_name,
-                                "#[account(close)] on token/mint types requires a token program \
-                                 field",
-                            )
-                            .to_compile_error()
-                            .into()
-                        })?;
+                let tp_field: Ident = token_program_for_token
+                    .cloned()
+                    .expect("token close requires a resolved token program field");
                 Some(CpiCloseInfo {
                     token_program: tp_field,
                     authority,
@@ -1025,7 +1176,7 @@ pub(super) fn process_fields(
                 .token_authority
                 .clone()
                 .expect("token_authority must be set when sweep is configured");
-            let tp_field = token_program_field
+            let tp_field = token_program_for_token
                 .cloned()
                 .expect("token_program field must be present when sweep is configured");
 
@@ -1343,7 +1494,16 @@ pub(super) fn process_fields(
                 payer: payer_field.expect("payer field must be present for init"),
                 system_program: system_program_field
                     .expect("system_program field must be present for init"),
-                token_program: token_program_field,
+                token_program: if attrs.token_mint.is_some() || attrs.sweep.is_some() {
+                    token_program_for_token
+                } else if attrs.associated_token_mint.is_some() {
+                    token_program_for_ata
+                } else if attrs.mint_decimals.is_some() || attrs.master_edition_max_supply.is_some()
+                {
+                    token_program_for_mint
+                } else {
+                    None
+                },
                 ata_program: ata_program_field,
                 metadata_account: metadata_account_field,
                 master_edition_account: master_edition_account_field,
@@ -1383,7 +1543,7 @@ pub(super) fn process_fields(
             let token_program_addr = if let Some(tp) = &attrs.associated_token_token_program {
                 quote! { #tp.to_account_view().address() }
             } else {
-                resolve_token_program_addr(effective_ty, token_program_field)
+                resolve_token_program_addr(effective_ty, token_program_for_ata)
             };
 
             this_field_checks.push(quote! {
@@ -1403,7 +1563,8 @@ pub(super) fn process_fields(
             attrs.token_mint.as_ref(),
             attrs.token_authority.as_ref(),
         ) {
-            let token_program_addr = resolve_token_program_addr(effective_ty, token_program_field);
+            let token_program_addr =
+                resolve_token_program_addr(effective_ty, token_program_for_token);
             this_field_checks.push(quote! {
                 quasar_spl::validate_token_account(
                     #field_name.to_account_view(),
@@ -1421,7 +1582,8 @@ pub(super) fn process_fields(
             attrs.mint_decimals.as_ref(),
             attrs.mint_init_authority.as_ref(),
         ) {
-            let token_program_addr = resolve_token_program_addr(effective_ty, token_program_field);
+            let token_program_addr =
+                resolve_token_program_addr(effective_ty, token_program_for_mint);
             let freeze_expr = if let Some(freeze_field) = &attrs.mint_freeze_authority {
                 quote! { Some(#freeze_field.to_account_view().address()) }
             } else {

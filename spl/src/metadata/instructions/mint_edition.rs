@@ -50,7 +50,7 @@ pub fn mint_new_edition_from_master_edition_via_token<'a>(
             InstructionAccount::readonly(metadata.address()),
             InstructionAccount::readonly(token_program.address()),
             InstructionAccount::readonly(system_program.address()),
-            InstructionAccount::readonly(&super::RENT_SYSVAR),
+            InstructionAccount::readonly(rent.address()),
         ],
         [
             new_metadata,

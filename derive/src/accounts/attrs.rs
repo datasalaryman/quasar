@@ -24,6 +24,7 @@ pub(super) enum AccountDirective {
     Address(Expr, Option<Expr>),
     TokenMint(Ident),
     TokenAuthority(Ident),
+    TokenTokenProgram(Ident),
     AssociatedTokenMint(Ident),
     AssociatedTokenAuthority(Ident),
     AssociatedTokenTokenProgram(Ident),
@@ -39,6 +40,7 @@ pub(super) enum AccountDirective {
     MintDecimals(Expr),
     MintInitAuthority(Ident),
     MintFreezeAuthority(Ident),
+    MintTokenProgram(Ident),
 }
 
 impl Parse for AccountDirective {
@@ -153,6 +155,11 @@ impl Parse for AccountDirective {
                         let ident: Ident = input.parse()?;
                         Ok(Self::TokenAuthority(ident))
                     }
+                    "token_program" => {
+                        let _: Token![=] = input.parse()?;
+                        let ident: Ident = input.parse()?;
+                        Ok(Self::TokenTokenProgram(ident))
+                    }
                     _ => Err(syn::Error::new(
                         sub_key.span(),
                         format!("unknown token attribute: `token::{}`", sub_key),
@@ -172,6 +179,10 @@ impl Parse for AccountDirective {
                     "freeze_authority" => {
                         let ident: Ident = input.parse()?;
                         Ok(Self::MintFreezeAuthority(ident))
+                    }
+                    "token_program" => {
+                        let ident: Ident = input.parse()?;
+                        Ok(Self::MintTokenProgram(ident))
                     }
                     _ => Err(syn::Error::new(
                         sub_key.span(),
@@ -265,6 +276,7 @@ pub(super) struct AccountFieldAttrs {
     pub address: Option<(Expr, Option<Expr>)>,
     pub token_mint: Option<Ident>,
     pub token_authority: Option<Ident>,
+    pub token_token_program: Option<Ident>,
     pub associated_token_mint: Option<Ident>,
     pub associated_token_authority: Option<Ident>,
     pub associated_token_token_program: Option<Ident>,
@@ -279,6 +291,7 @@ pub(super) struct AccountFieldAttrs {
     pub mint_decimals: Option<Expr>,
     pub mint_init_authority: Option<Ident>,
     pub mint_freeze_authority: Option<Ident>,
+    pub mint_token_program: Option<Ident>,
 }
 
 impl Parse for AccountFieldAttrs {
@@ -302,6 +315,7 @@ impl Parse for AccountFieldAttrs {
                 AccountDirective::Address(expr, err) => r.address = Some((expr, err)),
                 AccountDirective::TokenMint(v) => r.token_mint = Some(v),
                 AccountDirective::TokenAuthority(v) => r.token_authority = Some(v),
+                AccountDirective::TokenTokenProgram(v) => r.token_token_program = Some(v),
                 AccountDirective::AssociatedTokenMint(v) => r.associated_token_mint = Some(v),
                 AccountDirective::AssociatedTokenAuthority(v) => {
                     r.associated_token_authority = Some(v)
@@ -324,6 +338,7 @@ impl Parse for AccountFieldAttrs {
                 AccountDirective::MintDecimals(v) => r.mint_decimals = Some(v),
                 AccountDirective::MintInitAuthority(v) => r.mint_init_authority = Some(v),
                 AccountDirective::MintFreezeAuthority(v) => r.mint_freeze_authority = Some(v),
+                AccountDirective::MintTokenProgram(v) => r.mint_token_program = Some(v),
             }
         }
         Ok(r)

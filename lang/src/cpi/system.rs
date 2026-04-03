@@ -178,7 +178,8 @@ pub fn init_account(
     signers: &[Signer],
 ) -> ProgramResult {
     if account.lamports() == 0 {
-        create_account(payer, account, lamports, space, owner).invoke_with_signers(signers)
+        create_account(payer, account, lamports, space, owner).invoke_with_signers(signers);
+        Ok(())
     } else {
         // Pre-funded path: the account already has lamports (someone sent SOL
         // to the PDA address). We can't use CreateAccount (it fails if the
@@ -196,10 +197,11 @@ pub fn init_account(
         // these 3 CPIs into 1. Ref: anza-xyz/pinocchio programs/system.
         let required = lamports.saturating_sub(account.lamports());
         if required > 0 {
-            transfer(payer, account, required).invoke()?;
+            transfer(payer, account, required).invoke();
         }
-        allocate(account, space).invoke_with_signers(signers)?;
-        assign(account, owner).invoke_with_signers(signers)
+        allocate(account, space).invoke_with_signers(signers);
+        assign(account, owner).invoke_with_signers(signers);
+        Ok(())
     }
 }
 

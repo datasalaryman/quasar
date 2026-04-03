@@ -221,11 +221,11 @@ pub fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
 /// );
 ///
 /// // Free function style:
-/// my_program::make(&program_view, &maker, &escrow, 100u64, 50u64).invoke()?;
+/// my_program::make(&program_view, &maker, &escrow, 100u64, 50u64).invoke();
 ///
 /// // Method style (shared program reference):
 /// let program: &MyProgram = &ctx.accounts.my_program;
-/// program.make(&maker, &escrow, 100u64, 50u64).invoke()?;
+/// program.make(&maker, &escrow, 100u64, 50u64).invoke();
 /// ```
 ///
 /// The IDL path resolves relative to the calling crate's `CARGO_MANIFEST_DIR`.

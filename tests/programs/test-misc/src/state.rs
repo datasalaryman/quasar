@@ -1,5 +1,50 @@
 use quasar_lang::prelude::*;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ReturnPayload {
+    pub amount: u64,
+    pub flag: bool,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ReturnPayloadZc {
+    pub amount: <u64 as InstructionArg>::Zc,
+    pub flag: <bool as InstructionArg>::Zc,
+}
+
+impl InstructionArg for ReturnPayload {
+    type Zc = ReturnPayloadZc;
+
+    #[inline(always)]
+    fn from_zc(zc: &Self::Zc) -> Self {
+        Self {
+            amount: <u64 as InstructionArg>::from_zc(&zc.amount),
+            flag: <bool as InstructionArg>::from_zc(&zc.flag),
+        }
+    }
+
+    #[inline(always)]
+    fn to_zc(&self) -> Self::Zc {
+        ReturnPayloadZc {
+            amount: <u64 as InstructionArg>::to_zc(&self.amount),
+            flag: <bool as InstructionArg>::to_zc(&self.flag),
+        }
+    }
+}
+
+pub const RETURN_U64_VALUE: u64 = 777;
+pub const RETURN_PAYLOAD_VALUE: ReturnPayload = ReturnPayload {
+    amount: 55,
+    flag: true,
+};
+
+pub struct TestMiscProgram;
+
+impl Id for TestMiscProgram {
+    const ID: Address = crate::ID;
+}
+
 #[account(discriminator = 1)]
 pub struct SimpleAccount {
     pub authority: Address,

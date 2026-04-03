@@ -64,6 +64,16 @@ pub(crate) fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let to_zc_fields: Vec<_> = field_names
+        .iter()
+        .zip(field_types.iter())
+        .map(|(name, ty)| {
+            quote! {
+                #name: <#ty as quasar_lang::instruction_arg::InstructionArg>::to_zc(&self.#name)
+            }
+        })
+        .collect();
+
     let expanded = quote! {
         // Alignment-1 ZC companion for zero-copy instruction deserialization.
         #[doc(hidden)]
@@ -81,6 +91,12 @@ pub(crate) fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
             fn from_zc(zc: &#zc_name) -> Self {
                 Self {
                     #(#from_zc_fields,)*
+                }
+            }
+            #[inline(always)]
+            fn to_zc(&self) -> #zc_name {
+                #zc_name {
+                    #(#to_zc_fields,)*
                 }
             }
         }

@@ -107,6 +107,13 @@ mod quasar_test_misc {
         ctx.accounts.handler(ctx.remaining_accounts())
     }
 
+    #[instruction(discriminator = 44)]
+    pub fn remaining_accounts_passthrough_check(
+        ctx: CtxWithRemaining<RemainingAccountsCheck>,
+    ) -> Result<(), ProgramError> {
+        ctx.accounts.handler(ctx.remaining_accounts_passthrough())
+    }
+
     #[instruction(discriminator = 20)]
     pub fn dynamic_account_check(ctx: Ctx<DynamicAccountCheck>) -> Result<(), ProgramError> {
         ctx.accounts.handler()
@@ -214,6 +221,43 @@ mod quasar_test_misc {
 
     #[instruction(discriminator = 43)]
     pub fn read_no_disc(ctx: Ctx<ReadNoDisc>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 45)]
+    pub fn return_u64(ctx: Ctx<ReturnU64>) -> Result<u64, ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 46)]
+    pub fn return_payload(
+        ctx: Ctx<ReturnPayloadInstruction>,
+    ) -> Result<state::ReturnPayload, ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 47)]
+    pub fn plain_ok(ctx: Ctx<PlainOk>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 48)]
+    pub fn cpi_invoke_with_return(ctx: Ctx<CpiInvokeWithReturn>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 49)]
+    pub fn cpi_invoke_struct_return(ctx: Ctx<CpiInvokeStructReturn>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 50)]
+    pub fn cpi_invoke_ignore_return(ctx: Ctx<CpiInvokeIgnoreReturn>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 51)]
+    pub fn cpi_invoke_missing_return(ctx: Ctx<CpiInvokeMissingReturn>) -> Result<(), ProgramError> {
         ctx.accounts.handler()
     }
 }

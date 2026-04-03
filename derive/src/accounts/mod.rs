@@ -531,7 +531,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                                 self.#auth,
                                 __sweep_amount,
                                 __sweep_decimals,
-                            ).invoke()?;
+                            ).invoke();
                         }
                     }
                 }
@@ -552,7 +552,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     quote! {
                         {
                             use quasar_spl::TokenCpi as _;
-                            self.#tp.close_account(self.#field, self.#dest, self.#auth).invoke()?;
+                            self.#tp.close_account(self.#field, self.#dest, self.#auth).invoke();
                         }
                     }
                 } else {

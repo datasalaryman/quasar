@@ -131,14 +131,14 @@ fn test_header_dup_accounts_success() {
     let source = Address::new_unique();
     let destination = Address::new_unique();
 
-    // Test with dup-allowed struct
+    // Test with explicit readonly aliasing.
     let instruction = Instruction {
         program_id: quasar_test_errors::ID,
         accounts: vec![
             AccountMeta::new_readonly(source, true), // source signer
-            AccountMeta::new(destination, false),    // destination writable
+            AccountMeta::new_readonly(destination, false), // destination alias
         ],
-        data: vec![16], // discriminator 16 = header_dup_mut
+        data: vec![16], // discriminator 16 = header_dup_readonly
     };
 
     let result = mollusk.process_instruction(
@@ -152,7 +152,7 @@ fn test_header_dup_accounts_success() {
     assert_eq!(result.program_result, MolluskResult::Success);
 
     #[cfg(feature = "debug")]
-    println!("✓ Test passed: dup-allowed accounts validated correctly");
+    println!("✓ Test passed: duplicate readonly accounts validated correctly");
 }
 
 // ============================================================================
@@ -316,7 +316,29 @@ fn test_header_three_way_duplicate() {
 // ============================================================================
 
 #[test]
-fn test_header_dup_mut_same_account_success() {
+fn test_header_dup_readonly_same_account_success() {
+    let mollusk = setup();
+    let account = Address::new_unique();
+
+    let instruction = Instruction {
+        program_id: quasar_test_errors::ID,
+        accounts: vec![
+            AccountMeta::new_readonly(account, true),
+            AccountMeta::new_readonly(account, false),
+        ],
+        data: vec![16],
+    };
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[(account, Account::default()), (account, Account::default())],
+    );
+
+    assert_eq!(result.program_result, MolluskResult::Success);
+}
+
+#[test]
+fn test_header_dup_readonly_rejects_writable_alias() {
     let mollusk = setup();
     let account = Address::new_unique();
 
@@ -334,7 +356,10 @@ fn test_header_dup_mut_same_account_success() {
         &[(account, Account::default()), (account, Account::default())],
     );
 
-    assert_eq!(result.program_result, MolluskResult::Success);
+    assert_eq!(
+        result.program_result,
+        MolluskResult::Failure(ProgramError::Immutable)
+    );
 }
 
 #[test]

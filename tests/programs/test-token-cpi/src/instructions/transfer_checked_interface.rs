@@ -24,6 +24,7 @@ impl<'info> TransferCheckedInterface<'info> {
                 amount,
                 decimals,
             )
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

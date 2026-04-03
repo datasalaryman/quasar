@@ -98,7 +98,7 @@ mod quasar_test_errors {
     }
 
     #[instruction(discriminator = 16)]
-    pub fn header_dup_mut(ctx: Ctx<HeaderDupMut>) -> Result<(), ProgramError> {
+    pub fn header_dup_readonly(ctx: Ctx<HeaderDupReadonly>) -> Result<(), ProgramError> {
         ctx.accounts.handler()
     }
 

@@ -16,6 +16,7 @@ impl<'info> MintToInterface<'info> {
     pub fn handler(&self, amount: u64) -> Result<(), ProgramError> {
         self.token_program
             .mint_to(self.mint, self.to, self.authority, amount)
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

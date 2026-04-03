@@ -28,7 +28,7 @@
 //! ```ignore
 //! ctx.accounts.token_program
 //!     .transfer(&from, &to, &authority, amount)
-//!     .invoke()?;
+//!     .invoke();
 //! ```
 //!
 //! # Token lifecycle
@@ -40,7 +40,7 @@
 //!
 //! ```ignore
 //! self.token_program.close_account(&self.vault, &self.maker, &self.escrow)
-//!     .invoke_signed(&seeds)?;
+//!     .invoke_signed(&seeds);
 //! ```
 
 #![no_std]

@@ -32,7 +32,7 @@
 //! | `& -> &mut` cast (`define_account!` types) | Sound under Tree Borrows |
 //! | DerefMut write + aliased read via &AccountView | Sound under Tree Borrows |
 //! | Interleaved shared/mutable access (N cycles) | Sound under Tree Borrows |
-//! | Duplicate accounts: 2/3/4 &mut to same RuntimeAccount | Sound under Tree Borrows |
+//! | Internal aliasing helpers: 2/3/4 &mut to same RuntimeAccount | Sound under Tree Borrows |
 //! | `borrow_unchecked_mut` rapid cycling (50 cycles) | Sound under Tree Borrows |
 //! | RawCpiAccount flag extraction (all 8 combos) | Sound |
 //! | MaybeUninit array init + assume_init (N=1..16) | Sound |
@@ -41,6 +41,8 @@
 //! | CPI `create_account` / `transfer` / `assign` data construction | Sound |
 //! | Boundary pointer subtraction (`data.as_ptr().sub(8)`) | Sound |
 //! | Remaining accounts alignment rounding | **Provenance warning** |
+//! | Strict remaining accounts reject duplicates | Sound |
+//! | Passthrough remaining accounts preserve duplicates | Sound |
 //! | Dynamic inline prefix read + boundary probes | Sound |
 //! | `from_utf8_unchecked` on account data String fields | Sound |
 //! | `slice::from_raw_parts` for Vec field access | Sound |
@@ -48,6 +50,10 @@
 //! | `slice::from_raw_parts_mut` for Vec in-place mutation | Sound |
 //! | Offset-cached view parse + O(1) accessor | Sound |
 //! | Tail &str / &[u8] to end of buffer | Sound |
+//!
+//! Note: these aliasing tests exercise low-level internal constructors only.
+//! The public `#[account(dup)]` contract now rejects writable duplicate
+//! bindings; duplicate roles are intended to stay read-only/pass-through.
 //!
 //! ## What Miri CANNOT test
 //!
@@ -74,6 +80,7 @@ use {
         checks,
         cpi::{CpiCall, InstructionAccount},
         error::QuasarError,
+        instruction_arg::InstructionArg,
         pod::*,
         remaining::RemainingAccounts,
         traits::*,
@@ -876,9 +883,9 @@ fn bounds_remaining_data_len_sweep() {
             is_writable: true,
         }]);
         let remaining = RemainingAccounts::new(buf.as_mut_ptr(), buf.boundary(), &[]);
-        let v = remaining.get(0).unwrap();
+        let v = remaining.get(0).unwrap().unwrap();
         assert_eq!(v.data_len(), data_len);
-        assert!(remaining.get(1).is_none());
+        assert!(remaining.get(1).unwrap().is_none());
     }
 }
 
@@ -915,16 +922,16 @@ fn bounds_remaining_walk_varied_data_lengths() {
     ]);
     let remaining = RemainingAccounts::new(buf.as_mut_ptr(), buf.boundary(), &[]);
 
-    let v0 = remaining.get(0).unwrap();
+    let v0 = remaining.get(0).unwrap().unwrap();
     assert_eq!(v0.lamports(), 100);
     assert_eq!(v0.data_len(), 1);
-    let v1 = remaining.get(1).unwrap();
+    let v1 = remaining.get(1).unwrap().unwrap();
     assert_eq!(v1.lamports(), 200);
     assert_eq!(v1.data_len(), 7);
-    let v2 = remaining.get(2).unwrap();
+    let v2 = remaining.get(2).unwrap().unwrap();
     assert_eq!(v2.lamports(), 300);
     assert_eq!(v2.data_len(), 8);
-    assert!(remaining.get(3).is_none());
+    assert!(remaining.get(3).unwrap().is_none());
 }
 
 #[test]
@@ -970,19 +977,31 @@ fn bounds_remaining_dup_index_sweep() {
             MultiAccountEntry::account(0x10, 0),
             MultiAccountEntry::duplicate(dup_idx),
         ]);
-        let remaining = RemainingAccounts::new(buf.as_mut_ptr(), buf.boundary(), &declared);
-        let v = remaining.get(1).unwrap();
+        let remaining =
+            RemainingAccounts::new_passthrough(buf.as_mut_ptr(), buf.boundary(), &declared);
+        let v = remaining.get(1).unwrap().unwrap();
         assert_eq!(v.address(), &Address::new_from_array([dup_idx as u8; 32]));
     }
 }
 
 #[test]
-fn bounds_remaining_iterator_dup_cache_resolution() {
+fn bounds_remaining_iterator_duplicate_rejected_in_strict_mode() {
     let mut buf = MultiAccountBuffer::new(&[
         MultiAccountEntry::account(0x01, 0),
         MultiAccountEntry::duplicate(0),
     ]);
     let remaining = RemainingAccounts::new(buf.as_mut_ptr(), buf.boundary(), &[]);
+    let err = remaining.iter().collect::<Result<Vec<_>, _>>().unwrap_err();
+    assert_eq!(err, QuasarError::RemainingAccountDuplicate.into());
+}
+
+#[test]
+fn bounds_remaining_iterator_dup_cache_resolution_passthrough() {
+    let mut buf = MultiAccountBuffer::new(&[
+        MultiAccountEntry::account(0x01, 0),
+        MultiAccountEntry::duplicate(0),
+    ]);
+    let remaining = RemainingAccounts::new_passthrough(buf.as_mut_ptr(), buf.boundary(), &[]);
     let views: Vec<_> = remaining.iter().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(views.len(), 2);
     assert_eq!(views[0].address(), views[1].address());
@@ -1013,7 +1032,7 @@ fn bounds_remaining_empty() {
     let boundary = ptr as *const u8;
     let remaining = RemainingAccounts::new(ptr, boundary, &[]);
     assert!(remaining.is_empty());
-    assert!(remaining.get(0).is_none());
+    assert!(remaining.get(0).unwrap().is_none());
     assert_eq!(remaining.iter().count(), 0);
 }
 
@@ -1050,9 +1069,9 @@ fn bounds_remaining_boundary_pointer_subtraction() {
     assert_eq!(boundary, unsafe { base.add(ix_len_offset) as *const u8 });
 
     let remaining = RemainingAccounts::new(base, boundary, &[]);
-    let v = remaining.get(0).unwrap();
+    let v = remaining.get(0).unwrap().unwrap();
     assert_eq!(v.lamports(), 100);
-    assert!(remaining.get(1).is_none());
+    assert!(remaining.get(1).unwrap().is_none());
 }
 
 #[test]
@@ -1527,6 +1546,12 @@ struct MaxEvent {
 const _: () = assert!(size_of::<MaxEvent>() == 8 + 16 + 16 + 8 + 8 + 4 + 4 + 2 + 2 + 1);
 const _: () = assert!(align_of::<MaxEvent>() == 1);
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, quasar_lang::prelude::QuasarSerialize)]
+struct RoundTripArgs {
+    amount: u64,
+    flag: bool,
+}
+
 #[test]
 fn event_memcpy_small() {
     let event = SmallEvent {
@@ -1609,6 +1634,24 @@ fn event_memcpy_max_all_pod_types() {
     assert_eq!(&buf[0..8], &[0xFF; 8]);
     assert_eq!(event.a.get(), u128::MAX);
     assert_eq!(event.b.get(), i128::MIN);
+}
+
+#[test]
+fn instruction_arg_round_trip_u64() {
+    let zc = <u64 as InstructionArg>::to_zc(&777u64);
+    assert_eq!(<u64 as InstructionArg>::from_zc(&zc), 777u64);
+    assert_eq!(align_of::<<u64 as InstructionArg>::Zc>(), 1);
+}
+
+#[test]
+fn instruction_arg_round_trip_struct() {
+    let value = RoundTripArgs {
+        amount: 55,
+        flag: true,
+    };
+    let zc = <RoundTripArgs as InstructionArg>::to_zc(&value);
+    assert_eq!(<RoundTripArgs as InstructionArg>::from_zc(&zc), value);
+    assert_eq!(align_of::<<RoundTripArgs as InstructionArg>::Zc>(), 1);
 }
 
 // ###########################################################################
@@ -2327,6 +2370,19 @@ fn adversarial_remaining_all_duplicates() {
     }
     let mut buf = MultiAccountBuffer::new(&entries);
     let remaining = RemainingAccounts::new(buf.as_mut_ptr(), buf.boundary(), &[]);
+
+    let err = remaining.iter().collect::<Result<Vec<_>, _>>().unwrap_err();
+    assert_eq!(err, QuasarError::RemainingAccountDuplicate.into());
+}
+
+#[test]
+fn adversarial_remaining_all_duplicates_passthrough() {
+    let mut entries = vec![MultiAccountEntry::account(0x01, 8)];
+    for _ in 0..7 {
+        entries.push(MultiAccountEntry::duplicate(0));
+    }
+    let mut buf = MultiAccountBuffer::new(&entries);
+    let remaining = RemainingAccounts::new_passthrough(buf.as_mut_ptr(), buf.boundary(), &[]);
 
     let views: Vec<_> = remaining.iter().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(views.len(), 8);

@@ -361,8 +361,8 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         let user_body: proc_macro2::TokenStream = stmts.iter().map(|s| quote!(#s)).collect();
         new_stmts.push(syn::parse_quote!(
             const _: () = assert!(
-                core::mem::align_of::<#ok_ty>() == 1,
-                "return data type must have alignment 1 (use Pod types)"
+                core::mem::align_of::<<#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc>() == 1,
+                "return data type must implement InstructionArg with an alignment-1 Zc companion"
             );
         ));
         new_stmts.push(syn::parse_quote!(
@@ -371,10 +371,12 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 match __result {
                     Ok(ref __val) => {
                         #param_ident.accounts.epilogue()?;
+                        let __zc =
+                            <#ok_ty as quasar_lang::instruction_arg::InstructionArg>::to_zc(__val);
                         let __bytes = unsafe {
                             core::slice::from_raw_parts(
-                                __val as *const #ok_ty as *const u8,
-                                core::mem::size_of::<#ok_ty>(),
+                                &__zc as *const <#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc as *const u8,
+                                core::mem::size_of::<<#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc>(),
                             )
                         };
                         quasar_lang::return_data::set_return_data(__bytes);

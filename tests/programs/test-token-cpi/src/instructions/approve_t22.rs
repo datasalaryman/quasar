@@ -16,6 +16,7 @@ impl<'info> ApproveT22<'info> {
     pub fn handler(&self, amount: u64) -> Result<(), ProgramError> {
         self.token_program
             .approve(self.source, self.delegate, self.authority, amount)
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

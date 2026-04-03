@@ -1,0 +1,5 @@
+error: #[account(dup)] cannot be used on writable accounts. Duplicate accounts may only be bound through read-only alias roles; keep exactly one canonical mutable binding per unique account.
+  --> tests/compile_fail/dup_mut_account.rs:11:9
+   |
+11 |     pub authority: &'info mut UncheckedAccount,
+   |         ^^^^^^^^^

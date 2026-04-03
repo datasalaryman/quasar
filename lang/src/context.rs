@@ -10,8 +10,7 @@
 //!   instructions where remaining accounts are not needed.
 //!
 //! - `CtxWithRemaining` — like `Ctx` but also captures the remaining accounts
-//!   region for instructions that forward accounts to CPIs (e.g., token
-//!   transfers with extra signers or route swaps).
+//!   region for instructions that inspect or forward trailing accounts.
 
 use crate::{prelude::*, remaining::RemainingAccounts};
 
@@ -86,8 +85,9 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> Ctx<'info, T> {
 /// Like [`Ctx`] but also captures the remaining accounts region.
 ///
 /// Use this for instructions that call `remaining_accounts()` — e.g.
-/// token transfers with extra signers, route swaps, or any CPI that
-/// forwards a variable number of accounts.
+/// when inspecting trailing accounts in local logic, or
+/// `remaining_accounts_passthrough()` when forwarding a variable number of
+/// accounts to a downstream CPI.
 pub struct CtxWithRemaining<'info, T: ParseAccounts<'info> + AccountCount> {
     /// Validated and typed account struct.
     pub accounts: T,
@@ -140,8 +140,27 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> CtxWithRemaining<'info, T> {
         T::HAS_VALIDATE
     }
 
+    /// Strict remaining-account accessor.
+    ///
+    /// Rejects any duplicate of a declared or prior remaining account. Use
+    /// this for local program logic so each trailing account has a unique
+    /// identity within the instruction context.
     #[inline(always)]
     pub fn remaining_accounts(&self) -> RemainingAccounts<'info> {
         RemainingAccounts::new(self.remaining_ptr, self.accounts_boundary, self.declared)
+    }
+
+    /// Passthrough remaining-account accessor.
+    ///
+    /// Preserves duplicate account metas exactly as they appeared in the input
+    /// for CPI forwarding scenarios. Prefer `remaining_accounts()` unless you
+    /// explicitly need Solana's raw duplicate-meta behavior.
+    #[inline(always)]
+    pub fn remaining_accounts_passthrough(&self) -> RemainingAccounts<'info> {
+        RemainingAccounts::new_passthrough(
+            self.remaining_ptr,
+            self.accounts_boundary,
+            self.declared,
+        )
     }
 }

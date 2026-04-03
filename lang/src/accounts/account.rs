@@ -111,7 +111,7 @@ pub fn realloc_account(
 
     if rent_exempt_lamports > current_lamports {
         crate::cpi::system::transfer(payer, &*view, rent_exempt_lamports - current_lamports)
-            .invoke()?;
+            .invoke();
     } else if current_lamports > rent_exempt_lamports {
         let excess = current_lamports - rent_exempt_lamports;
         view.set_lamports(rent_exempt_lamports);

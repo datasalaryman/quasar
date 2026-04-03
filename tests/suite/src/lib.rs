@@ -42,6 +42,8 @@ mod constraints;
 
 // CPI & errors
 #[cfg(test)]
+mod cpi_return;
+#[cfg(test)]
 mod cpi_system;
 #[cfg(test)]
 mod errors;

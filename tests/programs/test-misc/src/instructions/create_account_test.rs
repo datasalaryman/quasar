@@ -12,6 +12,7 @@ impl<'info> CreateAccountTest<'info> {
     pub fn handler(&self, lamports: u64, space: u64, owner: Address) -> Result<(), ProgramError> {
         self.system_program
             .create_account(self.payer, self.new_account, lamports, space, &owner)
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

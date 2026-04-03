@@ -46,8 +46,8 @@ pub use header_nodup_signer::*;
 pub mod header_executable;
 pub use header_executable::*;
 
-pub mod header_dup_mut;
-pub use header_dup_mut::*;
+pub mod header_dup_readonly;
+pub use header_dup_readonly::*;
 
 pub mod header_dup_signer;
 pub use header_dup_signer::*;

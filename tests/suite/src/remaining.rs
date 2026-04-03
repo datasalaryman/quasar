@@ -401,11 +401,11 @@ fn test_remaining_accounts_include_system_program() {
 }
 
 // ============================================================================
-// Remaining Accounts: duplicate of declared account
+// Remaining Accounts: duplicate handling
 // ============================================================================
 
 #[test]
-fn test_remaining_duplicate_of_declared() {
+fn test_remaining_duplicate_of_declared_rejected() {
     let mollusk = setup();
     let authority = Address::new_unique();
     let authority_account = Account::new(1_000_000, 0, &Address::default());
@@ -424,9 +424,103 @@ fn test_remaining_duplicate_of_declared() {
         ],
     );
 
+    assert_eq!(
+        result.program_result,
+        ProgramResult::Failure(ProgramError::Custom(
+            QuasarError::RemainingAccountDuplicate as u32
+        )),
+        "strict remaining accounts should reject duplicates of declared accounts"
+    );
+}
+
+#[test]
+fn test_remaining_duplicate_of_prior_remaining_rejected() {
+    let mollusk = setup();
+    let authority = Address::new_unique();
+    let extra = Address::new_unique();
+
+    let instruction: Instruction = RemainingAccountsCheckInstruction {
+        authority,
+        remaining_accounts: vec![
+            AccountMeta::new_readonly(extra, false),
+            AccountMeta::new_readonly(extra, false),
+        ],
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, Account::new(1_000_000, 0, &Address::default())),
+            (extra, Account::new(1_000_000, 0, &Address::default())),
+            (extra, Account::new(1_000_000, 0, &Address::default())),
+        ],
+    );
+
+    assert_eq!(
+        result.program_result,
+        ProgramResult::Failure(ProgramError::Custom(
+            QuasarError::RemainingAccountDuplicate as u32
+        )),
+        "strict remaining accounts should reject duplicates of prior remaining accounts"
+    );
+}
+
+#[test]
+fn test_remaining_passthrough_duplicate_of_declared() {
+    let mollusk = setup();
+    let authority = Address::new_unique();
+    let authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let instruction: Instruction = RemainingAccountsPassthroughCheckInstruction {
+        authority,
+        remaining_accounts: vec![AccountMeta::new_readonly(authority, false)],
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, authority_account.clone()),
+            (authority, authority_account),
+        ],
+    );
+
     assert!(
         result.program_result.is_ok(),
-        "remaining accounts with duplicate of declared account should succeed: {:?}",
+        "passthrough remaining accounts should preserve duplicates of declared accounts: {:?}",
+        result.program_result
+    );
+}
+
+#[test]
+fn test_remaining_passthrough_duplicate_of_prior_remaining() {
+    let mollusk = setup();
+    let authority = Address::new_unique();
+    let extra = Address::new_unique();
+
+    let instruction: Instruction = RemainingAccountsPassthroughCheckInstruction {
+        authority,
+        remaining_accounts: vec![
+            AccountMeta::new_readonly(extra, false),
+            AccountMeta::new_readonly(extra, false),
+        ],
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, Account::new(1_000_000, 0, &Address::default())),
+            (extra, Account::new(1_000_000, 0, &Address::default())),
+            (extra, Account::new(1_000_000, 0, &Address::default())),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "passthrough remaining accounts should preserve duplicates of prior remaining accounts: \
+         {:?}",
         result.program_result
     );
 }

@@ -48,7 +48,7 @@ pub fn create_master_edition_v3<'a>(
             InstructionAccount::writable(metadata.address()),
             InstructionAccount::readonly(token_program.address()),
             InstructionAccount::readonly(system_program.address()),
-            InstructionAccount::readonly(&super::RENT_SYSVAR),
+            InstructionAccount::readonly(rent.address()),
         ],
         [
             edition,

@@ -18,6 +18,8 @@ pub trait InstructionArg: Sized {
     type Zc: Copy;
     /// Reconstruct the native value from its ZC representation.
     fn from_zc(zc: &Self::Zc) -> Self;
+    /// Convert the native value into its alignment-1 ZC representation.
+    fn to_zc(&self) -> Self::Zc;
 }
 
 // --- Identity impls (already alignment 1) ---
@@ -28,6 +30,10 @@ impl InstructionArg for u8 {
     fn from_zc(zc: &u8) -> u8 {
         *zc
     }
+    #[inline(always)]
+    fn to_zc(&self) -> u8 {
+        *self
+    }
 }
 
 impl InstructionArg for i8 {
@@ -35,6 +41,10 @@ impl InstructionArg for i8 {
     #[inline(always)]
     fn from_zc(zc: &i8) -> i8 {
         *zc
+    }
+    #[inline(always)]
+    fn to_zc(&self) -> i8 {
+        *self
     }
 }
 
@@ -44,6 +54,10 @@ impl<const N: usize> InstructionArg for [u8; N] {
     fn from_zc(zc: &[u8; N]) -> [u8; N] {
         *zc
     }
+    #[inline(always)]
+    fn to_zc(&self) -> [u8; N] {
+        *self
+    }
 }
 
 impl InstructionArg for solana_address::Address {
@@ -51,6 +65,10 @@ impl InstructionArg for solana_address::Address {
     #[inline(always)]
     fn from_zc(zc: &solana_address::Address) -> solana_address::Address {
         *zc
+    }
+    #[inline(always)]
+    fn to_zc(&self) -> solana_address::Address {
+        *self
     }
 }
 
@@ -63,6 +81,10 @@ macro_rules! impl_instruction_arg_pod {
             #[inline(always)]
             fn from_zc(zc: &$pod) -> $native {
                 zc.get()
+            }
+            #[inline(always)]
+            fn to_zc(&self) -> $pod {
+                <$pod>::from(*self)
             }
         }
     };
@@ -83,6 +105,10 @@ impl InstructionArg for bool {
     fn from_zc(zc: &PodBool) -> bool {
         zc.get()
     }
+    #[inline(always)]
+    fn to_zc(&self) -> PodBool {
+        PodBool::from(*self)
+    }
 }
 
 // --- Pod types map to themselves ---
@@ -93,6 +119,8 @@ macro_rules! impl_instruction_arg_identity {
             type Zc = $t;
             #[inline(always)]
             fn from_zc(zc: &$t) -> $t { *zc }
+            #[inline(always)]
+            fn to_zc(&self) -> $t { *self }
         }
     )*}
 }

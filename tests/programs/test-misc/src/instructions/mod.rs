@@ -99,3 +99,24 @@ pub use double_mut_check::*;
 
 pub mod no_disc_check;
 pub use no_disc_check::*;
+
+pub mod return_u64;
+pub use return_u64::*;
+
+pub mod return_payload;
+pub use return_payload::*;
+
+pub mod plain_ok;
+pub use plain_ok::*;
+
+pub mod cpi_invoke_with_return;
+pub use cpi_invoke_with_return::*;
+
+pub mod cpi_invoke_struct_return;
+pub use cpi_invoke_struct_return::*;
+
+pub mod cpi_invoke_ignore_return;
+pub use cpi_invoke_ignore_return::*;
+
+pub mod cpi_invoke_missing_return;
+pub use cpi_invoke_missing_return::*;

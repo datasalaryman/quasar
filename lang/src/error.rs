@@ -38,4 +38,13 @@ pub enum QuasarError {
     DynamicFieldTooLong,
     /// More remaining accounts than can fit in the buffer.
     RemainingAccountsOverflow,
+    /// A remaining account duplicated a declared or prior remaining account in
+    /// strict mode.
+    RemainingAccountDuplicate,
+    /// The callee completed successfully but did not set return data.
+    MissingReturnData,
+    /// Return data was set by a different program than the one invoked.
+    ReturnDataFromWrongProgram,
+    /// Return data bytes do not match the expected fixed-size layout.
+    InvalidReturnData,
 }

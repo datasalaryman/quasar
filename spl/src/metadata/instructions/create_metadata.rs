@@ -94,7 +94,7 @@ pub fn create_metadata_accounts_v3<'a>(
                 InstructionAccount::readonly(update_authority.address())
             },
             InstructionAccount::readonly(system_program.address()),
-            InstructionAccount::readonly(&super::RENT_SYSVAR),
+            InstructionAccount::readonly(rent.address()),
         ],
         [
             metadata,

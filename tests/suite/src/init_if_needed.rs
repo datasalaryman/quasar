@@ -289,8 +289,10 @@ fn payer_insufficient_funds() {
 fn front_running_attacker_data() {
     // Attacker inits account with correct owner+disc but wrong field data
     // before legitimate user calls init_if_needed.
-    // Since account is already initialized, init is skipped → validation passes
-    // but data is attacker-controlled. This documents the known risk.
+    //
+    // This instruction declares no extra semantic constraints on the existing
+    // account beyond the framework's structural checks, so the existing-account
+    // branch is accepted and the handler must repair the state itself.
     let mut svm = svm_misc();
     let payer = Pubkey::new_unique();
     let attacker = Pubkey::new_unique();
@@ -314,7 +316,9 @@ fn front_running_attacker_data() {
             simple_account(account, attacker, 666, bump),
         ],
     );
-    // Succeeds because existing account passes validation (owner+disc+size OK)
+    // Succeeds because existing account passes the structural checks for this
+    // particular instruction (owner+disc+size OK, no extra declarative
+    // constraints).
     assert!(result.is_ok(), "front-run: {:?}", result.raw_result);
 
     // Handler always calls set_inner(), so authority is overwritten to payer

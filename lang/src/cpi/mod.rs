@@ -12,17 +12,19 @@
 pub mod buf;
 pub mod system;
 
-pub use {
-    buf::BufCpiCall,
-    solana_instruction_view::{
-        cpi::{CpiAccount, Seed, Signer},
-        InstructionAccount, InstructionView,
-    },
-};
 use {
+    crate::{error::QuasarError, instruction_arg::InstructionArg},
+    core::mem::MaybeUninit,
     solana_account_view::{AccountView, RuntimeAccount},
     solana_address::Address,
     solana_program_error::{ProgramError, ProgramResult},
+};
+pub use {
+    buf::BufCpiCall,
+    solana_instruction_view::{
+        cpi::{CpiAccount, Seed, Signer, MAX_RETURN_DATA},
+        InstructionAccount, InstructionView,
+    },
 };
 
 #[cfg(any(target_os = "solana", target_arch = "bpf"))]
@@ -107,6 +109,91 @@ pub(crate) fn result_from_raw(result: u64) -> ProgramResult {
             ProgramError::from(result)
         }
         Err(cpi_error(result))
+    }
+}
+
+/// Return data captured from a CPI invocation.
+pub struct CpiReturn {
+    program_id: Address,
+    data: [u8; MAX_RETURN_DATA],
+    data_len: usize,
+}
+
+impl CpiReturn {
+    #[cfg_attr(
+        not(any(test, target_os = "solana", target_arch = "bpf")),
+        allow(dead_code)
+    )]
+    #[inline(always)]
+    fn new(program_id: Address, data: [u8; MAX_RETURN_DATA], data_len: usize) -> Self {
+        Self {
+            program_id,
+            data,
+            data_len,
+        }
+    }
+
+    /// Program that most recently set the return data.
+    #[inline(always)]
+    pub fn program_id(&self) -> &Address {
+        &self.program_id
+    }
+
+    /// Raw return-data bytes.
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data[..self.data_len]
+    }
+
+    /// Decode return data as a fixed-size Quasar instruction-arg type.
+    #[inline(always)]
+    pub fn decode<T: InstructionArg>(&self) -> Result<T, ProgramError> {
+        let expected_len = core::mem::size_of::<T::Zc>();
+        if self.data_len != expected_len {
+            return Err(QuasarError::InvalidReturnData.into());
+        }
+
+        let mut zc = MaybeUninit::<T::Zc>::uninit();
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                self.data.as_ptr(),
+                zc.as_mut_ptr() as *mut u8,
+                expected_len,
+            );
+        }
+        let zc = unsafe { zc.assume_init() };
+        Ok(T::from_zc(&zc))
+    }
+}
+
+#[inline(always)]
+fn get_cpi_return() -> Result<CpiReturn, ProgramError> {
+    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+    {
+        let mut program_id = MaybeUninit::<Address>::uninit();
+        let mut data = [0u8; MAX_RETURN_DATA];
+        let size = unsafe {
+            solana_define_syscall::definitions::sol_get_return_data(
+                data.as_mut_ptr(),
+                MAX_RETURN_DATA as u64,
+                program_id.as_mut_ptr() as *mut _ as *mut u8,
+            )
+        } as usize;
+
+        if size == 0 {
+            return Err(QuasarError::MissingReturnData.into());
+        }
+
+        return Ok(CpiReturn::new(
+            unsafe { program_id.assume_init() },
+            data,
+            core::cmp::min(size, MAX_RETURN_DATA),
+        ));
+    }
+
+    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+    {
+        Err(QuasarError::MissingReturnData.into())
     }
 }
 
@@ -235,24 +322,45 @@ impl<'a, const ACCTS: usize, const DATA: usize> CpiCall<'a, ACCTS, DATA> {
 
     /// Invoke the CPI without any PDA signers.
     #[inline(always)]
-    pub fn invoke(&self) -> ProgramResult {
+    pub fn invoke(&self) {
         self.invoke_inner(&[])
     }
 
     /// Invoke the CPI with a single PDA signer (seeds for one address).
     #[inline(always)]
-    pub fn invoke_signed(&self, seeds: &[Seed]) -> ProgramResult {
+    pub fn invoke_signed(&self, seeds: &[Seed]) {
         self.invoke_inner(&[Signer::from(seeds)])
     }
 
     /// Invoke the CPI with multiple PDA signers.
     #[inline(always)]
-    pub fn invoke_with_signers(&self, signers: &[Signer]) -> ProgramResult {
+    pub fn invoke_with_signers(&self, signers: &[Signer]) {
         self.invoke_inner(signers)
     }
 
+    /// Invoke the CPI and read back raw return data.
     #[inline(always)]
-    fn invoke_inner(&self, signers: &[Signer]) -> ProgramResult {
+    pub fn invoke_with_return(&self) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(&[])
+    }
+
+    /// Invoke the CPI with one PDA signer and read back raw return data.
+    #[inline(always)]
+    pub fn invoke_signed_with_return(&self, seeds: &[Seed]) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(&[Signer::from(seeds)])
+    }
+
+    /// Invoke the CPI with multiple PDA signers and read back raw return data.
+    #[inline(always)]
+    pub fn invoke_with_signers_with_return(
+        &self,
+        signers: &[Signer],
+    ) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(signers)
+    }
+
+    #[inline(always)]
+    fn invoke_inner(&self, signers: &[Signer]) {
         // SAFETY: All pointer/length pairs derive from owned fixed-size arrays
         // with const-generic lengths, so they are always valid and in-bounds.
         let result = unsafe {
@@ -267,11 +375,83 @@ impl<'a, const ACCTS: usize, const DATA: usize> CpiCall<'a, ACCTS, DATA> {
                 signers,
             )
         };
-        result_from_raw(result)
+        if result != 0 {
+            crate::abort_program();
+        }
+    }
+
+    #[inline(always)]
+    fn invoke_with_return_inner(&self, signers: &[Signer]) -> Result<CpiReturn, ProgramError> {
+        crate::return_data::set_return_data(&[]);
+        let result = unsafe {
+            invoke_raw(
+                self.program_id,
+                self.accounts.as_ptr(),
+                ACCTS,
+                self.data.as_ptr(),
+                DATA,
+                self.cpi_accounts.as_ptr(),
+                ACCTS,
+                signers,
+            )
+        };
+        result_from_raw(result)?;
+        let ret = get_cpi_return()?;
+        if !crate::keys_eq(ret.program_id(), self.program_id) {
+            return Err(QuasarError::ReturnDataFromWrongProgram.into());
+        }
+        Ok(ret)
     }
 
     #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
     pub fn instruction_data(&self) -> &[u8] {
         &self.data
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, quasar_derive::QuasarSerialize};
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, QuasarSerialize)]
+    struct ReturnPayload {
+        amount: u64,
+        flag: bool,
+    }
+
+    #[test]
+    fn decode_primitive_return_uses_instruction_arg_layout() {
+        let pod = <u64 as InstructionArg>::to_zc(&777u64);
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                &pod as *const <u64 as InstructionArg>::Zc as *const u8,
+                core::mem::size_of::<<u64 as InstructionArg>::Zc>(),
+            )
+        };
+        let mut data = [0u8; MAX_RETURN_DATA];
+        data[..bytes.len()].copy_from_slice(bytes);
+
+        let ret = CpiReturn::new(Address::new_from_array([1u8; 32]), data, bytes.len());
+        assert_eq!(ret.decode::<u64>().unwrap(), 777u64);
+    }
+
+    #[test]
+    fn decode_struct_return_uses_zc_companion_layout() {
+        let payload = ReturnPayload {
+            amount: 55,
+            flag: true,
+        };
+        let zc = <ReturnPayload as InstructionArg>::to_zc(&payload);
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                &zc as *const <ReturnPayload as InstructionArg>::Zc as *const u8,
+                core::mem::size_of::<<ReturnPayload as InstructionArg>::Zc>(),
+            )
+        };
+        let mut data = [0u8; MAX_RETURN_DATA];
+        data[..bytes.len()].copy_from_slice(bytes);
+
+        let ret = CpiReturn::new(Address::new_from_array([2u8; 32]), data, bytes.len());
+        assert_eq!(ret.decode::<ReturnPayload>().unwrap(), payload);
     }
 }

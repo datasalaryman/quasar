@@ -1,11 +1,14 @@
 //! Variable-length CPI call with a stack-allocated maximum-capacity buffer.
 
 use {
-    super::{init_cpi_accounts, invoke_raw, result_from_raw, InstructionAccount, Seed, Signer},
+    super::{
+        get_cpi_return, init_cpi_accounts, invoke_raw, result_from_raw, CpiReturn,
+        InstructionAccount, Seed, Signer,
+    },
     solana_account_view::AccountView,
     solana_address::Address,
     solana_instruction_view::cpi::CpiAccount,
-    solana_program_error::ProgramResult,
+    solana_program_error::ProgramError,
 };
 
 /// Like [`super::CpiCall`] but with a runtime-tracked `data_len` within
@@ -46,22 +49,40 @@ impl<'a, const ACCTS: usize, const MAX: usize> BufCpiCall<'a, ACCTS, MAX> {
     }
 
     #[inline(always)]
-    pub fn invoke(&self) -> ProgramResult {
+    pub fn invoke(&self) {
         self.invoke_inner(&[])
     }
 
     #[inline(always)]
-    pub fn invoke_signed(&self, seeds: &[Seed]) -> ProgramResult {
+    pub fn invoke_signed(&self, seeds: &[Seed]) {
         self.invoke_inner(&[Signer::from(seeds)])
     }
 
     #[inline(always)]
-    pub fn invoke_with_signers(&self, signers: &[Signer]) -> ProgramResult {
+    pub fn invoke_with_signers(&self, signers: &[Signer]) {
         self.invoke_inner(signers)
     }
 
     #[inline(always)]
-    fn invoke_inner(&self, signers: &[Signer]) -> ProgramResult {
+    pub fn invoke_with_return(&self) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(&[])
+    }
+
+    #[inline(always)]
+    pub fn invoke_signed_with_return(&self, seeds: &[Seed]) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(&[Signer::from(seeds)])
+    }
+
+    #[inline(always)]
+    pub fn invoke_with_signers_with_return(
+        &self,
+        signers: &[Signer],
+    ) -> Result<CpiReturn, ProgramError> {
+        self.invoke_with_return_inner(signers)
+    }
+
+    #[inline(always)]
+    fn invoke_inner(&self, signers: &[Signer]) {
         // SAFETY: All pointer/length pairs derive from owned arrays. `data_len`
         // is validated <= MAX in `new()`, so `data[..data_len]` is in-bounds.
         let result = unsafe {
@@ -76,7 +97,32 @@ impl<'a, const ACCTS: usize, const MAX: usize> BufCpiCall<'a, ACCTS, MAX> {
                 signers,
             )
         };
-        result_from_raw(result)
+        if result != 0 {
+            crate::abort_program();
+        }
+    }
+
+    #[inline(always)]
+    fn invoke_with_return_inner(&self, signers: &[Signer]) -> Result<CpiReturn, ProgramError> {
+        crate::return_data::set_return_data(&[]);
+        let result = unsafe {
+            invoke_raw(
+                self.program_id,
+                self.accounts.as_ptr(),
+                ACCTS,
+                self.data.as_ptr(),
+                self.data_len,
+                self.cpi_accounts.as_ptr(),
+                ACCTS,
+                signers,
+            )
+        };
+        result_from_raw(result)?;
+        let ret = get_cpi_return()?;
+        if !crate::keys_eq(ret.program_id(), self.program_id) {
+            return Err(crate::error::QuasarError::ReturnDataFromWrongProgram.into());
+        }
+        Ok(ret)
     }
 
     #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
