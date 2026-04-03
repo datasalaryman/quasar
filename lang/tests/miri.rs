@@ -385,13 +385,13 @@ impl ZeroCopyDeref for TestAccountType {
     type Target = TestZcData;
 
     #[inline(always)]
-    fn deref_from(view: &AccountView) -> &Self::Target {
-        unsafe { &*(view.data_ptr().add(4) as *const TestZcData) }
+    unsafe fn deref_from(view: &AccountView) -> &Self::Target {
+        &*(view.data_ptr().add(4) as *const TestZcData)
     }
 
     #[inline(always)]
-    fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-        unsafe { &mut *(view.data_ptr().add(4) as *mut TestZcData) }
+    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
+        &mut *(view.data_ptr().add(4) as *mut TestZcData)
     }
 }
 

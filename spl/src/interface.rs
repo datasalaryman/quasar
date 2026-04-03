@@ -114,14 +114,14 @@ impl<T: ZeroCopyDeref> core::ops::Deref for InterfaceAccount<T> {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        T::deref_from(&self.view)
+        unsafe { T::deref_from(&self.view) }
     }
 }
 
 impl<T: ZeroCopyDeref> core::ops::DerefMut for InterfaceAccount<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        T::deref_from_mut(&mut self.view)
+        unsafe { T::deref_from_mut(&mut self.view) }
     }
 }
 

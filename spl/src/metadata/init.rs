@@ -1,6 +1,6 @@
 use {
     super::instructions::MetadataCpi,
-    quasar_lang::{borsh::CpiEncode, prelude::*},
+    quasar_lang::{borsh::BorshCpiEncode, prelude::*},
 };
 
 /// Extension trait for metadata account initialization.
@@ -36,9 +36,9 @@ pub trait InitMetadata: AsAccountView + Sized {
         update_authority: &impl AsAccountView,
         system_program: &Program<System>,
         rent: &impl AsAccountView,
-        name: impl CpiEncode<4>,
-        symbol: impl CpiEncode<4>,
-        uri: impl CpiEncode<4>,
+        name: impl BorshCpiEncode,
+        symbol: impl BorshCpiEncode,
+        uri: impl BorshCpiEncode,
         seller_fee_basis_points: u16,
         is_mutable: bool,
     ) -> Result<(), ProgramError> {
@@ -57,7 +57,7 @@ pub trait InitMetadata: AsAccountView + Sized {
                 seller_fee_basis_points,
                 is_mutable,
                 true, // update_authority_is_signer
-            )
+            )?
             .invoke();
         Ok(())
     }
@@ -73,9 +73,9 @@ pub trait InitMetadata: AsAccountView + Sized {
         update_authority: &impl AsAccountView,
         system_program: &Program<System>,
         rent: &impl AsAccountView,
-        name: impl CpiEncode<4>,
-        symbol: impl CpiEncode<4>,
-        uri: impl CpiEncode<4>,
+        name: impl BorshCpiEncode,
+        symbol: impl BorshCpiEncode,
+        uri: impl BorshCpiEncode,
         seller_fee_basis_points: u16,
         is_mutable: bool,
         seeds: &[Seed],
@@ -95,7 +95,7 @@ pub trait InitMetadata: AsAccountView + Sized {
                 seller_fee_basis_points,
                 is_mutable,
                 true,
-            )
+            )?
             .invoke_signed(seeds);
         Ok(())
     }

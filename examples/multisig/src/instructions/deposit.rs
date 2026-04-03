@@ -14,6 +14,7 @@ impl<'info> Deposit<'info> {
     pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
         self.system_program
             .transfer(self.depositor, self.vault, amount)
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

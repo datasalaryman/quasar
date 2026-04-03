@@ -5,7 +5,8 @@
 use {
     crate::helpers::{
         classify_dynamic_string, classify_dynamic_vec, classify_tail, extract_generic_inner_type,
-        parse_discriminator_bytes, pascal_to_snake, snake_to_pascal, InstructionArgs,
+        parse_discriminator_bytes, pascal_to_snake, snake_to_pascal, validate_prefix_capacity,
+        InstructionArgs,
     },
     proc_macro::TokenStream,
     quote::{format_ident, quote},
@@ -147,33 +148,35 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let macro_ident =
                         format_ident!("__{}_instruction", pascal_to_snake(&accounts_type_str));
 
-                    let remaining_args: Vec<(Ident, Type)> = func
-                        .sig
-                        .inputs
-                        .iter()
-                        .skip(1)
-                        .filter_map(|arg| match arg {
-                            FnArg::Typed(pt) => {
-                                let name = match &*pt.pat {
-                                    Pat::Ident(pi) => pi.ident.clone(),
-                                    _ => return None,
-                                };
-                                let ty = if let Some((prefix, _)) = classify_dynamic_string(&pt.ty) {
-                                    let prefix_ty = prefix.to_type();
-                                    syn::parse_quote!(quasar_lang::client::DynBytes<#prefix_ty>)
-                                } else if let Some((elem, prefix, _)) = classify_dynamic_vec(&pt.ty) {
-                                    let prefix_ty = prefix.to_type();
-                                    syn::parse_quote!(quasar_lang::client::DynVec<#elem, #prefix_ty>)
-                                } else if classify_tail(&pt.ty).is_some() {
-                                    syn::parse_quote!(quasar_lang::client::TailBytes)
-                                } else {
-                                    (*pt.ty).clone()
-                                };
-                                Some((name, ty))
+                    let mut remaining_args: Vec<(Ident, Type)> = Vec::new();
+                    for arg in func.sig.inputs.iter().skip(1) {
+                        let FnArg::Typed(pt) = arg else {
+                            continue;
+                        };
+                        let name = match &*pt.pat {
+                            Pat::Ident(pi) => pi.ident.clone(),
+                            _ => continue,
+                        };
+                        let ty = if let Some((prefix, max)) = classify_dynamic_string(&pt.ty) {
+                            if let Err(e) = validate_prefix_capacity(&pt.ty, prefix, max, "String")
+                            {
+                                return e.to_compile_error().into();
                             }
-                            _ => None,
-                        })
-                        .collect();
+                            let prefix_ty = prefix.to_type();
+                            syn::parse_quote!(quasar_lang::client::DynBytes<#prefix_ty>)
+                        } else if let Some((elem, prefix, max)) = classify_dynamic_vec(&pt.ty) {
+                            if let Err(e) = validate_prefix_capacity(&pt.ty, prefix, max, "Vec") {
+                                return e.to_compile_error().into();
+                            }
+                            let prefix_ty = prefix.to_type();
+                            syn::parse_quote!(quasar_lang::client::DynVec<#elem, #prefix_ty>)
+                        } else if classify_tail(&pt.ty).is_some() {
+                            syn::parse_quote!(quasar_lang::client::TailBytes)
+                        } else {
+                            (*pt.ty).clone()
+                        };
+                        remaining_args.push((name, ty));
+                    }
 
                     let arg_names: Vec<&Ident> = remaining_args.iter().map(|(n, _)| n).collect();
                     let arg_types: Vec<&Type> = remaining_args.iter().map(|(_, t)| t).collect();

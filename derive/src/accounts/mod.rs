@@ -7,44 +7,17 @@ mod client;
 mod field_kind;
 mod fields;
 mod init;
+mod instruction_args;
 
 use {
-    crate::helpers::{
-        classify_dynamic_string, classify_dynamic_vec, classify_tail, extract_generic_inner_type,
-        is_composite_type, strip_generics, DynKind,
+    crate::helpers::{extract_generic_inner_type, is_composite_type, strip_generics},
+    instruction_args::{
+        generate_instruction_arg_extraction, parse_struct_instruction_args, InstructionArg,
     },
     proc_macro::TokenStream,
     quote::{format_ident, quote},
-    syn::{parse::ParseStream, parse_macro_input, Data, DeriveInput, Fields, Ident, Token, Type},
+    syn::{parse_macro_input, Data, DeriveInput, Fields, Type},
 };
-
-pub(super) struct InstructionArg {
-    pub name: Ident,
-    pub ty: Type,
-}
-
-fn parse_struct_instruction_args(input: &DeriveInput) -> Option<Vec<InstructionArg>> {
-    input
-        .attrs
-        .iter()
-        .find(|a| a.path().is_ident("instruction"))
-        .and_then(|attr| {
-            attr.parse_args_with(|stream: ParseStream| {
-                let mut args = Vec::new();
-                while !stream.is_empty() {
-                    let name: Ident = stream.parse()?;
-                    let _: Token![:] = stream.parse()?;
-                    let ty: Type = stream.parse()?;
-                    args.push(InstructionArg { name, ty });
-                    if !stream.is_empty() {
-                        let _: Token![,] = stream.parse()?;
-                    }
-                }
-                Ok(args)
-            })
-            .ok()
-        })
-}
 
 pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -326,10 +299,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                         __accounts_rest.split_at_mut_unchecked(<#inner_ty as AccountCount>::COUNT)
                     };
                     __accounts_rest = __rest;
-                    let (#field_name, #bumps_var) = <#inner_ty as ParseAccounts>::parse(
+                    let (#field_name, #bumps_var) = unsafe { <#inner_ty as quasar_lang::traits::ParseAccountsUnchecked>::parse_unchecked(
                         __chunk,
                         __program_id
-                    )?;
+                    ) }?;
                 });
                 pf.bump_struct_fields
                     .push(quote! { pub #field_name: <#inner_ty as ParseAccounts>::Bumps });
@@ -452,7 +425,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     } else if has_any_checks {
         quote! {
-            // SAFETY: dispatch! guarantees accounts.len() == Self::COUNT.
             let [#(#field_names),*] = accounts else {
                 unsafe { core::hint::unreachable_unchecked() }
             };
@@ -476,7 +448,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            // SAFETY: dispatch! guarantees accounts.len() == Self::COUNT.
             let [#(#field_names),*] = accounts else {
                 unsafe { core::hint::unreachable_unchecked() }
             };
@@ -586,6 +557,17 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     // --- Final output ---
 
+    let exact_len_guard = quote! {
+        let __account_count = accounts.len();
+        if quasar_lang::utils::hint::unlikely(__account_count != Self::COUNT) {
+            return Err(if __account_count < Self::COUNT {
+                ProgramError::NotEnoughAccountKeys
+            } else {
+                ProgramError::InvalidArgument
+            });
+        }
+    };
+
     let parse_accounts_impl = if has_instruction_args {
         quote! {
             impl<'info> ParseAccounts<'info> for #name<'info> {
@@ -593,8 +575,14 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 fn parse(accounts: &'info mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
-                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
-                    Self::parse_with_instruction_data(accounts, &[], program_id)
+                    #exact_len_guard
+                    unsafe {
+                        <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_with_instruction_data_unchecked(
+                            accounts,
+                            &[],
+                            program_id,
+                        )
+                    }
                 }
 
                 #[inline(always)]
@@ -603,12 +591,38 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     __ix_data: &'info [u8],
                     __program_id: &Address,
                 ) -> Result<(Self, Self::Bumps), ProgramError> {
-                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
-                    #ix_arg_extraction
-                    #parse_body
+                    #exact_len_guard
+                    unsafe {
+                        <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_with_instruction_data_unchecked(
+                            accounts,
+                            __ix_data,
+                            __program_id,
+                        )
+                    }
                 }
 
                 #epilogue_method
+            }
+
+            unsafe impl<'info> quasar_lang::traits::ParseAccountsUnchecked<'info> for #name<'info> {
+                #[inline(always)]
+                unsafe fn parse_unchecked(accounts: &'info mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                    <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_with_instruction_data_unchecked(
+                        accounts,
+                        &[],
+                        program_id,
+                    )
+                }
+
+                #[inline(always)]
+                unsafe fn parse_with_instruction_data_unchecked(
+                    accounts: &'info mut [AccountView],
+                    __ix_data: &'info [u8],
+                    __program_id: &Address,
+                ) -> Result<(Self, Self::Bumps), ProgramError> {
+                    #ix_arg_extraction
+                    #parse_body
+                }
             }
         }
     } else {
@@ -618,11 +632,26 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 fn parse(accounts: &'info mut [AccountView], __program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
-                    debug_assert_eq!(accounts.len(), Self::COUNT, "parse() must be called with exactly COUNT elements");
-                    #parse_body
+                    #exact_len_guard
+                    unsafe {
+                        <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_unchecked(
+                            accounts,
+                            __program_id,
+                        )
+                    }
                 }
 
                 #epilogue_method
+            }
+
+            unsafe impl<'info> quasar_lang::traits::ParseAccountsUnchecked<'info> for #name<'info> {
+                #[inline(always)]
+                unsafe fn parse_unchecked(
+                    accounts: &'info mut [AccountView],
+                    __program_id: &Address,
+                ) -> Result<(Self, Self::Bumps), ProgramError> {
+                    #parse_body
+                }
             }
         }
     };
@@ -662,227 +691,4 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
-}
-
-/// Generate code that extracts `#[instruction(..)]` args from `__ix_data`.
-///
-/// Fixed types are read via a zero-copy `#[repr(C)]` struct pointer cast.
-/// Dynamic fields use inline prefix reads from the data buffer after the
-/// fixed ZC block.
-fn generate_instruction_arg_extraction(ix_args: &[InstructionArg]) -> proc_macro2::TokenStream {
-    if ix_args.is_empty() {
-        return quote! {};
-    }
-
-    let kinds: Vec<DynKind> = ix_args
-        .iter()
-        .map(|arg| {
-            if let Some((prefix, max)) = classify_dynamic_string(&arg.ty) {
-                DynKind::Str { prefix, max }
-            } else if let Some(tail_elem) = classify_tail(&arg.ty) {
-                DynKind::Tail { element: tail_elem }
-            } else if let Some((elem, prefix, max)) = classify_dynamic_vec(&arg.ty) {
-                DynKind::Vec {
-                    elem: Box::new(elem),
-                    prefix,
-                    max,
-                }
-            } else {
-                DynKind::Fixed
-            }
-        })
-        .collect();
-
-    let has_dynamic = kinds.iter().any(|k| !matches!(k, DynKind::Fixed));
-    let has_fixed = kinds.iter().any(|k| matches!(k, DynKind::Fixed));
-
-    let vec_align_asserts: Vec<proc_macro2::TokenStream> = kinds
-        .iter()
-        .filter_map(|kind| match kind {
-            DynKind::Vec { elem, .. } => Some(quote! {
-                const _: () = assert!(
-                    core::mem::align_of::<#elem>() == 1,
-                    "instruction Vec element type must have alignment 1"
-                );
-            }),
-            _ => None,
-        })
-        .collect();
-
-    let mut stmts: Vec<proc_macro2::TokenStream> = vec_align_asserts;
-
-    // ZC struct with ONLY fixed fields, using InstructionArg::Zc
-    if has_fixed {
-        let mut zc_field_names: Vec<Ident> = Vec::new();
-        let mut zc_field_types: Vec<proc_macro2::TokenStream> = Vec::new();
-        let mut zc_field_orig_types: Vec<Type> = Vec::new();
-
-        for (i, kind) in kinds.iter().enumerate() {
-            if matches!(kind, DynKind::Fixed) {
-                zc_field_names.push(ix_args[i].name.clone());
-                let ty = &ix_args[i].ty;
-                zc_field_types
-                    .push(quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc });
-                zc_field_orig_types.push(ix_args[i].ty.clone());
-            }
-        }
-
-        stmts.push(quote! {
-            #[repr(C)]
-            struct __IxArgsZc {
-                #(#zc_field_names: #zc_field_types,)*
-            }
-        });
-
-        stmts.push(quote! {
-            const _: () = assert!(
-                core::mem::align_of::<__IxArgsZc>() == 1,
-                "instruction args ZC struct must have alignment 1"
-            );
-        });
-
-        stmts.push(quote! {
-            if __ix_data.len() < core::mem::size_of::<__IxArgsZc>() {
-                return Err(ProgramError::InvalidInstructionData);
-            }
-        });
-
-        stmts.push(quote! {
-            let __ix_zc = unsafe { &*(__ix_data.as_ptr() as *const __IxArgsZc) };
-        });
-
-        // Extract fixed fields via InstructionArg::from_zc
-        let mut zc_idx = 0usize;
-        for (i, kind) in kinds.iter().enumerate() {
-            if matches!(kind, DynKind::Fixed) {
-                let name = &ix_args[i].name;
-                let ty = &zc_field_orig_types[zc_idx];
-                zc_idx += 1;
-                stmts.push(quote! {
-                    let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ix_zc.#name);
-                });
-            }
-        }
-    }
-
-    // Extract dynamic fields with inline prefix reads
-    if has_dynamic {
-        stmts.push(quote! { let __data = __ix_data; });
-        if has_fixed {
-            stmts.push(quote! {
-                let mut __offset = core::mem::size_of::<__IxArgsZc>();
-            });
-        } else {
-            stmts.push(quote! {
-                let mut __offset: usize = 0;
-            });
-        }
-
-        let dyn_count = kinds
-            .iter()
-            .filter(|k| !matches!(k, DynKind::Fixed))
-            .count();
-        let mut dyn_idx = 0usize;
-
-        for (i, kind) in kinds.iter().enumerate() {
-            let name = &ix_args[i].name;
-            match kind {
-                DynKind::Fixed => {}
-                DynKind::Str { prefix, max } => {
-                    dyn_idx += 1;
-                    let pb = prefix.bytes();
-                    let max_lit = *max;
-                    let read_len = prefix.gen_read_len();
-                    stmts.push(quote! {
-                        if __data.len() < __offset + #pb {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        let __ix_dyn_len = #read_len;
-                    });
-                    stmts.push(quote! {
-                        __offset += #pb;
-                    });
-                    stmts.push(quote! {
-                        if __ix_dyn_len > #max_lit {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        if __data.len() < __offset + __ix_dyn_len {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        let #name: &[u8] = &__data[__offset..__offset + __ix_dyn_len];
-                    });
-                    if dyn_idx < dyn_count {
-                        stmts.push(quote! {
-                            __offset += __ix_dyn_len;
-                        });
-                    }
-                }
-                DynKind::Tail { .. } => {
-                    dyn_idx += 1;
-                    // Tail: remaining data, no prefix
-                    stmts.push(quote! {
-                        let #name: &[u8] = &__data[__offset..];
-                    });
-                    // Tail consumes all remaining data — no offset advance
-                }
-                DynKind::Vec { elem, prefix, max } => {
-                    dyn_idx += 1;
-                    let pb = prefix.bytes();
-                    let max_lit = *max;
-                    let read_len = prefix.gen_read_len();
-                    stmts.push(quote! {
-                        if __data.len() < __offset + #pb {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        let __ix_dyn_count = #read_len;
-                    });
-                    stmts.push(quote! {
-                        __offset += #pb;
-                    });
-                    stmts.push(quote! {
-                        if __ix_dyn_count > #max_lit {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        let __ix_dyn_byte_len = __ix_dyn_count
-                            .checked_mul(core::mem::size_of::<#elem>())
-                            .ok_or(ProgramError::InvalidInstructionData)?;
-                    });
-                    stmts.push(quote! {
-                        if __data.len() < __offset + __ix_dyn_byte_len {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }
-                    });
-                    stmts.push(quote! {
-                        let #name: &[#elem] = unsafe {
-                            core::slice::from_raw_parts(
-                                __data.as_ptr().add(__offset) as *const #elem,
-                                __ix_dyn_count,
-                            )
-                        };
-                    });
-                    if dyn_idx < dyn_count {
-                        stmts.push(quote! {
-                            __offset += __ix_dyn_byte_len;
-                        });
-                    }
-                }
-            }
-        }
-
-        stmts.push(quote! {
-            let _ = __offset;
-        });
-    }
-
-    quote! { #(#stmts)* }
 }

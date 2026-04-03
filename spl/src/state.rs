@@ -7,6 +7,23 @@
 
 use solana_address::Address;
 
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for solana_address::Address {}
+    impl Sealed for [u8; 8] {}
+}
+
+/// Payload types that are valid for [`COption`].
+///
+/// `COption` is read directly from zero-copy account bytes, so its payload type
+/// must be valid for every possible bit pattern that may appear in the value
+/// slot even when the tag is `None`.
+pub trait COptionValue: sealed::Sealed {}
+
+impl COptionValue for Address {}
+impl COptionValue for [u8; 8] {}
+
 // ---------------------------------------------------------------------------
 // COption<T>
 // ---------------------------------------------------------------------------
@@ -17,12 +34,12 @@ use solana_address::Address;
 /// a 4-byte little-endian tag (0 = None, 1 = Some) followed by
 /// the value. The value bytes are always present regardless of the tag.
 #[repr(C)]
-pub struct COption<T> {
+pub struct COption<T: COptionValue> {
     tag: [u8; 4],
     value: T,
 }
 
-impl<T> COption<T> {
+impl<T: COptionValue> COption<T> {
     /// Whether the option contains a value.
     ///
     /// Checks only `tag[0] == 1` (the low byte of the LE u32 tag).

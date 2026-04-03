@@ -140,13 +140,13 @@ impl ZeroCopyDeref for MetadataAccount {
     type Target = MetadataPrefix;
 
     #[inline(always)]
-    fn deref_from(view: &AccountView) -> &Self::Target {
-        unsafe { &*(view.data_ptr() as *const MetadataPrefix) }
+    unsafe fn deref_from(view: &AccountView) -> &Self::Target {
+        &*(view.data_ptr() as *const MetadataPrefix)
     }
 
     #[inline(always)]
-    fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-        unsafe { &mut *(view.data_mut_ptr() as *mut MetadataPrefix) }
+    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
+        &mut *(view.data_mut_ptr() as *mut MetadataPrefix)
     }
 }
 
@@ -193,12 +193,12 @@ impl ZeroCopyDeref for MasterEditionAccount {
     type Target = MasterEditionPrefix;
 
     #[inline(always)]
-    fn deref_from(view: &AccountView) -> &Self::Target {
-        unsafe { &*(view.data_ptr() as *const MasterEditionPrefix) }
+    unsafe fn deref_from(view: &AccountView) -> &Self::Target {
+        &*(view.data_ptr() as *const MasterEditionPrefix)
     }
 
     #[inline(always)]
-    fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-        unsafe { &mut *(view.data_mut_ptr() as *mut MasterEditionPrefix) }
+    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
+        &mut *(view.data_mut_ptr() as *mut MasterEditionPrefix)
     }
 }

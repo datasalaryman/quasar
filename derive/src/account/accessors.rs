@@ -63,10 +63,7 @@ pub(super) fn generate_accessors(
                             let __len = #read;
                             let __start = __offset + #pb;
                             let __bytes = &__data[__start..__start + __len];
-                            #[cfg(any(target_os = "solana", target_arch = "bpf"))]
-                            { unsafe { core::str::from_utf8_unchecked(__bytes) } }
-                            #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
-                            { core::str::from_utf8(__bytes).expect("account string field contains invalid UTF-8") }
+                            quasar_lang::dynamic::validated_utf8(__bytes)
                         }
                     }
                 }
@@ -93,10 +90,7 @@ pub(super) fn generate_accessors(
                                     let __data = unsafe { self.__view.borrow_unchecked() };
                                     let __offset = #off_expr;
                                     let __bytes = &__data[__offset..];
-                                    #[cfg(any(target_os = "solana", target_arch = "bpf"))]
-                                    { unsafe { core::str::from_utf8_unchecked(__bytes) } }
-                                    #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
-                                    { core::str::from_utf8(__bytes).expect("account tail field contains invalid UTF-8") }
+                                    quasar_lang::dynamic::validated_utf8(__bytes)
                                 }
                             }
                         }
@@ -157,10 +151,10 @@ pub(super) fn generate_accessors(
                 DynFieldKind::Tail { .. } => {
                     quote! {
                         #[inline(always)]
-                        pub fn #raw_name(&self) -> quasar_lang::dynamic::RawEncoded<'_, 0> {
+                        pub fn #raw_name(&self) -> quasar_lang::dynamic::TailEncoded<'_> {
                             let __data = unsafe { self.__view.borrow_unchecked() };
                             let __offset = #off_expr;
-                            quasar_lang::dynamic::RawEncoded::new(&__data[__offset..])
+                            quasar_lang::dynamic::TailEncoded::new(&__data[__offset..])
                         }
                     }
                 }

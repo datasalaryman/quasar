@@ -23,6 +23,12 @@ pub struct BufCpiCall<'a, const ACCTS: usize, const MAX: usize> {
 }
 
 impl<'a, const ACCTS: usize, const MAX: usize> BufCpiCall<'a, ACCTS, MAX> {
+    #[cold]
+    #[inline(never)]
+    fn invalid_data_len() -> ProgramError {
+        ProgramError::InvalidInstructionData
+    }
+
     #[inline(always)]
     pub fn new(
         program_id: &'a Address,
@@ -30,22 +36,17 @@ impl<'a, const ACCTS: usize, const MAX: usize> BufCpiCall<'a, ACCTS, MAX> {
         views: [&'a AccountView; ACCTS],
         data: [u8; MAX],
         data_len: usize,
-    ) -> Self {
+    ) -> Result<Self, ProgramError> {
         if data_len > MAX {
-            #[cold]
-            #[inline(never)]
-            fn capacity_exceeded() -> ! {
-                panic!("BufCpiCall: data_len exceeds buffer capacity")
-            }
-            capacity_exceeded();
+            return Err(Self::invalid_data_len());
         }
-        Self {
+        Ok(Self {
             program_id,
             accounts,
             cpi_accounts: init_cpi_accounts(views),
             data,
             data_len,
-        }
+        })
     }
 
     #[inline(always)]
@@ -84,7 +85,7 @@ impl<'a, const ACCTS: usize, const MAX: usize> BufCpiCall<'a, ACCTS, MAX> {
     #[inline(always)]
     fn invoke_inner(&self, signers: &[Signer]) {
         // SAFETY: All pointer/length pairs derive from owned arrays. `data_len`
-        // is validated <= MAX in `new()`, so `data[..data_len]` is in-bounds.
+        // was validated in `new()`, so `data[..data_len]` is in-bounds.
         let result = unsafe {
             invoke_raw(
                 self.program_id,

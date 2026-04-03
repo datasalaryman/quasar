@@ -51,6 +51,7 @@ impl<'info> ExecuteTransfer<'info> {
         let seeds = bumps.vault_seeds();
         self.system_program
             .transfer(self.vault, self.recipient, amount)
-            .invoke_signed(&seeds)
+            .invoke_signed(&seeds);
+        Ok(())
     }
 }

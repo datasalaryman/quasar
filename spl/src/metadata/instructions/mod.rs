@@ -17,7 +17,7 @@ mod utilize;
 mod verify_collection;
 
 use quasar_lang::{
-    borsh::CpiEncode,
+    borsh::BorshCpiEncode,
     cpi::{BufCpiCall, CpiCall},
     prelude::*,
 };
@@ -50,13 +50,13 @@ pub trait MetadataCpi: AsAccountView {
         update_authority: &'a impl AsAccountView,
         system_program: &'a impl AsAccountView,
         rent: &'a impl AsAccountView,
-        name: impl CpiEncode<4>,
-        symbol: impl CpiEncode<4>,
-        uri: impl CpiEncode<4>,
+        name: impl BorshCpiEncode,
+        symbol: impl BorshCpiEncode,
+        uri: impl BorshCpiEncode,
         seller_fee_basis_points: u16,
         is_mutable: bool,
         update_authority_is_signer: bool,
-    ) -> BufCpiCall<'a, 7, 512> {
+    ) -> Result<BufCpiCall<'a, 7, 512>, ProgramError> {
         create_metadata::create_metadata_accounts_v3(
             self.to_account_view(),
             metadata.to_account_view(),
@@ -91,7 +91,7 @@ pub trait MetadataCpi: AsAccountView {
         seller_fee_basis_points: Option<u16>,
         primary_sale_happened: Option<bool>,
         is_mutable: Option<bool>,
-    ) -> BufCpiCall<'a, 2, 512> {
+    ) -> Result<BufCpiCall<'a, 2, 512>, ProgramError> {
         update_metadata::update_metadata_accounts_v2(
             self.to_account_view(),
             metadata.to_account_view(),

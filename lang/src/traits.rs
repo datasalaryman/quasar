@@ -172,6 +172,35 @@ pub trait ParseAccounts<'info>: Sized {
     }
 }
 
+/// Internal exact-length parsing fast path used by dispatch and nested
+/// composite account parsing.
+///
+/// # Safety
+///
+/// The caller must ensure `accounts.len() == Self::COUNT`.
+#[doc(hidden)]
+pub unsafe trait ParseAccountsUnchecked<'info>: ParseAccounts<'info> {
+    /// # Safety
+    ///
+    /// `accounts.len()` must exactly match `Self::COUNT`.
+    unsafe fn parse_unchecked(
+        accounts: &'info mut [AccountView],
+        program_id: &Address,
+    ) -> Result<(Self, Self::Bumps), ProgramError>;
+
+    /// # Safety
+    ///
+    /// `accounts.len()` must exactly match `Self::COUNT`.
+    #[inline(always)]
+    unsafe fn parse_with_instruction_data_unchecked(
+        accounts: &'info mut [AccountView],
+        _data: &'info [u8],
+        program_id: &Address,
+    ) -> Result<(Self, Self::Bumps), ProgramError> {
+        Self::parse_unchecked(accounts, program_id)
+    }
+}
+
 /// Convert a typed account wrapper to its underlying [`AccountView`].
 ///
 /// All account types (`Account<T>`, `Signer`, `UncheckedAccount`, etc.)
@@ -243,9 +272,21 @@ pub unsafe trait StaticView {}
 /// Implemented by: `#[account]` macro (for SPL token/mint types).
 pub trait ZeroCopyDeref {
     type Target;
-    fn deref_from(view: &AccountView) -> &Self::Target;
+
+    /// # Safety
+    ///
+    /// The caller must ensure `view.data_len()` is large enough for the
+    /// zero-copy target and that the underlying bytes match the implementor's
+    /// layout contract.
+    unsafe fn deref_from(view: &AccountView) -> &Self::Target;
+
     #[allow(clippy::mut_from_ref)]
-    fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target;
+    /// # Safety
+    ///
+    /// Same requirements as [`deref_from`](Self::deref_from), plus the caller
+    /// must ensure the account is writable and there are no conflicting
+    /// aliases.
+    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target;
 }
 
 /// On-chain event with a discriminator, fixed-size data, and emission logic.

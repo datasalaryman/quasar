@@ -411,7 +411,67 @@ impl<'a, const ACCTS: usize, const DATA: usize> CpiCall<'a, ACCTS, DATA> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, quasar_derive::QuasarSerialize};
+    extern crate std;
+
+    use {
+        super::*,
+        quasar_derive::QuasarSerialize,
+        solana_account_view::{RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED},
+    };
+
+    struct AccountBuffer {
+        inner: std::vec::Vec<u64>,
+    }
+
+    impl AccountBuffer {
+        fn new(data_len: usize) -> Self {
+            let byte_len =
+                core::mem::size_of::<RuntimeAccount>() + data_len + MAX_PERMITTED_DATA_INCREASE;
+            Self {
+                inner: (0..byte_len.div_ceil(8)).map(|_| 0u64).collect(),
+            }
+        }
+
+        fn raw(&mut self) -> *mut RuntimeAccount {
+            self.inner.as_mut_ptr() as *mut RuntimeAccount
+        }
+
+        fn init(
+            &mut self,
+            address: [u8; 32],
+            owner: [u8; 32],
+            data_len: usize,
+            is_signer: bool,
+            is_writable: bool,
+            executable: bool,
+        ) {
+            let raw = self.raw();
+            unsafe {
+                (*raw).borrow_state = NOT_BORROWED;
+                (*raw).is_signer = is_signer as u8;
+                (*raw).is_writable = is_writable as u8;
+                (*raw).executable = executable as u8;
+                (*raw).padding = [0u8; 4];
+                (*raw).address = Address::new_from_array(address);
+                (*raw).owner = Address::new_from_array(owner);
+                (*raw).lamports = 123;
+                (*raw).data_len = data_len as u64;
+            }
+        }
+
+        unsafe fn view(&mut self) -> AccountView {
+            AccountView::new_unchecked(self.raw())
+        }
+    }
+
+    fn cpi_account_bytes<'a>(account: &'a CpiAccount<'a>) -> &'a [u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                account as *const CpiAccount<'_> as *const u8,
+                core::mem::size_of::<CpiAccount<'_>>(),
+            )
+        }
+    }
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, QuasarSerialize)]
     struct ReturnPayload {
@@ -453,5 +513,33 @@ mod tests {
 
         let ret = CpiReturn::new(Address::new_from_array([2u8; 32]), data, bytes.len());
         assert_eq!(ret.decode::<ReturnPayload>().unwrap(), payload);
+    }
+
+    #[test]
+    fn cpi_account_from_view_matches_upstream_layout() {
+        for (is_signer, is_writable, executable) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (false, false, true),
+            (true, true, true),
+        ] {
+            let mut buf = AccountBuffer::new(16);
+            buf.init(
+                [0x11; 32],
+                [0x22; 32],
+                16,
+                is_signer,
+                is_writable,
+                executable,
+            );
+            let view = unsafe { buf.view() };
+
+            let upstream = CpiAccount::from(&view);
+            let quasar = cpi_account_from_view(&view);
+
+            assert_eq!(cpi_account_bytes(&quasar), cpi_account_bytes(&upstream));
+        }
     }
 }

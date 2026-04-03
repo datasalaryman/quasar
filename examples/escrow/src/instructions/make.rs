@@ -52,6 +52,7 @@ impl<'info> Make<'info> {
     pub fn deposit_tokens(&mut self, amount: u64) -> Result<(), ProgramError> {
         self.token_program
             .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
-            .invoke()
+            .invoke();
+        Ok(())
     }
 }

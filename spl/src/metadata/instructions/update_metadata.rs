@@ -6,6 +6,12 @@ use quasar_lang::{
 
 const UPDATE_METADATA_ACCOUNTS_V2: u8 = 15;
 
+#[cold]
+#[inline(never)]
+fn metadata_field_too_long() -> ProgramError {
+    ProgramError::InvalidInstructionData
+}
+
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub fn update_metadata_accounts_v2<'a>(
@@ -19,20 +25,20 @@ pub fn update_metadata_accounts_v2<'a>(
     seller_fee_basis_points: Option<u16>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
-) -> BufCpiCall<'a, 2, 512> {
+) -> Result<BufCpiCall<'a, 2, 512>, ProgramError> {
     if let Some(n) = name {
         if n.len() > super::MAX_NAME_LEN {
-            metadata_field_panic();
+            return Err(metadata_field_too_long());
         }
     }
     if let Some(s) = symbol {
         if s.len() > super::MAX_SYMBOL_LEN {
-            metadata_field_panic();
+            return Err(metadata_field_too_long());
         }
     }
     if let Some(u) = uri {
         if u.len() > super::MAX_URI_LEN {
-            metadata_field_panic();
+            return Err(metadata_field_too_long());
         }
     }
 
@@ -127,10 +133,4 @@ pub fn update_metadata_accounts_v2<'a>(
         data,
         offset,
     )
-}
-
-#[cold]
-#[inline(never)]
-fn metadata_field_panic() -> ! {
-    panic!("metadata field lengths exceed Metaplex limits");
 }

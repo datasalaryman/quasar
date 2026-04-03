@@ -145,7 +145,7 @@ impl<'a> RemainingAccounts<'a> {
                     // SAFETY: Non-duplicate entry — `raw` is a valid `RuntimeAccount`.
                     unsafe { AccountView::new_unchecked(raw) }
                 } else {
-                    resolve_dup_walk(borrow as usize, self.declared, self.ptr, self.boundary)
+                    resolve_dup_walk(borrow as usize, self.declared, self.ptr, self.boundary)?
                 }));
             }
 
@@ -190,13 +190,13 @@ fn resolve_dup_walk(
     declared: &[AccountView],
     start: *mut u8,
     boundary: *const u8,
-) -> AccountView {
+) -> Result<AccountView, ProgramError> {
     let mut idx = orig_idx;
     for _ in 0..2 {
         if idx < declared.len() {
             // SAFETY: `idx < declared.len()` ensures the read is in-bounds.
             // `AccountView` is `Copy`-like (repr(C) pointer wrapper).
-            return unsafe { core::ptr::read(declared.as_ptr().add(idx)) };
+            return Ok(unsafe { core::ptr::read(declared.as_ptr().add(idx)) });
         }
 
         let target = idx - declared.len();
@@ -211,7 +211,7 @@ fn resolve_dup_walk(
 
             if i == target {
                 if borrow == NOT_BORROWED {
-                    return unsafe { AccountView::new_unchecked(raw) };
+                    return Ok(unsafe { AccountView::new_unchecked(raw) });
                 }
                 idx = borrow as usize;
                 break;
@@ -224,7 +224,7 @@ fn resolve_dup_walk(
             }
         }
     }
-    unreachable!("duplicate chain exceeded maximum depth")
+    Err(ProgramError::InvalidAccountData)
 }
 
 /// Iterator over remaining accounts.

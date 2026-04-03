@@ -1,10 +1,16 @@
 use quasar_lang::{
-    borsh::CpiEncode,
+    borsh::BorshCpiEncode,
     cpi::{BufCpiCall, InstructionAccount},
     prelude::*,
 };
 
 const CREATE_METADATA_ACCOUNTS_V3: u8 = 33;
+
+#[cold]
+#[inline(never)]
+fn metadata_field_too_long() -> ProgramError {
+    ProgramError::InvalidInstructionData
+}
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -17,13 +23,13 @@ pub fn create_metadata_accounts_v3<'a>(
     update_authority: &'a AccountView,
     system_program: &'a AccountView,
     rent: &'a AccountView,
-    name: impl CpiEncode<4>,
-    symbol: impl CpiEncode<4>,
-    uri: impl CpiEncode<4>,
+    name: impl BorshCpiEncode,
+    symbol: impl BorshCpiEncode,
+    uri: impl BorshCpiEncode,
     seller_fee_basis_points: u16,
     is_mutable: bool,
     update_authority_is_signer: bool,
-) -> BufCpiCall<'a, 7, 512> {
+) -> Result<BufCpiCall<'a, 7, 512>, ProgramError> {
     let name_len = name.encoded_len() - 4;
     let symbol_len = symbol.encoded_len() - 4;
     let uri_len = uri.encoded_len() - 4;
@@ -31,7 +37,7 @@ pub fn create_metadata_accounts_v3<'a>(
         || symbol_len > super::MAX_SYMBOL_LEN
         || uri_len > super::MAX_URI_LEN
     {
-        metadata_field_panic();
+        return Err(metadata_field_too_long());
     }
 
     // Borsh-serialize: discriminator + DataV2 + is_mutable + collection_details
@@ -108,10 +114,4 @@ pub fn create_metadata_accounts_v3<'a>(
         data,
         offset,
     )
-}
-
-#[cold]
-#[inline(never)]
-fn metadata_field_panic() -> ! {
-    panic!("metadata field lengths exceed Metaplex limits");
 }

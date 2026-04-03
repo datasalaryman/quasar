@@ -41,6 +41,22 @@ impl PrefixType {
         }
     }
 
+    pub fn max_value(self) -> usize {
+        match self {
+            Self::U8 => u8::MAX as usize,
+            Self::U16 => u16::MAX as usize,
+            Self::U32 => u32::MAX as usize,
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+        }
+    }
+
     /// Expression to read the inline prefix from `__data` at `__offset` as
     /// usize.
     ///
@@ -520,6 +536,25 @@ pub(crate) fn classify_dynamic_vec(ty: &Type) -> Option<(Type, PrefixType, usize
         }
     }
     None
+}
+
+pub(crate) fn validate_prefix_capacity(
+    ty: &Type,
+    prefix: PrefixType,
+    max: usize,
+    field_kind: &str,
+) -> syn::Result<()> {
+    let capacity = prefix.max_value();
+    if max > capacity {
+        return Err(syn::Error::new_spanned(
+            ty,
+            format!(
+                "{field_kind} max {max} exceeds {} prefix capacity {capacity}",
+                prefix.display_name()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Classifies bare `&str` / `&'a str` and `&[u8]` / `&'a [u8]` as tail fields.

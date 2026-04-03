@@ -35,11 +35,12 @@ impl<'info> Refund<'info> {
                 self.escrow,
                 self.vault_ta_a.amount(),
             )
-            .invoke_signed(&seeds)?;
+            .invoke_signed(&seeds);
 
         self.token_program
             .close_account(self.vault_ta_a, self.maker, self.escrow)
-            .invoke_signed(&seeds)
+            .invoke_signed(&seeds);
+        Ok(())
     }
 
     #[inline(always)]

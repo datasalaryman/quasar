@@ -86,7 +86,9 @@ impl<'a, const PREFIX_BYTES: usize> RawEncoded<'a, PREFIX_BYTES> {
     /// The data bytes (after the prefix).
     #[inline(always)]
     pub fn data(&self) -> &'a [u8] {
-        const { assert!(PREFIX_BYTES <= 4) };
+        const {
+            assert!(PREFIX_BYTES == 1 || PREFIX_BYTES == 2 || PREFIX_BYTES == 4);
+        }
         debug_assert!(self.bytes.len() >= PREFIX_BYTES);
         // SAFETY: `bytes` was constructed from a validated account buffer
         // with at least `PREFIX_BYTES` leading bytes. The const assert and
@@ -97,7 +99,9 @@ impl<'a, const PREFIX_BYTES: usize> RawEncoded<'a, PREFIX_BYTES> {
     /// The data length encoded in the prefix.
     #[inline(always)]
     pub fn prefix_value(&self) -> u32 {
-        const { assert!(PREFIX_BYTES <= 4) };
+        const {
+            assert!(PREFIX_BYTES == 1 || PREFIX_BYTES == 2 || PREFIX_BYTES == 4);
+        }
         debug_assert!(self.bytes.len() >= PREFIX_BYTES);
         // SAFETY: Same bounds guarantee as `data()`. The `read_unaligned`
         // calls handle the align-1 account data layout. The match arms
@@ -110,6 +114,52 @@ impl<'a, const PREFIX_BYTES: usize> RawEncoded<'a, PREFIX_BYTES> {
                 4 => core::ptr::read_unaligned(self.bytes.as_ptr() as *const u32),
                 _ => core::hint::unreachable_unchecked(),
             }
+        }
+    }
+}
+
+/// Raw tail bytes with no inline prefix.
+///
+/// Used by `_raw()` accessors for tail string/byte fields. This keeps tail data
+/// distinct from prefixed encodings so prefix-specific helpers cannot be called
+/// accidentally.
+pub struct TailEncoded<'a> {
+    /// The raw tail bytes.
+    pub bytes: &'a [u8],
+}
+
+impl<'a> TailEncoded<'a> {
+    #[inline(always)]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    #[inline(always)]
+    pub const fn wire_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[inline(always)]
+    pub const fn data(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+/// Convert a validated UTF-8 byte slice to `&str`.
+///
+/// Dynamic account parsing already validates UTF-8 for string fields. This
+/// helper keeps the accessor path free of UB even if invariants are violated
+/// later by unsafe mutation.
+#[inline(always)]
+pub fn validated_utf8(bytes: &[u8]) -> &str {
+    match core::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            #[cfg(any(target_os = "solana", target_arch = "bpf"))]
+            crate::abort_program();
+
+            #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
+            panic!("dynamic account field contains invalid UTF-8");
         }
     }
 }

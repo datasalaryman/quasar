@@ -407,7 +407,7 @@ pub(super) fn gen_metadata_init(
                 (#meta_symbol) as &[u8],
                 (#meta_uri) as &[u8],
                 #seller_fee, #is_mutable, true,
-            ).invoke();
+            )?.invoke();
         }
     })
 }

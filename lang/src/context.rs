@@ -12,7 +12,7 @@
 //! - `CtxWithRemaining` — like `Ctx` but also captures the remaining accounts
 //!   region for instructions that inspect or forward trailing accounts.
 
-use crate::{prelude::*, remaining::RemainingAccounts};
+use crate::{prelude::*, remaining::RemainingAccounts, traits::ParseAccountsUnchecked};
 
 /// Cast `&[u8; 32]` to `&Address`. Address is `#[repr(transparent)]` over `[u8;
 /// 32]`.
@@ -47,7 +47,7 @@ pub struct Context<'info> {
 ///
 /// Use [`CtxWithRemaining`] for instructions that need
 /// `remaining_accounts()`.
-pub struct Ctx<'info, T: ParseAccounts<'info> + AccountCount> {
+pub struct Ctx<'info, T: ParseAccounts<'info> + ParseAccountsUnchecked<'info> + AccountCount> {
     /// Validated and typed account struct.
     pub accounts: T,
 
@@ -61,12 +61,13 @@ pub struct Ctx<'info, T: ParseAccounts<'info> + AccountCount> {
     pub data: &'info [u8],
 }
 
-impl<'info, T: ParseAccounts<'info> + AccountCount> Ctx<'info, T> {
+impl<'info, T: ParseAccounts<'info> + ParseAccountsUnchecked<'info> + AccountCount> Ctx<'info, T> {
     #[inline(always)]
     pub fn new(ctx: Context<'info>) -> Result<Self, ProgramError> {
         let program_id_addr = unsafe { as_address(ctx.program_id) };
-        let (accounts, bumps) =
-            T::parse_with_instruction_data(ctx.accounts, ctx.data, program_id_addr)?;
+        let (accounts, bumps) = unsafe {
+            T::parse_with_instruction_data_unchecked(ctx.accounts, ctx.data, program_id_addr)?
+        };
         Ok(Self {
             accounts,
             bumps,
@@ -88,7 +89,10 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> Ctx<'info, T> {
 /// when inspecting trailing accounts in local logic, or
 /// `remaining_accounts_passthrough()` when forwarding a variable number of
 /// accounts to a downstream CPI.
-pub struct CtxWithRemaining<'info, T: ParseAccounts<'info> + AccountCount> {
+pub struct CtxWithRemaining<
+    'info,
+    T: ParseAccounts<'info> + ParseAccountsUnchecked<'info> + AccountCount,
+> {
     /// Validated and typed account struct.
     pub accounts: T,
 
@@ -111,7 +115,9 @@ pub struct CtxWithRemaining<'info, T: ParseAccounts<'info> + AccountCount> {
     accounts_boundary: *const u8,
 }
 
-impl<'info, T: ParseAccounts<'info> + AccountCount> CtxWithRemaining<'info, T> {
+impl<'info, T: ParseAccounts<'info> + ParseAccountsUnchecked<'info> + AccountCount>
+    CtxWithRemaining<'info, T>
+{
     #[inline(always)]
     pub fn new(ctx: Context<'info>) -> Result<Self, ProgramError> {
         let program_id_addr = unsafe { as_address(ctx.program_id) };
@@ -120,8 +126,9 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> CtxWithRemaining<'info, T> {
         // The declared slice is only used for read-only duplicate resolution.
         let declared_ptr = ctx.accounts.as_ptr();
         let declared_len = ctx.accounts.len();
-        let (accounts, bumps) =
-            T::parse_with_instruction_data(ctx.accounts, ctx.data, program_id_addr)?;
+        let (accounts, bumps) = unsafe {
+            T::parse_with_instruction_data_unchecked(ctx.accounts, ctx.data, program_id_addr)?
+        };
         let declared = unsafe { core::slice::from_raw_parts(declared_ptr, declared_len) };
         Ok(Self {
             accounts,

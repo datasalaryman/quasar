@@ -9,7 +9,7 @@ mod fixed;
 use {
     crate::helpers::{
         classify_dynamic_string, classify_dynamic_vec, classify_tail,
-        validate_discriminator_not_zero, AccountAttr, DynKind,
+        validate_discriminator_not_zero, validate_prefix_capacity, AccountAttr, DynKind,
     },
     proc_macro::TokenStream,
     syn::{parse_macro_input, Data, DeriveInput, Fields},
@@ -52,24 +52,29 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let field_kinds: Vec<DynKind> = fields_data
-        .iter()
-        .map(|f| {
-            if let Some((prefix, max)) = classify_dynamic_string(&f.ty) {
-                DynKind::Str { prefix, max }
-            } else if let Some(tail_elem) = classify_tail(&f.ty) {
-                DynKind::Tail { element: tail_elem }
-            } else if let Some((elem, prefix, max)) = classify_dynamic_vec(&f.ty) {
-                DynKind::Vec {
-                    elem: Box::new(elem),
-                    prefix,
-                    max,
-                }
-            } else {
-                DynKind::Fixed
+    let mut field_kinds = Vec::with_capacity(fields_data.len());
+    for f in fields_data {
+        let kind = if let Some((prefix, max)) = classify_dynamic_string(&f.ty) {
+            if let Err(e) = validate_prefix_capacity(&f.ty, prefix, max, "String") {
+                return e.to_compile_error().into();
             }
-        })
-        .collect();
+            DynKind::Str { prefix, max }
+        } else if let Some(tail_elem) = classify_tail(&f.ty) {
+            DynKind::Tail { element: tail_elem }
+        } else if let Some((elem, prefix, max)) = classify_dynamic_vec(&f.ty) {
+            if let Err(e) = validate_prefix_capacity(&f.ty, prefix, max, "Vec") {
+                return e.to_compile_error().into();
+            }
+            DynKind::Vec {
+                elem: Box::new(elem),
+                prefix,
+                max,
+            }
+        } else {
+            DynKind::Fixed
+        };
+        field_kinds.push(kind);
+    }
 
     let has_dynamic = field_kinds.iter().any(|k| !matches!(k, DynKind::Fixed));
 

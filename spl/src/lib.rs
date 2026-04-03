@@ -121,17 +121,17 @@ macro_rules! impl_program_account {
             type Target = $target;
 
             #[inline(always)]
-            fn deref_from(view: &AccountView) -> &Self::Target {
+            unsafe fn deref_from(view: &AccountView) -> &Self::Target {
                 // SAFETY: Caller ensures `view.data_len() >= LEN`.
                 // `$target` is `#[repr(C)]` with alignment 1.
-                unsafe { &*(view.data_ptr() as *const $target) }
+                &*(view.data_ptr() as *const $target)
             }
 
             #[inline(always)]
-            fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
+            unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
                 // SAFETY: Same as `deref_from` — caller ensures length
                 // and writable.
-                unsafe { &mut *(view.data_mut_ptr() as *mut $target) }
+                &mut *(view.data_mut_ptr() as *mut $target)
             }
         }
     };

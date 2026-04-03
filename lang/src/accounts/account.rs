@@ -28,9 +28,12 @@ const _: () = {
 /// offset  field       size
 /// ------  ----------  ----
 ///   0x00  borrow_state  1
+///   0x01  is_signer     1
+///   0x02  is_writable   1
+///   0x03  executable    1
+///   0x04  padding       4    (reused as i32 resize delta)
 ///   ...
 ///   0x48  data_len      8    (u64)
-///   0x50  padding       4    (reused as i32 resize delta)
 /// ```
 #[inline(always)]
 pub fn resize(view: &mut AccountView, new_len: usize) -> Result<(), ProgramError> {

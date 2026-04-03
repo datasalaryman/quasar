@@ -8,7 +8,7 @@
 // Codec-aware CPI encoding
 // ---------------------------------------------------------------------------
 
-use crate::dynamic::RawEncoded;
+use crate::dynamic::{RawEncoded, TailEncoded};
 
 /// Write a value into a CPI buffer with a specific prefix size.
 ///
@@ -20,6 +20,7 @@ use crate::dynamic::RawEncoded;
 /// Implementations exist for:
 /// - `&str` / `&[u8]` → always encode from scratch
 /// - `RawEncoded<N>` → memcpy if `N == TARGET_PREFIX`, re-encode otherwise
+/// - `TailEncoded` → always writes the target prefix then memcpy tail bytes
 pub trait CpiEncode<const TARGET_PREFIX: usize> {
     /// Bytes needed in the CPI buffer for this value.
     fn encoded_len(&self) -> usize;
@@ -34,6 +35,12 @@ pub trait CpiEncode<const TARGET_PREFIX: usize> {
     unsafe fn write_to(&self, ptr: *mut u8, offset: usize) -> usize;
 }
 
+/// Marker for CPI arguments that encode to Borsh string/bytes layout
+/// (little-endian `u32` length prefix).
+pub trait BorshCpiEncode: CpiEncode<4> {}
+
+impl<T: CpiEncode<4>> BorshCpiEncode for T {}
+
 /// Write a length/count value as a little-endian prefix of the given size.
 ///
 /// # Safety
@@ -42,6 +49,9 @@ pub trait CpiEncode<const TARGET_PREFIX: usize> {
 /// valid.
 #[inline(always)]
 unsafe fn write_prefix<const PREFIX_BYTES: usize>(ptr: *mut u8, offset: usize, value: u32) {
+    const {
+        assert!(PREFIX_BYTES == 1 || PREFIX_BYTES == 2 || PREFIX_BYTES == 4);
+    }
     match PREFIX_BYTES {
         1 => {
             *ptr.add(offset) = value as u8;
@@ -54,7 +64,7 @@ unsafe fn write_prefix<const PREFIX_BYTES: usize>(ptr: *mut u8, offset: usize, v
             let le = value.to_le_bytes();
             core::ptr::copy_nonoverlapping(le.as_ptr(), ptr.add(offset), 4);
         }
-        _ => unreachable!(),
+        _ => core::hint::unreachable_unchecked(),
     }
 }
 
@@ -62,6 +72,9 @@ unsafe fn write_prefix<const PREFIX_BYTES: usize>(ptr: *mut u8, offset: usize, v
 impl<const T: usize> CpiEncode<T> for &str {
     #[inline(always)]
     fn encoded_len(&self) -> usize {
+        const {
+            assert!(T == 1 || T == 2 || T == 4);
+        }
         T + self.len()
     }
 
@@ -77,6 +90,9 @@ impl<const T: usize> CpiEncode<T> for &str {
 impl<const T: usize> CpiEncode<T> for &[u8] {
     #[inline(always)]
     fn encoded_len(&self) -> usize {
+        const {
+            assert!(T == 1 || T == 2 || T == 4);
+        }
         T + self.len()
     }
 
@@ -92,6 +108,9 @@ impl<const T: usize> CpiEncode<T> for &[u8] {
 impl<'a, const N: usize> CpiEncode<N> for RawEncoded<'a, N> {
     #[inline(always)]
     fn encoded_len(&self) -> usize {
+        const {
+            assert!(N == 1 || N == 2 || N == 4);
+        }
         self.bytes.len()
     }
 
@@ -99,5 +118,23 @@ impl<'a, const N: usize> CpiEncode<N> for RawEncoded<'a, N> {
     unsafe fn write_to(&self, ptr: *mut u8, offset: usize) -> usize {
         core::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr.add(offset), self.bytes.len());
         offset + self.bytes.len()
+    }
+}
+
+// TailEncoded → any target prefix (writes a fresh prefix).
+impl<const T: usize> CpiEncode<T> for TailEncoded<'_> {
+    #[inline(always)]
+    fn encoded_len(&self) -> usize {
+        const {
+            assert!(T == 1 || T == 2 || T == 4);
+        }
+        T + self.bytes.len()
+    }
+
+    #[inline(always)]
+    unsafe fn write_to(&self, ptr: *mut u8, offset: usize) -> usize {
+        write_prefix::<T>(ptr, offset, self.bytes.len() as u32);
+        core::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr.add(offset + T), self.bytes.len());
+        offset + T + self.bytes.len()
     }
 }
