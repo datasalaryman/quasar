@@ -44,6 +44,7 @@ pub(super) fn generate_client_macro(
                 || matches!(&f.ty, Type::Reference(r) if r.mutability.is_some());
             let is_init_without_seeds = (field_attrs[fi].is_init || field_attrs[fi].init_if_needed)
                 && field_attrs[fi].seeds.is_none()
+                && field_attrs[fi].typed_seeds.is_none()
                 && field_attrs[fi].associated_token_mint.is_none();
             let signer = is_signer_type(&f.ty) || is_init_without_seeds;
             if writable {

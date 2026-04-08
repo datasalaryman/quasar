@@ -243,9 +243,7 @@ fn not_writable() {
     let result =
         svm.process_instruction(&ix, &[rich_signer_account(payer), empty_account(account)]);
     assert!(result.is_err(), "should reject non-writable");
-    // With typed seeds the init CPI fires before the writable check,
-    // so the runtime rejects with MissingRequiredSignature.
-    result.assert_error(ProgramError::MissingRequiredSignature);
+    result.assert_error(ProgramError::Immutable);
 }
 
 // ============================================================================
