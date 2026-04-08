@@ -100,9 +100,10 @@ pub fn parse_field_constraints(attrs: &[syn::Attribute]) -> FieldConstraints {
             if let Ok(list) = attr.meta.require_list() {
                 let tokens_str = list.tokens.to_string();
                 for part in tokens_str.split(',') {
-                    let part = part.trim();
-                    if part.starts_with("quasar::") {
-                        c.suppressions.push(part.to_string());
+                    // Normalize spaces around `::` that syn inserts
+                    let normalized: String = part.split_whitespace().collect::<Vec<_>>().join("");
+                    if normalized.starts_with("quasar::") {
+                        c.suppressions.push(normalized);
                     }
                 }
             }
@@ -315,14 +316,18 @@ fn extract_seed_account_refs(seeds_directive: &str) -> Vec<String> {
 
         // Skip byte string literals — check for `b"` prefix specifically so
         // names like `borrower` are not excluded.
-        if expr.starts_with("b\"") {
+        if expr.starts_with("b\"") || expr.starts_with("b \"") {
             continue;
         }
 
+        // Normalize whitespace so syn-tokenized `wallet . key ()` matches
+        // the expected `wallet.key()` pattern.
+        let normalized: String = expr.split_whitespace().collect::<Vec<_>>().join("");
+
         // Look for `ident.key()` or `ident.address()` patterns
-        if let Some(dot_pos) = expr.find('.') {
-            let before_dot = expr[..dot_pos].trim();
-            let after_dot = expr[dot_pos + 1..].trim();
+        if let Some(dot_pos) = normalized.find('.') {
+            let before_dot = &normalized[..dot_pos];
+            let after_dot = &normalized[dot_pos + 1..];
             if (after_dot.starts_with("key()") || after_dot.starts_with("address()"))
                 && before_dot
                     .chars()
@@ -386,6 +391,50 @@ mod tests {
             r#"seeds = [b"vault", borrower.key()]"#,
         );
         assert_eq!(refs, vec!["borrower"]);
+    }
+
+    #[test]
+    fn parse_seeds_from_syn() {
+        let code = r#"
+            pub struct Foo {
+                #[account(seeds = [b"proposal", wallet.key()], bump)]
+                pub x: u32,
+            }
+        "#;
+        let file: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Struct(s) = &file.items[0] {
+            if let syn::Fields::Named(fields) = &s.fields {
+                let field = &fields.named[0];
+                let c = parse_field_constraints(&field.attrs);
+                assert!(
+                    c.seeds_account_refs.contains(&"wallet".to_string()),
+                    "expected wallet in seeds_account_refs, got: {:?}",
+                    c.seeds_account_refs
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_allow_suppression() {
+        let code = r#"
+            pub struct Foo {
+                #[allow(quasar::unconstrained)]
+                pub x: u32,
+            }
+        "#;
+        let file: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Struct(s) = &file.items[0] {
+            if let syn::Fields::Named(fields) = &s.fields {
+                let field = &fields.named[0];
+                let c = parse_field_constraints(&field.attrs);
+                assert!(
+                    c.suppressions.contains(&"quasar::unconstrained".to_string()),
+                    "expected quasar::unconstrained suppression, got: {:?}",
+                    c.suppressions
+                );
+            }
+        }
     }
 
     #[test]
