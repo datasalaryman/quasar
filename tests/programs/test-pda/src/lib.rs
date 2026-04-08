@@ -65,10 +65,27 @@ mod quasar_test_pda {
     }
 
     #[instruction(discriminator = 10)]
-    pub fn init_max_multi_seeds(
-        ctx: Ctx<InitMaxMultiSeeds>,
-        amount: u64,
-    ) -> Result<(), ProgramError> {
-        ctx.accounts.handler(amount, &ctx.bumps)
+    pub fn init_max_multi_seeds(ctx: Ctx<InitMaxMultiSeeds>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
+    }
+
+    #[instruction(discriminator = 11)]
+    pub fn init_ix_data_seed(ctx: Ctx<InitIxDataSeed>, index: u64) -> Result<(), ProgramError> {
+        ctx.accounts.handler(index, &ctx.bumps)
+    }
+
+    #[instruction(discriminator = 12)]
+    pub fn init_ns_config(ctx: Ctx<InitNsConfig>, namespace: u32) -> Result<(), ProgramError> {
+        ctx.accounts.handler(namespace, &ctx.bumps)
+    }
+
+    #[instruction(discriminator = 13)]
+    pub fn init_scoped_item(ctx: Ctx<InitScopedItem>, namespace: u32) -> Result<(), ProgramError> {
+        ctx.accounts.handler(namespace, &ctx.bumps)
+    }
+
+    #[instruction(discriminator = 14)]
+    pub fn verify_scoped_item(ctx: Ctx<VerifyScopedItem>) -> Result<(), ProgramError> {
+        ctx.accounts.handler()
     }
 }

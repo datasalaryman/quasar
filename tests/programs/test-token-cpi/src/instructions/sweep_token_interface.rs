@@ -6,7 +6,7 @@ use {
 #[derive(Accounts)]
 pub struct SweepTokenInterface<'info> {
     pub authority: &'info Signer,
-    #[account(mut, sweep = receiver, token::mint = mint, token::authority = authority)]
+    #[account(sweep = receiver, token::mint = mint, token::authority = authority)]
     pub source: &'info mut InterfaceAccount<Token>,
     #[account(mut)]
     pub receiver: &'info mut InterfaceAccount<Token>,

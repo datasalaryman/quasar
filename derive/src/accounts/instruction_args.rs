@@ -7,7 +7,7 @@ use {
     syn::{parse::ParseStream, DeriveInput, Ident, Token, Type},
 };
 
-pub(super) struct InstructionArg {
+pub(crate) struct InstructionArg {
     pub name: Ident,
     pub ty: Type,
 }

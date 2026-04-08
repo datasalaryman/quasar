@@ -344,19 +344,6 @@ pub(super) fn validate_field_attrs(
     let is_optional = extract_generic_inner_type(&field.ty, "Option").is_some();
 
     reject!(
-        is_init && !flags.is_writable,
-        "#[account(init)] requires `&mut` reference or `#[account(mut)]`"
-    );
-    reject!(
-        attrs.close.is_some() && !flags.is_writable,
-        "#[account(close)] requires `&mut` reference or `#[account(mut)]`"
-    );
-    reject!(
-        attrs.realloc.is_some() && !flags.is_writable,
-        "#[account(realloc)] requires `&mut` reference or `#[account(mut)]`"
-    );
-
-    reject!(
         is_init && attrs.close.is_some(),
         "#[account(init)] and #[account(close)] cannot be used on the same field"
     );
@@ -387,10 +374,6 @@ pub(super) fn validate_field_attrs(
          the token-account close path."
     );
 
-    reject!(
-        attrs.sweep.is_some() && !flags.is_writable,
-        "#[account(sweep)] requires `&mut` reference or `#[account(mut)]`"
-    );
     reject!(
         attrs.sweep.is_some() && !kind.is_token_account(),
         "#[account(sweep)] is only valid on token accounts, not mint accounts"

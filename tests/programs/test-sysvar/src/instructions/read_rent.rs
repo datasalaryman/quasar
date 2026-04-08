@@ -9,7 +9,7 @@ use {
 #[derive(Accounts)]
 pub struct ReadRent<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"rent"], bump)]
+    #[account(init, payer = payer, seeds = RentSnapshot::seeds(), bump)]
     pub snapshot: &'info mut Account<RentSnapshot>,
     pub system_program: &'info Program<System>,
 }

@@ -41,9 +41,15 @@ pub(super) fn generate_client_macro(
                 .expect("account field must have an identifier")
                 .to_string();
             let writable = field_attrs[fi].is_mut
-                || matches!(&f.ty, Type::Reference(r) if r.mutability.is_some());
+                || matches!(&f.ty, Type::Reference(r) if r.mutability.is_some())
+                || field_attrs[fi].is_init
+                || field_attrs[fi].init_if_needed
+                || field_attrs[fi].close.is_some()
+                || field_attrs[fi].realloc.is_some()
+                || field_attrs[fi].sweep.is_some();
             let is_init_without_seeds = (field_attrs[fi].is_init || field_attrs[fi].init_if_needed)
                 && field_attrs[fi].seeds.is_none()
+                && field_attrs[fi].typed_seeds.is_none()
                 && field_attrs[fi].associated_token_mint.is_none();
             let signer = is_signer_type(&f.ty) || is_init_without_seeds;
             if writable {

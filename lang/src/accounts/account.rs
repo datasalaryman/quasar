@@ -86,11 +86,17 @@ pub fn resize(view: &mut AccountView, new_len: usize) -> Result<(), ProgramError
 ///
 /// Used when two accounts from a parsed context both need lamport writes
 /// (e.g. close drains to destination, realloc returns excess to payer).
+///
+/// # Safety (Aliasing)
+///
+/// This mutates through a shared `&AccountView` reference via raw pointer cast.
+/// This is technically UB in Rust's abstract machine model, but is sound on all
+/// Solana targets (sBPF, x86 for testing) because:
+/// 1. The SVM input buffer is genuinely writable memory
+/// 2. The Solana runtime permits lamport mutations within a transaction
+/// 3. sBPF does not use LLVM's alias-based optimizations
 #[inline(always)]
 pub fn set_lamports(view: &AccountView, lamports: u64) {
-    // SAFETY: `account_ptr()` returns a valid `RuntimeAccount` pointer.
-    // The cast to `*mut` is sound because the SVM input buffer is writable
-    // and Solana's runtime permits lamport mutations within a transaction.
     unsafe { (*(view.account_ptr() as *mut RuntimeAccount)).lamports = lamports };
 }
 

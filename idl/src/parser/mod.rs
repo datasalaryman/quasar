@@ -137,7 +137,7 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
             let accounts_items = accounts_structs
                 .iter()
                 .find(|s| s.name == ix.accounts_type_name)
-                .map(accounts::to_idl_accounts)
+                .map(|s| accounts::to_idl_accounts(s, &state_accounts))
                 .unwrap_or_default();
 
             let args: Vec<IdlField> = ix
@@ -336,6 +336,11 @@ fn check_instruction_input_name_collision(parsed: &ParsedProgram) {
 /// Check for discriminator collisions across all instruction, account, and
 /// event discriminators. Returns a list of collision descriptions, empty if no
 /// collisions found.
+///
+/// Collisions are checked within each kind (instruction-instruction,
+/// account-account, event-event). Cross-kind collisions are not flagged since
+/// different kinds use independent discriminator namespaces with potentially
+/// different byte lengths.
 pub fn find_discriminator_collisions(parsed: &ParsedProgram) -> Vec<String> {
     struct DiscEntry {
         kind: &'static str,

@@ -10,7 +10,7 @@ pub struct DemoAccount {
 
 #[derive(Accounts)]
 pub struct BadReallocOptional<'info> {
-    #[account(mut, realloc = 64)]
+    #[account(realloc = 64)]
     pub account: Option<&'info mut Account<DemoAccount>>,
     pub payer: &'info mut Signer,
     pub system_program: &'info Program<System>,

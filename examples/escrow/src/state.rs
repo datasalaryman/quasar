@@ -1,6 +1,7 @@
 use quasar_lang::prelude::*;
 
 #[account(discriminator = 1)]
+#[seeds(b"escrow", maker: Address)]
 pub struct Escrow {
     pub maker: Address,
     pub mint_a: Address,

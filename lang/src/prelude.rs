@@ -32,8 +32,8 @@ pub use {
         return_data::set_return_data,
         sysvars::{clock::Clock, rent::Rent},
         traits::{
-            AccountCheck, AccountCount, AsAccountView, CheckOwner, Discriminator, Event, Id,
-            InterfaceResolve, Owner, ParseAccounts, ProgramInterface, Space, StaticView,
+            AccountCheck, AccountCount, AsAccountView, CheckOwner, Discriminator, Event, HasSeeds,
+            Id, InterfaceResolve, Owner, ParseAccounts, ProgramInterface, Space, StaticView,
             ZeroCopyDeref,
         },
     },

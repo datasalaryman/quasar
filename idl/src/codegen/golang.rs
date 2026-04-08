@@ -184,6 +184,9 @@ pub fn generate_go_client(idl: &Idl) -> String {
                         crate::types::IdlSeed::Account { path } => {
                             seeds.push(format!("input.{}[:]", to_pascal(path)));
                         }
+                        crate::types::IdlSeed::Arg { path } => {
+                            seeds.push(format!("input.{}", to_pascal(path)));
+                        }
                     }
                 }
                 // PDA derivation inline — panic on error (invalid seeds = programmer error)

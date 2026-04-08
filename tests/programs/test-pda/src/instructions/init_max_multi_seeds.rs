@@ -1,44 +1,24 @@
-use {crate::state::ComplexAccount, quasar_lang::prelude::*};
+use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct InitMaxMultiSeeds<'info> {
     pub payer: &'info mut Signer,
     pub authority: &'info Signer,
     #[account(
-        init,
-        payer = payer,
-        // Max 15 seeds allowed + 1 bump seed , in total 16
         seeds = [
-            b"complex",
-            b"complex",
-            b"complex", 
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
-            b"complex",
+            b"max", b"max", b"max", b"max", b"max",
+            b"max", b"max", b"max", b"max", b"max",
+            b"max", b"max", b"max", b"max", b"max",
         ],
-        bump)]
-    pub complex: &'info mut Account<ComplexAccount>,
+        bump
+    )]
+    pub complex: &'info UncheckedAccount,
     pub system_program: &'info Program<System>,
 }
 
 impl<'info> InitMaxMultiSeeds<'info> {
     #[inline(always)]
-    pub fn handler(
-        &mut self,
-        amount: u64,
-        bumps: &InitMaxMultiSeedsBumps,
-    ) -> Result<(), ProgramError> {
-        self.complex
-            .set_inner(*self.authority.address(), amount, bumps.complex);
+    pub fn handler(&mut self) -> Result<(), ProgramError> {
         Ok(())
     }
 }

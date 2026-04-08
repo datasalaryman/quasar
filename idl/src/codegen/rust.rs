@@ -942,6 +942,7 @@ fn emit_errors(parsed: &ParsedProgram) -> String {
 enum OwnedSeed {
     ByteString(Vec<u8>),
     AccountRef(String),
+    ArgRef(String),
 }
 
 /// A collected PDA with its field name and seeds.
@@ -954,6 +955,7 @@ fn raw_seed_to_owned(seed: &RawSeed) -> OwnedSeed {
     match seed {
         RawSeed::ByteString(bytes) => OwnedSeed::ByteString(bytes.clone()),
         RawSeed::AccountRef(name) => OwnedSeed::AccountRef(name.clone()),
+        RawSeed::ArgRef(name) => OwnedSeed::ArgRef(name.clone()),
     }
 }
 
@@ -999,6 +1001,10 @@ fn serialize_seeds_for_dedup(seeds: &[RawSeed]) -> Vec<u8> {
                 buf.push(1);
                 buf.extend(name.as_bytes());
             }
+            RawSeed::ArgRef(name) => {
+                buf.push(2);
+                buf.extend(name.as_bytes());
+            }
         }
         buf.push(0xFF); // separator
     }
@@ -1024,6 +1030,7 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
                     }
                 }
                 OwnedSeed::AccountRef(name) => name.clone(),
+                OwnedSeed::ArgRef(name) => format!("arg:{}", name),
             })
             .collect();
         writeln!(out, "/// Seeds: [{}]", seed_desc.join(", ")).expect("write to String");
@@ -1031,8 +1038,14 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
         // Function parameters: collect AccountRef seeds as parameters
         let mut params: Vec<String> = Vec::new();
         for seed in &pda.seeds {
-            if let OwnedSeed::AccountRef(name) = seed {
-                params.push(format!("{}: &Address", name));
+            match seed {
+                OwnedSeed::AccountRef(name) => {
+                    params.push(format!("{}: &Address", name));
+                }
+                OwnedSeed::ArgRef(name) => {
+                    params.push(format!("{}: &[u8]", name));
+                }
+                _ => {}
             }
         }
         params.push("program_id: &Address".to_string());
@@ -1061,6 +1074,7 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
                     }
                 }
                 OwnedSeed::AccountRef(name) => format!("{}.as_ref()", name),
+                OwnedSeed::ArgRef(name) => name.clone(),
             })
             .collect();
 

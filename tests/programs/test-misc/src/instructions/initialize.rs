@@ -3,7 +3,7 @@ use {crate::state::SimpleAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 pub struct InitializeSimple<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"simple", payer], bump)]
+    #[account(init, payer = payer, seeds = SimpleAccount::seeds(payer), bump)]
     pub account: &'info mut Account<SimpleAccount>,
     pub system_program: &'info Program<System>,
 }

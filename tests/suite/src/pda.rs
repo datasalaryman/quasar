@@ -946,8 +946,8 @@ fn test_max_multi_seeds() {
     let mollusk = setup();
     let (system_program, system_program_account) = keyed_account_for_system_program();
     let payer = Address::new_unique();
-    let max_seeds: Vec<&[u8]> = (0..15).map(|_| b"complex".as_slice()).collect(); // MAX seeds allowed is 16 including bump seed
     let authority = Address::new_unique();
+    let max_seeds: Vec<&[u8]> = (0..15).map(|_| b"max".as_slice()).collect();
     let (complex, _) = Address::find_program_address(&max_seeds, &quasar_test_pda::ID);
 
     let instruction: Instruction = InitMaxMultiSeedsInstruction {
@@ -955,7 +955,6 @@ fn test_max_multi_seeds() {
         authority,
         complex,
         system_program,
-        amount: 12345,
     }
     .into();
 
@@ -971,14 +970,9 @@ fn test_max_multi_seeds() {
 
     assert!(
         result.program_result.is_ok(),
-        "MAX 15 seeds init failed: {:?}",
+        "MAX 15 seeds verification failed: {:?}",
         result.program_result
     );
-
-    let account = &result.resulting_accounts[2].1;
-    assert_eq!(account.data.len(), COMPLEX_SIZE);
-    assert_eq!(account.data[0], 4);
-    assert_eq!(account.owner, quasar_test_pda::ID);
 }
 
 #[test]
@@ -1156,5 +1150,145 @@ fn test_pda_signer_wrong_authority_cpi() {
     assert!(
         result.program_result.is_err(),
         "Expected failure with wrong authority for PDA signer CPI"
+    );
+}
+
+// ── Typed seed with instruction data ────────────────────────────────────
+
+const INDEXED_SIZE: usize = 42;
+
+#[test]
+fn test_typed_seed_ix_data_init() {
+    let mollusk = setup();
+    let (system_program, system_program_account) = keyed_account_for_system_program();
+    let payer = Address::new_unique();
+    let authority = Address::new_unique();
+    let index: u64 = 42;
+
+    let (item_pda, _) = Address::find_program_address(
+        &[b"indexed", authority.as_ref(), &index.to_le_bytes()],
+        &quasar_test_pda::ID,
+    );
+
+    let instruction: Instruction = InitIxDataSeedInstruction {
+        payer,
+        authority,
+        item: item_pda,
+        system_program,
+        index,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, Account::new(1_000_000_000, 0, &system_program)),
+            (authority, Account::new(1_000_000, 0, &system_program)),
+            (item_pda, Account::default()),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "typed seed with ix data init failed: {:?}",
+        result.program_result
+    );
+    let account = &result.resulting_accounts[2].1;
+    assert_eq!(account.data.len(), INDEXED_SIZE);
+    assert_eq!(account.data[0], 8); // discriminator
+    assert_eq!(&account.data[1..33], authority.as_ref());
+    assert_eq!(
+        u64::from_le_bytes(account.data[33..41].try_into().unwrap()),
+        42
+    );
+    assert_eq!(account.owner, quasar_test_pda::ID);
+}
+
+// ── Typed seed with deserialized account field ──────────────────────────
+
+const NS_CONFIG_SIZE: usize = 6;
+const SCOPED_ITEM_SIZE: usize = 14;
+
+#[test]
+fn test_typed_seed_deserialized_field() {
+    let mollusk = setup();
+    let (system_program, system_program_account) = keyed_account_for_system_program();
+    let payer = Address::new_unique();
+    let namespace: u32 = 42;
+
+    // Step 1: Create the NamespaceConfig
+    let (config_pda, _) = Address::find_program_address(&[b"ns_config"], &quasar_test_pda::ID);
+
+    let init_config_ix: Instruction = InitNsConfigInstruction {
+        payer,
+        config: config_pda,
+        system_program,
+        namespace,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &init_config_ix,
+        &[
+            (payer, Account::new(1_000_000_000, 0, &system_program)),
+            (config_pda, Account::default()),
+            (system_program, system_program_account.clone()),
+        ],
+    );
+    assert!(
+        result.program_result.is_ok(),
+        "init ns_config failed: {:?}",
+        result.program_result
+    );
+    let config_account = result.resulting_accounts[1].1.clone();
+    assert_eq!(config_account.data.len(), NS_CONFIG_SIZE);
+    assert_eq!(config_account.data[0], 9); // discriminator
+
+    // Step 2: Create the ScopedItem using namespace as instruction arg seed
+    let (item_pda, _) =
+        Address::find_program_address(&[b"scoped", &namespace.to_le_bytes()], &quasar_test_pda::ID);
+
+    let init_item_ix: Instruction = InitScopedItemInstruction {
+        payer,
+        item: item_pda,
+        system_program,
+        namespace,
+    }
+    .into();
+
+    let payer_after_config = result.resulting_accounts[0].1.clone();
+    let result2 = mollusk.process_instruction(
+        &init_item_ix,
+        &[
+            (payer, payer_after_config),
+            (item_pda, Account::default()),
+            (system_program, system_program_account.clone()),
+        ],
+    );
+    assert!(
+        result2.program_result.is_ok(),
+        "init scoped_item failed: {:?}",
+        result2.program_result
+    );
+    let item_account = result2.resulting_accounts[1].1.clone();
+    assert_eq!(item_account.data.len(), SCOPED_ITEM_SIZE);
+    assert_eq!(item_account.data[0], 10); // discriminator
+
+    // Step 3: Verify the ScopedItem using config.namespace as seed
+    let verify_ix: Instruction = VerifyScopedItemInstruction {
+        config: config_pda,
+        item: item_pda,
+    }
+    .into();
+
+    let result3 = mollusk.process_instruction(
+        &verify_ix,
+        &[(config_pda, config_account), (item_pda, item_account)],
+    );
+    assert!(
+        result3.program_result.is_ok(),
+        "verify scoped_item with deserialized field seed failed: {:?}",
+        result3.program_result
     );
 }

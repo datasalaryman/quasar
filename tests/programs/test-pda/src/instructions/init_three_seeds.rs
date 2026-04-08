@@ -5,7 +5,7 @@ pub struct InitThreeSeeds<'info> {
     pub payer: &'info mut Signer,
     pub first: &'info Signer,
     pub second: &'info Signer,
-    #[account(init, payer = payer, seeds = [b"triple", first, second], bump)]
+    #[account(init, payer = payer, seeds = ThreeSeedAccount::seeds(first, second), bump)]
     pub triple: &'info mut Account<ThreeSeedAccount>,
     pub system_program: &'info Program<System>,
 }

@@ -46,6 +46,7 @@ impl Id for TestMiscProgram {
 }
 
 #[account(discriminator = 1)]
+#[seeds(b"simple", authority: Address)]
 pub struct SimpleAccount {
     pub authority: Address,
     pub value: u64,
@@ -88,8 +89,29 @@ pub struct TailBytesAccount<'a> {
     pub data: &'a [u8],
 }
 
+/// Same shape as SimpleAccount but with a different seed prefix — for
+/// space-override test.
+#[account(discriminator = 1)]
+#[seeds(b"spacetest", authority: Address)]
+pub struct SpaceTestAccount {
+    pub authority: Address,
+    pub value: u64,
+    pub bump: u8,
+}
+
+/// Same shape as SimpleAccount but with a different seed prefix — for
+/// explicit-payer test.
+#[account(discriminator = 1)]
+#[seeds(b"explicit", authority: Address)]
+pub struct ExplicitPayerAccount {
+    pub authority: Address,
+    pub value: u64,
+    pub bump: u8,
+}
+
 /// Account with no discriminator — size-only validation.
 #[account(unsafe_no_disc)]
+#[seeds(b"nodisc", authority: Address)]
 pub struct NoDiscAccount {
     pub authority: Address,
     pub value: u64,

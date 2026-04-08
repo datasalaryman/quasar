@@ -3,7 +3,7 @@ use {crate::state::MaxSeedAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 pub struct InitMaxSeedLength<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"abcdefghijklmnopqrstuvwxyz012345"], bump)]
+    #[account(init, payer = payer, seeds = MaxSeedAccount::seeds(), bump)]
     pub max_seed: &'info mut Account<MaxSeedAccount>,
     pub system_program: &'info Program<System>,
 }

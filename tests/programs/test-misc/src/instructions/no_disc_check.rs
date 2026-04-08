@@ -3,7 +3,7 @@ use {crate::state::NoDiscAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 pub struct InitNoDisc<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"nodisc", payer], bump)]
+    #[account(init, payer = payer, seeds = NoDiscAccount::seeds(payer), bump)]
     pub account: &'info mut Account<NoDiscAccount>,
     pub system_program: &'info Program<System>,
 }

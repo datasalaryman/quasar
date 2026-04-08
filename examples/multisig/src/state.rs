@@ -1,6 +1,7 @@
 use quasar_lang::prelude::*;
 
 #[account(discriminator = 1)]
+#[seeds(b"multisig", creator: Address)]
 pub struct MultisigConfig<'a> {
     pub creator: Address,
     pub threshold: u8,

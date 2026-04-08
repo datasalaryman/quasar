@@ -7,7 +7,7 @@ use {
 pub struct ExecuteTransfer<'info> {
     #[account(
         has_one = creator,
-        seeds = [b"multisig", creator],
+        seeds = MultisigConfig::seeds(creator),
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<'info>>,
@@ -48,7 +48,7 @@ impl<'info> ExecuteTransfer<'info> {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let seeds = bumps.vault_seeds();
+        let seeds = self.vault_seeds(bumps);
         self.system_program
             .transfer(self.vault, self.recipient, amount)
             .invoke_signed(&seeds)?;

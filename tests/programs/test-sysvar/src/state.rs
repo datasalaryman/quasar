@@ -1,17 +1,20 @@
 use quasar_lang::prelude::*;
 
 #[account(discriminator = 1)]
+#[seeds(b"clock")]
 pub struct ClockSnapshot {
     pub slot: u64,
     pub unix_timestamp: i64,
 }
 
 #[account(discriminator = 2)]
+#[seeds(b"rent")]
 pub struct RentSnapshot {
     pub min_balance_100: u64,
 }
 
 #[account(discriminator = 3)]
+#[seeds(b"clock_full")]
 pub struct ClockFullSnapshot {
     pub slot: u64,
     pub epoch_start_timestamp: i64,
@@ -21,6 +24,7 @@ pub struct ClockFullSnapshot {
 }
 
 #[account(discriminator = 4)]
+#[seeds(b"rent_calc")]
 pub struct RentCalcSnapshot {
     pub min_balance: u64,
 }

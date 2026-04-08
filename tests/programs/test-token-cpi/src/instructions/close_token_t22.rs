@@ -6,7 +6,7 @@ use {
 #[derive(Accounts)]
 pub struct CloseTokenT22<'info> {
     pub authority: &'info Signer,
-    #[account(mut, close = destination, token::mint = mint, token::authority = authority)]
+    #[account(close = destination, token::mint = mint, token::authority = authority)]
     pub token_account: &'info mut Account<Token2022>,
     pub mint: &'info Account<Mint2022>,
     #[account(mut)]

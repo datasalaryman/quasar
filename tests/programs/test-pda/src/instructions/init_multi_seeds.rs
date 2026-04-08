@@ -4,7 +4,7 @@ use {crate::state::ComplexAccount, quasar_lang::prelude::*};
 pub struct InitMultiSeeds<'info> {
     pub payer: &'info mut Signer,
     pub authority: &'info Signer,
-    #[account(init, payer = payer, seeds = [b"complex", payer, authority], bump)]
+    #[account(init, payer = payer, seeds = ComplexAccount::seeds(payer, authority), bump)]
     pub complex: &'info mut Account<ComplexAccount>,
     pub system_program: &'info Program<System>,
 }

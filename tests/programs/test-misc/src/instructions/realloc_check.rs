@@ -3,7 +3,7 @@ use {crate::state::SimpleAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 #[instruction(new_space: u64)]
 pub struct ReallocCheck<'info> {
-    #[account(mut, realloc = new_space as usize)]
+    #[account(realloc = new_space as usize)]
     pub account: &'info mut Account<SimpleAccount>,
     #[account(mut)]
     pub payer: &'info mut Signer,

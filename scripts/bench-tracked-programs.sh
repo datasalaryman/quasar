@@ -91,7 +91,10 @@ compare_metric() {
   local delta=$((candidate - base))
   printf '%-20s base=%-8s candidate=%-8s delta=%+d\n' "$key" "$base" "$candidate" "$delta"
 
-  if [[ "$kind" == "cu" && "$delta" -gt 0 ]]; then
+  # Allow up to 1500 CU variance per PDA — a single find_program_address
+  # iteration costs ~1500 CU, and different seed values produce different
+  # canonical bumps.
+  if [[ "$kind" == "cu" && "$delta" -gt 1500 ]]; then
     return 1
   fi
 }

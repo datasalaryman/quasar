@@ -9,6 +9,15 @@
 //! builds for CU efficiency and panic on overflow in debug builds. Use
 //! `checked_add`, `checked_sub`, `checked_mul`, `checked_div` where overflow
 //! must be detected.
+//!
+//! ## Security Note
+//!
+//! Arithmetic operators (`+`, `-`, `*`) use **wrapping** semantics in release
+//! builds. For security-sensitive calculations (balances, amounts, fees),
+//! always use [`PodU64::checked_add`], [`PodU64::checked_sub`],
+//! [`PodU64::checked_mul`], or [`PodU64::checked_div`] to detect overflow
+//! explicitly. Silent wrapping in financial logic can lead to exploitable
+//! underflow/overflow vulnerabilities.
 
 #![no_std]
 

@@ -5,6 +5,7 @@
 mod accessors;
 mod dynamic;
 mod fixed;
+pub mod seeds;
 
 use {
     crate::helpers::{
@@ -17,7 +18,21 @@ use {
 
 pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as AccountAttr);
-    let input = parse_macro_input!(item as DeriveInput);
+    let mut input = parse_macro_input!(item as DeriveInput);
+
+    // Parse #[seeds(...)] if present, then strip it before downstream processing.
+    let seeds_parsed = seeds::parse_seeds_attr(&input.attrs);
+    let seeds_impl = match seeds_parsed {
+        Some(Ok(ref attr)) => Some(seeds::generate_seeds_impl(
+            &input.ident,
+            &input.generics,
+            attr,
+        )),
+        Some(Err(e)) => return e.to_compile_error().into(),
+        None => None,
+    };
+    input.attrs.retain(|a| !a.path().is_ident("seeds"));
+
     let name = &input.ident;
 
     let (disc_bytes, unsafe_no_disc) = match args {
@@ -88,7 +103,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     if !has_dynamic {
-        return fixed::generate_fixed_account(
+        let mut output = fixed::generate_fixed_account(
             name,
             &disc_bytes,
             disc_len,
@@ -96,6 +111,10 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
             fields_data,
             &input,
         );
+        if let Some(seeds_tokens) = &seeds_impl {
+            output.extend(TokenStream::from(seeds_tokens.clone()));
+        }
+        return output;
     }
 
     // Validate: fixed fields must precede all dynamic fields
@@ -177,7 +196,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
-    dynamic::generate_dynamic_account(
+    let mut output = dynamic::generate_dynamic_account(
         name,
         &disc_bytes,
         disc_len,
@@ -185,5 +204,9 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         fields_data,
         &field_kinds,
         &input,
-    )
+    );
+    if let Some(seeds_tokens) = &seeds_impl {
+        output.extend(TokenStream::from(seeds_tokens.clone()));
+    }
+    output
 }

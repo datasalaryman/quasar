@@ -304,6 +304,7 @@ fn no_collision_different_kinds() {
             name: "Escrow".to_string(),
             discriminator: vec![1], // same disc as instruction — should be fine
             fields: vec![],
+            seeds: None,
         }],
         events: vec![],
         errors: vec![],
@@ -453,11 +454,13 @@ fn collision_two_accounts_same_discriminator() {
                 name: "Escrow".to_string(),
                 discriminator: vec![1, 2],
                 fields: vec![],
+                seeds: None,
             },
             state::RawStateAccount {
                 name: "Vault".to_string(),
                 discriminator: vec![1, 2], // collision with Escrow
                 fields: vec![],
+                seeds: None,
             },
         ],
         events: vec![],
@@ -526,6 +529,7 @@ fn no_collision_same_disc_different_kinds() {
             name: "Escrow".to_string(),
             discriminator: vec![1], // same disc, different kind — OK
             fields: vec![],
+            seeds: None,
         }],
         events: vec![events::RawEvent {
             name: "Trade".to_string(),
@@ -718,6 +722,7 @@ fn rust_codegen_account_metas() {
                     field_class: FieldClass::Unchecked,
                     inner_type_name: None,
                     constraints: FieldConstraints::default(),
+                    seed_type: None,
                 },
                 RawAccountField {
                     name: "to".to_string(),
@@ -728,6 +733,7 @@ fn rust_codegen_account_metas() {
                     field_class: FieldClass::Unchecked,
                     inner_type_name: None,
                     constraints: FieldConstraints::default(),
+                    seed_type: None,
                 },
                 RawAccountField {
                     name: "authority".to_string(),
@@ -738,6 +744,7 @@ fn rust_codegen_account_metas() {
                     field_class: FieldClass::Unchecked,
                     inner_type_name: None,
                     constraints: FieldConstraints::default(),
+                    seed_type: None,
                 },
             ],
         });
@@ -1820,6 +1827,7 @@ fn rust_codegen_pda_helpers() {
                 field_class: FieldClass::Unchecked,
                 inner_type_name: None,
                 constraints: FieldConstraints::default(),
+                seed_type: None,
             },
             RawAccountField {
                 name: "user".to_string(),
@@ -1830,6 +1838,7 @@ fn rust_codegen_pda_helpers() {
                 field_class: FieldClass::Unchecked,
                 inner_type_name: None,
                 constraints: FieldConstraints::default(),
+                seed_type: None,
             },
         ],
     }];
@@ -1869,6 +1878,7 @@ fn rust_codegen_pda_dedup() {
                 field_class: FieldClass::Unchecked,
                 inner_type_name: None,
                 constraints: FieldConstraints::default(),
+                seed_type: None,
             }],
         },
         RawAccountsStruct {
@@ -1882,6 +1892,7 @@ fn rust_codegen_pda_dedup() {
                 field_class: FieldClass::Unchecked,
                 inner_type_name: None,
                 constraints: FieldConstraints::default(),
+                seed_type: None,
             }],
         },
     ];

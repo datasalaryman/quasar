@@ -6,7 +6,7 @@ pub struct SetLabel<'info> {
     #[account(
         mut,
         has_one = creator,
-        seeds = [b"multisig", creator],
+        seeds = MultisigConfig::seeds(creator),
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<'info>>,

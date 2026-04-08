@@ -6,7 +6,7 @@ use {
 #[derive(Accounts)]
 pub struct SweepTokenT22<'info> {
     pub authority: &'info Signer,
-    #[account(mut, sweep = receiver, token::mint = mint, token::authority = authority)]
+    #[account(sweep = receiver, token::mint = mint, token::authority = authority)]
     pub source: &'info mut Account<Token2022>,
     #[account(mut)]
     pub receiver: &'info mut Account<Token2022>,

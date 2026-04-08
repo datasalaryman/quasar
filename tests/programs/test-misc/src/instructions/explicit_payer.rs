@@ -1,10 +1,10 @@
-use {crate::state::SimpleAccount, quasar_lang::prelude::*};
+use {crate::state::ExplicitPayerAccount, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct ExplicitPayer<'info> {
     pub funder: &'info mut Signer,
-    #[account(init, payer = funder, seeds = [b"explicit", funder], bump)]
-    pub account: &'info mut Account<SimpleAccount>,
+    #[account(init, payer = funder, seeds = ExplicitPayerAccount::seeds(funder), bump)]
+    pub account: &'info mut Account<ExplicitPayerAccount>,
     pub system_program: &'info Program<System>,
 }
 

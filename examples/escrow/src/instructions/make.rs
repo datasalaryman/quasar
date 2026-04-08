@@ -7,7 +7,7 @@ use {
 #[derive(Accounts)]
 pub struct Make<'info> {
     pub maker: &'info mut Signer,
-    #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
+    #[account(init, payer = maker, seeds = Escrow::seeds(maker), bump)]
     pub escrow: &'info mut Account<Escrow>,
     pub mint_a: &'info Account<Mint>,
     pub mint_b: &'info Account<Mint>,

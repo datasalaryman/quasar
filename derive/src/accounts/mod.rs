@@ -9,11 +9,10 @@ mod fields;
 mod init;
 mod instruction_args;
 
+pub(crate) use instruction_args::InstructionArg;
 use {
     crate::helpers::{extract_generic_inner_type, is_composite_type, strip_generics},
-    instruction_args::{
-        generate_instruction_arg_extraction, parse_struct_instruction_args, InstructionArg,
-    },
+    instruction_args::{generate_instruction_arg_extraction, parse_struct_instruction_args},
     proc_macro::TokenStream,
     quote::{format_ident, quote},
     syn::{parse_macro_input, Data, DeriveInput, Fields, Type},
@@ -52,10 +51,11 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     let instruction_args = parse_struct_instruction_args(&input);
 
-    let mut pf = match fields::process_fields(fields, &field_name_strings, &instruction_args) {
-        Ok(pf) => pf,
-        Err(ts) => return ts,
-    };
+    let mut pf =
+        match fields::process_fields(fields, &field_name_strings, &instruction_args, &bumps_name) {
+            Ok(pf) => pf,
+            Err(ts) => return ts,
+        };
 
     // --- Composite type handling ---
 
@@ -492,7 +492,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            impl #bumps_name {
+            impl<'info> #name<'info> {
                 #(#seeds_methods)*
             }
         }

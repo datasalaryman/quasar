@@ -581,6 +581,10 @@ fn generate_instruction_builders_web3js(out: &mut String, idl: &Idl) {
                             writeln!(out, "        {}.toBytes(),", account_expr(path))
                                 .expect("write to String");
                         }
+                        IdlSeed::Arg { path } => {
+                            writeln!(out, "        input.{},  // arg seed", path)
+                                .expect("write to String");
+                        }
                     }
                 }
                 write!(out, "      ],\n      {class_name}.programId,\n    )[0];\n")
@@ -733,6 +737,10 @@ fn generate_instruction_builders_kit(out: &mut String, idl: &Idl) {
                                 account_expr(path)
                             )
                             .expect("write to String");
+                        }
+                        IdlSeed::Arg { path } => {
+                            writeln!(out, "        input.{},  // arg seed", path)
+                                .expect("write to String");
                         }
                     }
                 }

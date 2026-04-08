@@ -214,6 +214,9 @@ pub fn generate_python_client(idl: &Idl) -> String {
                         crate::types::IdlSeed::Account { path } => {
                             seeds.push(format!("bytes(input.{})", to_snake(path)));
                         }
+                        crate::types::IdlSeed::Arg { path } => {
+                            seeds.push(format!("input.{}", to_snake(path)));
+                        }
                     }
                 }
                 format!(

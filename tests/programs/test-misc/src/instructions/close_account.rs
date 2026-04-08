@@ -6,7 +6,7 @@ pub struct CloseAccount<'info> {
     #[account(
         has_one = authority,
         close = authority,
-        seeds = [b"simple", authority],
+        seeds = SimpleAccount::seeds(authority),
         bump = account.bump
     )]
     pub account: &'info mut Account<SimpleAccount>,

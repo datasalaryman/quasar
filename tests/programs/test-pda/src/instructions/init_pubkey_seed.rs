@@ -3,7 +3,7 @@ use {crate::state::UserAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 pub struct InitPubkeySeed<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"user", payer], bump)]
+    #[account(init, payer = payer, seeds = UserAccount::seeds(payer), bump)]
     pub user: &'info mut Account<UserAccount>,
     pub system_program: &'info Program<System>,
 }

@@ -3,7 +3,7 @@ use {crate::state::EmptySeedAccount, quasar_lang::prelude::*};
 #[derive(Accounts)]
 pub struct InitEmptySeed<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b""], bump)]
+    #[account(init, payer = payer, seeds = EmptySeedAccount::seeds(), bump)]
     pub empty: &'info mut Account<EmptySeedAccount>,
     pub system_program: &'info Program<System>,
 }

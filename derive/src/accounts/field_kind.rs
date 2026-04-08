@@ -141,9 +141,18 @@ impl FieldFlags {
         is_ref_mut: bool,
     ) -> Self {
         let is_signer = matches!(kind, FieldKind::Signer)
-            || (attrs.is_init && attrs.seeds.is_none() && attrs.associated_token_mint.is_none());
+            || (attrs.is_init
+                && attrs.seeds.is_none()
+                && attrs.typed_seeds.is_none()
+                && attrs.associated_token_mint.is_none());
 
-        let is_writable = is_ref_mut || attrs.is_mut;
+        let is_writable = is_ref_mut
+            || attrs.is_mut
+            || attrs.is_init
+            || attrs.init_if_needed
+            || attrs.close.is_some()
+            || attrs.realloc.is_some()
+            || attrs.sweep.is_some();
 
         let is_executable = kind.is_executable();
 

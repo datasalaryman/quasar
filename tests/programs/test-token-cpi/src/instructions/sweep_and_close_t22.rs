@@ -6,7 +6,7 @@ use {
 #[derive(Accounts)]
 pub struct SweepAndCloseT22<'info> {
     pub authority: &'info Signer,
-    #[account(mut, sweep = receiver, close = destination, token::mint = mint, token::authority = authority)]
+    #[account(sweep = receiver, close = destination, token::mint = mint, token::authority = authority)]
     pub source: &'info mut Account<Token2022>,
     #[account(mut)]
     pub receiver: &'info mut Account<Token2022>,

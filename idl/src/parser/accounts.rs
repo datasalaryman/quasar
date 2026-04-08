@@ -25,6 +25,7 @@ pub struct RawAccountField {
     pub field_class: FieldClass,
     pub inner_type_name: Option<String>,
     pub constraints: FieldConstraints,
+    pub seed_type: Option<String>,
 }
 
 #[derive(Clone)]
@@ -36,6 +37,8 @@ pub struct RawPda {
 pub enum RawSeed {
     ByteString(Vec<u8>),
     AccountRef(String),
+    /// Instruction argument or field access expression used as a seed.
+    ArgRef(String),
 }
 
 /// Extract all `#[derive(Accounts)]` structs from a parsed file.
@@ -93,6 +96,7 @@ fn has_writable_directive(attrs: &[syn::Attribute]) -> bool {
                 || d == "init_if_needed"
                 || d.starts_with("close")
                 || d.starts_with("realloc")
+                || d.starts_with("sweep")
             {
                 return true;
             }
@@ -115,7 +119,7 @@ fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccou
         _ => vec![],
     };
 
-    let pda = parse_pda_from_attrs(&field.attrs, &sibling_names);
+    let (pda, seed_type) = parse_pda_from_attrs(&field.attrs, &sibling_names);
     let address = detect_known_address(&field.ty);
 
     let signer = helpers::is_signer_type(&field.ty);
@@ -132,6 +136,7 @@ fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccou
         field_class,
         inner_type_name,
         constraints,
+        seed_type,
     }
 }
 
@@ -166,8 +171,13 @@ fn detect_known_address(ty: &syn::Type) -> Option<String> {
     }
 }
 
-/// Parse `#[account(seeds = [...], bump)]` from field attributes.
-fn parse_pda_from_attrs(attrs: &[syn::Attribute], sibling_names: &[String]) -> Option<RawPda> {
+/// Parse `#[account(seeds = [...], bump)]` or `#[account(seeds =
+/// Type::seeds(...), bump)]` from field attributes. Returns `(Option<RawPda>,
+/// Option<seed_type_name>)`.
+fn parse_pda_from_attrs(
+    attrs: &[syn::Attribute],
+    sibling_names: &[String],
+) -> (Option<RawPda>, Option<String>) {
     for attr in attrs {
         if !attr.path().is_ident("account") {
             continue;
@@ -185,13 +195,82 @@ fn parse_pda_from_attrs(attrs: &[syn::Attribute], sibling_names: &[String]) -> O
             continue;
         }
 
-        // Parse the seeds expression
+        // Check for Type::seeds(...) syntax first
+        if let Some((type_name, args)) = parse_typed_seeds_call(&tokens_str) {
+            let seeds: Vec<RawSeed> = args
+                .iter()
+                .filter_map(|s| parse_single_seed(s.trim(), sibling_names))
+                .collect();
+            return (Some(RawPda { seeds }), Some(type_name));
+        }
+
+        // Fall back to seeds = [...] syntax
         let seeds = parse_seeds_from_tokens(&tokens, sibling_names);
         if !seeds.is_empty() {
-            return Some(RawPda { seeds });
+            return (Some(RawPda { seeds }), None);
         }
     }
-    None
+    (None, None)
+}
+
+/// Parse `seeds = Type::seeds(arg1, arg2)` from a token string.
+/// Returns `(type_name, vec_of_arg_strings)` if found.
+fn parse_typed_seeds_call(tokens_str: &str) -> Option<(String, Vec<String>)> {
+    // Look for pattern: `seeds = <Ident> :: seeds (`
+    let seeds_idx = tokens_str.find("seeds")?;
+    let after_seeds = &tokens_str[seeds_idx..];
+
+    let eq_idx = after_seeds.find('=')?;
+    let after_eq = after_seeds[eq_idx + 1..].trim();
+
+    // Check that this is Type::seeds( and NOT seeds = [
+    let colons_idx = after_eq.find("::")?;
+
+    // Extract the type name (everything before ::)
+    let type_name = after_eq[..colons_idx].trim().to_string();
+    if type_name.is_empty() {
+        return None;
+    }
+
+    // After :: should be "seeds (" or "seeds("
+    let after_colons = after_eq[colons_idx + 2..].trim();
+    if !after_colons.starts_with("seeds") {
+        return None;
+    }
+
+    let after_seeds_kw = after_colons["seeds".len()..].trim();
+    if !after_seeds_kw.starts_with('(') {
+        return None;
+    }
+
+    // Find matching closing paren
+    let mut depth = 0;
+    let mut paren_end = None;
+    for (i, c) in after_seeds_kw.chars().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    paren_end = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let paren_end = paren_end?;
+    let inner = &after_seeds_kw[1..paren_end];
+
+    // Split args by comma (simple split — no nested parens expected)
+    let args: Vec<String> = inner
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    Some((type_name, args))
 }
 
 /// Parse seeds from the attribute token stream.
@@ -308,36 +387,72 @@ fn parse_single_seed(s: &str, sibling_names: &[String]) -> Option<RawSeed> {
         return Some(RawSeed::ByteString(inner.as_bytes().to_vec()));
     }
 
-    // Simple identifier that matches a sibling field name
+    // Simple identifier that matches a sibling field name → account ref
     if s.chars().all(|c| c.is_alphanumeric() || c == '_') && sibling_names.contains(&s.to_string())
     {
         return Some(RawSeed::AccountRef(s.to_string()));
     }
 
-    // Byte array: &[u8] or similar
-    // For now, try to interpret as a const byte literal
+    // Simple identifier (instruction arg) or dotted access (field.subfield) → arg
+    // ref
+    let clean = s.replace(' ', "");
+    if !clean.is_empty()
+        && clean
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+    {
+        return Some(RawSeed::ArgRef(clean));
+    }
+
     None
 }
 
 /// Convert a `RawAccountsStruct` into IDL account items.
-pub fn to_idl_accounts(raw: &RawAccountsStruct) -> Vec<IdlAccountItem> {
-    raw.fields.iter().map(to_idl_account_item).collect()
+/// `state_accounts` is used to look up seed prefixes for `Type::seeds(...)`.
+pub fn to_idl_accounts(
+    raw: &RawAccountsStruct,
+    state_accounts: &[super::state::RawStateAccount],
+) -> Vec<IdlAccountItem> {
+    raw.fields
+        .iter()
+        .map(|f| to_idl_account_item(f, state_accounts))
+        .collect()
 }
 
-fn to_idl_account_item(field: &RawAccountField) -> IdlAccountItem {
-    let pda = field.pda.as_ref().map(|pda| IdlPda {
-        seeds: pda
-            .seeds
-            .iter()
-            .map(|seed| match seed {
-                RawSeed::ByteString(bytes) => IdlSeed::Const {
-                    value: bytes.clone(),
-                },
-                RawSeed::AccountRef(name) => IdlSeed::Account {
-                    path: helpers::to_camel_case(name),
-                },
-            })
-            .collect(),
+fn to_idl_account_item(
+    field: &RawAccountField,
+    state_accounts: &[super::state::RawStateAccount],
+) -> IdlAccountItem {
+    let pda = field.pda.as_ref().map(|pda| {
+        let mut seeds: Vec<IdlSeed> = Vec::new();
+
+        // If this field uses Type::seeds(...), look up the prefix from the state
+        // account's #[seeds] definition and prepend it.
+        if let Some(ref type_name) = field.seed_type {
+            if let Some(sa) = state_accounts.iter().find(|sa| sa.name == *type_name) {
+                if let Some(ref typed_seeds) = sa.seeds {
+                    if !typed_seeds.prefix.is_empty() {
+                        seeds.push(IdlSeed::Const {
+                            value: typed_seeds.prefix.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        seeds.extend(pda.seeds.iter().map(|seed| match seed {
+            RawSeed::ByteString(bytes) => IdlSeed::Const {
+                value: bytes.clone(),
+            },
+            RawSeed::AccountRef(name) => IdlSeed::Account {
+                path: helpers::to_camel_case(name),
+            },
+            RawSeed::ArgRef(path) => IdlSeed::Arg {
+                path: helpers::to_camel_case(path),
+            },
+        }));
+
+        IdlPda { seeds }
     });
 
     IdlAccountItem {

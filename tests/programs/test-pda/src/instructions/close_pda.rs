@@ -6,7 +6,7 @@ pub struct ClosePda<'info> {
     #[account(
         has_one = authority,
         close = authority,
-        seeds = [b"user", authority],
+        seeds = UserAccount::seeds(authority),
         bump = user.bump
     )]
     pub user: &'info mut Account<UserAccount>,

@@ -65,6 +65,8 @@ pub enum IdlSeed {
     Const { value: Vec<u8> },
     #[serde(rename = "account")]
     Account { path: String },
+    #[serde(rename = "arg")]
+    Arg { path: String },
 }
 
 #[derive(Serialize, Deserialize)]

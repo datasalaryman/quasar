@@ -12,7 +12,7 @@ pub struct Take<'info> {
         has_one = maker_ta_b,
         constraint = escrow.receive > 0,
         close = taker,
-        seeds = [b"escrow", maker],
+        seeds = Escrow::seeds(maker),
         bump = escrow.bump
     )]
     pub escrow: &'info mut Account<Escrow>,
@@ -45,7 +45,7 @@ impl<'info> Take<'info> {
 
     #[inline(always)]
     pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-        let seeds = bumps.escrow_seeds();
+        let seeds = self.escrow_seeds(bumps);
 
         self.token_program
             .transfer(

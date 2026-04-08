@@ -9,6 +9,14 @@ use syn::{
     Expr, ExprArray, Ident, Token,
 };
 
+/// Typed seeds: `seeds = Vault::seeds(authority, index)`
+pub(super) struct TypedSeeds {
+    /// The type path (e.g., `Vault`)
+    pub type_path: syn::Path,
+    /// The arguments passed (e.g., [authority, index])
+    pub args: Vec<Expr>,
+}
+
 pub(super) enum AccountDirective {
     Mut,
     Init,
@@ -20,6 +28,7 @@ pub(super) enum AccountDirective {
     HasOne(Ident, Option<Expr>),
     Constraint(Expr, Option<Expr>),
     Seeds(Vec<Expr>),
+    TypedSeeds(TypedSeeds),
     Bump(Option<Expr>),
     Address(Expr, Option<Expr>),
     TokenMint(Ident),
@@ -104,8 +113,60 @@ impl Parse for AccountDirective {
             }
             "seeds" => {
                 let _: Token![=] = input.parse()?;
-                let arr: ExprArray = input.parse()?;
-                Ok(Self::Seeds(arr.elems.into_iter().collect()))
+                if input.peek(syn::token::Bracket) {
+                    // Old syntax: seeds = [expr1, expr2, ...]
+                    let arr: ExprArray = input.parse()?;
+                    Ok(Self::Seeds(arr.elems.into_iter().collect()))
+                } else {
+                    // New syntax: seeds = Type::seeds(arg1, arg2)
+                    let expr: Expr = input.parse()?;
+                    match expr {
+                        Expr::Call(call) => {
+                            if let Expr::Path(ref func_path) = *call.func {
+                                let segments = &func_path.path.segments;
+                                if segments.last().map(|s| s.ident == "seeds") != Some(true) {
+                                    return Err(syn::Error::new_spanned(
+                                        &func_path.path,
+                                        "expected Type::seeds(...)",
+                                    ));
+                                }
+                                // Build type path: all segments except the last "seeds"
+                                let all: Vec<syn::PathSegment> = segments.iter().cloned().collect();
+                                if all.len() < 2 {
+                                    return Err(syn::Error::new_spanned(
+                                        &func_path.path,
+                                        "expected Type::seeds(...), not just seeds(...)",
+                                    ));
+                                }
+                                let type_segs = &all[..all.len() - 1];
+                                let mut type_segments = syn::punctuated::Punctuated::new();
+                                for (i, seg) in type_segs.iter().enumerate() {
+                                    type_segments.push_value(seg.clone());
+                                    if i < type_segs.len() - 1 {
+                                        type_segments.push_punct(<Token![::]>::default());
+                                    }
+                                }
+                                let type_path = syn::Path {
+                                    leading_colon: func_path.path.leading_colon,
+                                    segments: type_segments,
+                                };
+                                Ok(Self::TypedSeeds(TypedSeeds {
+                                    type_path,
+                                    args: call.args.into_iter().collect(),
+                                }))
+                            } else {
+                                Err(syn::Error::new_spanned(
+                                    call.func,
+                                    "expected Type::seeds(...)",
+                                ))
+                            }
+                        }
+                        _ => Err(syn::Error::new_spanned(
+                            expr,
+                            "expected seeds = [...] or seeds = Type::seeds(...)",
+                        )),
+                    }
+                }
             }
             "bump" => {
                 if input.peek(Token![=]) {
@@ -272,6 +333,7 @@ pub(super) struct AccountFieldAttrs {
     pub has_ones: Vec<(Ident, Option<Expr>)>,
     pub constraints: Vec<(Expr, Option<Expr>)>,
     pub seeds: Option<Vec<Expr>>,
+    pub typed_seeds: Option<TypedSeeds>,
     pub bump: Option<Option<Expr>>,
     pub address: Option<(Expr, Option<Expr>)>,
     pub token_mint: Option<Ident>,
@@ -311,6 +373,7 @@ impl Parse for AccountFieldAttrs {
                 AccountDirective::HasOne(id, err) => r.has_ones.push((id, err)),
                 AccountDirective::Constraint(expr, err) => r.constraints.push((expr, err)),
                 AccountDirective::Seeds(v) => r.seeds = Some(v),
+                AccountDirective::TypedSeeds(ts) => r.typed_seeds = Some(ts),
                 AccountDirective::Bump(v) => r.bump = Some(v),
                 AccountDirective::Address(expr, err) => r.address = Some((expr, err)),
                 AccountDirective::TokenMint(v) => r.token_mint = Some(v),

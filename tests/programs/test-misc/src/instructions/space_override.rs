@@ -1,10 +1,10 @@
-use {crate::state::SimpleAccount, quasar_lang::prelude::*};
+use {crate::state::SpaceTestAccount, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct SpaceOverride<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, space = 100, seeds = [b"spacetest", payer], bump)]
-    pub account: &'info mut Account<SimpleAccount>,
+    #[account(init, space = 100, seeds = SpaceTestAccount::seeds(payer), bump)]
+    pub account: &'info mut Account<SpaceTestAccount>,
     pub system_program: &'info Program<System>,
 }
 

@@ -7,8 +7,9 @@ use {
     super::{
         attrs::AccountFieldAttrs,
         field_kind::{strip_ref, FieldKind},
+        instruction_args::InstructionArg,
     },
-    crate::helpers::{seed_slice_expr_for_parse, strip_generics},
+    crate::helpers::{seed_slice_expr_for_parse, strip_generics, typed_seed_slice_expr},
     quote::{format_ident, quote},
     syn::{Ident, Type},
 };
@@ -28,6 +29,7 @@ pub(super) struct InitContext<'a> {
     /// `Sysvar<Rent>` account used by metadata/master edition CPI paths.
     pub rent: Option<&'a Ident>,
     pub field_name_strings: &'a [String],
+    pub instruction_args: &'a Option<Vec<InstructionArg>>,
 }
 
 /// Result of generating an init block.
@@ -42,6 +44,7 @@ fn gen_signers(
     field_name: &Ident,
     attrs: &AccountFieldAttrs,
     field_name_strings: &[String],
+    instruction_args: &Option<Vec<InstructionArg>>,
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     if let Some(seed_exprs) = &attrs.seeds {
         let bump_var = format_ident!("__bumps_{}", field_name);
@@ -53,6 +56,33 @@ fn gen_signers(
             quote! {
                 let __init_bump_ref: &[u8] = &[#bump_var];
                 let __init_signer_seeds = [#(quasar_lang::cpi::Seed::from(#seed_slices),)* quasar_lang::cpi::Seed::from(__init_bump_ref)];
+                let __init_signers = [quasar_lang::cpi::Signer::from(&__init_signer_seeds[..])];
+            },
+            quote! { &__init_signers },
+        )
+    } else if let Some(typed) = &attrs.typed_seeds {
+        let type_path = &typed.type_path;
+        let bump_var = format_ident!("__bumps_{}", field_name);
+
+        // Bind each seed to a let so temporaries (e.g. to_le_bytes()) live long enough.
+        let mut seed_lets = Vec::new();
+        let mut seed_idents = Vec::new();
+        seed_lets
+            .push(quote! { let __init_seed_0: &[u8] = <#type_path as HasSeeds>::SEED_PREFIX; });
+        seed_idents.push(quote! { __init_seed_0 });
+
+        for (i, arg) in typed.args.iter().enumerate() {
+            let ident = format_ident!("__init_seed_{}", i + 1);
+            let expr = typed_seed_slice_expr(arg, field_name_strings, instruction_args);
+            seed_lets.push(quote! { let #ident: &[u8] = #expr; });
+            seed_idents.push(quote! { #ident });
+        }
+
+        (
+            quote! {
+                #(#seed_lets)*
+                let __init_bump_ref: &[u8] = &[#bump_var];
+                let __init_signer_seeds = [#(quasar_lang::cpi::Seed::from(#seed_idents),)* quasar_lang::cpi::Seed::from(__init_bump_ref)];
                 let __init_signers = [quasar_lang::cpi::Signer::from(&__init_signer_seeds[..])];
             },
             quote! { &__init_signers },
@@ -91,6 +121,14 @@ fn gen_init_cpi_body(
 ///   validation (if provided). Declarative field checks such as `has_one`,
 ///   `address`, and `constraint = ...` still run later in the normal parse
 ///   phase after field construction.
+///
+/// ## Re-initialization Safety
+///
+/// If an account was closed and then passed to an `init_if_needed` instruction
+/// within the same transaction, it will be re-initialized. This is by design --
+/// the account's owner is the system program after close, so it appears
+/// uninitialized. Programs that need to prevent same-transaction re-use of
+/// closed accounts should check a separate flag or use an epoch-based guard.
 pub(super) fn wrap_init_block(
     field_name: &Ident,
     init_if_needed: bool,
@@ -132,7 +170,12 @@ pub(super) fn gen_init_block(
         return Ok(None);
     }
 
-    let (signers_setup, signers_ref) = gen_signers(field_name, attrs, ctx.field_name_strings);
+    let (signers_setup, signers_ref) = gen_signers(
+        field_name,
+        attrs,
+        ctx.field_name_strings,
+        ctx.instruction_args,
+    );
     let pay = ctx.payer;
 
     // --- ATA init ---

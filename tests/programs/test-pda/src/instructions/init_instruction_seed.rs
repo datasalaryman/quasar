@@ -4,7 +4,7 @@ use {crate::state::ItemAccount, quasar_lang::prelude::*};
 pub struct InitInstructionSeed<'info> {
     pub payer: &'info mut Signer,
     pub authority: &'info Signer,
-    #[account(init, payer = payer, seeds = [b"item", authority], bump)]
+    #[account(init, payer = payer, seeds = ItemAccount::seeds(authority), bump)]
     pub item: &'info mut Account<ItemAccount>,
     pub system_program: &'info Program<System>,
 }

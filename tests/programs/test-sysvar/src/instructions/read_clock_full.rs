@@ -9,7 +9,7 @@ use {
 #[derive(Accounts)]
 pub struct ReadClockFull<'info> {
     pub payer: &'info mut Signer,
-    #[account(init, payer = payer, seeds = [b"clock_full"], bump)]
+    #[account(init, payer = payer, seeds = ClockFullSnapshot::seeds(), bump)]
     pub snapshot: &'info mut Account<ClockFullSnapshot>,
     pub system_program: &'info Program<System>,
 }

@@ -6,7 +6,7 @@ use {
 #[derive(Accounts)]
 pub struct Create<'info> {
     pub creator: &'info mut Signer,
-    #[account(init, mut, payer = creator, seeds = [b"multisig", creator], bump)]
+    #[account(init, payer = creator, seeds = MultisigConfig::seeds(creator), bump)]
     pub config: Account<MultisigConfig<'info>>,
     pub rent: &'info Sysvar<Rent>,
     pub system_program: &'info Program<System>,
