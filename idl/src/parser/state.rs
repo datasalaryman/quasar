@@ -77,77 +77,93 @@ fn get_account_discriminator(attrs: &[syn::Attribute]) -> Option<Vec<u8>> {
     None
 }
 
-/// Parse `#[seeds(b"prefix", name: Type, ...)]` from struct attributes.
+/// Parse `#[seeds(b"prefix", name: Type, ...)]` from struct attributes using
+/// syn for correct handling of complex types and spacing.
 fn parse_seeds_attr(attrs: &[syn::Attribute]) -> Option<RawTypedSeeds> {
     for attr in attrs {
         if !attr.path().is_ident("seeds") {
             continue;
         }
 
-        let tokens_str = match attr.meta.require_list() {
-            Ok(list) => list.tokens.to_string(),
+        let tokens = match attr.meta.require_list() {
+            Ok(list) => list.tokens.clone(),
             Err(_) => continue,
         };
 
-        // Parse the prefix (first element: byte string literal)
-        let prefix = parse_seed_prefix(&tokens_str)?;
-
-        // Parse dynamic seeds (remaining `name: Type` pairs)
-        let dynamic_seeds = parse_dynamic_seeds(&tokens_str);
+        let parsed: SeedsTokens = match syn::parse2(tokens) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
 
         return Some(RawTypedSeeds {
-            prefix,
-            dynamic_seeds,
+            prefix: parsed.prefix,
+            dynamic_seeds: parsed.dynamic_seeds,
         });
     }
     None
 }
 
-/// Extract the byte string prefix from a seeds attribute token string.
-/// e.g. `b"escrow" , maker : Address` → b"escrow"
-fn parse_seed_prefix(tokens_str: &str) -> Option<Vec<u8>> {
-    let trimmed = tokens_str.trim();
-    // Find b"..."
-    let start = trimmed.find("b\"")?;
-    let after_b_quote = &trimmed[start + 2..];
-    let end_quote = after_b_quote.find('"')?;
-    let prefix_str = &after_b_quote[..end_quote];
-    Some(prefix_str.as_bytes().to_vec())
+/// Internal representation of parsed `#[seeds(...)]` tokens.
+struct SeedsTokens {
+    prefix: Vec<u8>,
+    dynamic_seeds: Vec<(String, String)>,
 }
 
-/// Extract dynamic seed `name: Type` pairs from a seeds token string.
-/// e.g. `b"escrow" , maker : Address` → [("maker", "Address")]
-fn parse_dynamic_seeds(tokens_str: &str) -> Vec<(String, String)> {
-    let trimmed = tokens_str.trim();
-    // Find the end of the byte string prefix
-    let start = match trimmed.find("b\"") {
-        Some(s) => s,
-        None => return vec![],
-    };
-    let after_b_quote = &trimmed[start + 2..];
-    let end_quote = match after_b_quote.find('"') {
-        Some(e) => e,
-        None => return vec![],
-    };
-    // Skip past the prefix and the closing quote
-    let after_prefix = &after_b_quote[end_quote + 1..];
-
-    let mut result = Vec::new();
-    // Split remaining by comma and parse `name : Type` pairs
-    for part in after_prefix.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some(colon_idx) = part.find(':') {
-            let name = part[..colon_idx].trim().to_string();
-            let ty = part[colon_idx + 1..].trim().to_string();
-            if !name.is_empty() && !ty.is_empty() {
-                result.push((name, ty));
+impl syn::parse::Parse for SeedsTokens {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let prefix_expr: syn::Expr = input.parse()?;
+        let prefix = match &prefix_expr {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::ByteStr(b),
+                ..
+            }) => b.value(),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    prefix_expr,
+                    "expected byte string literal",
+                ))
             }
+        };
+        let mut dynamic_seeds = Vec::new();
+        while !input.is_empty() {
+            let _: syn::Token![,] = input.parse()?;
+            if input.is_empty() {
+                break;
+            }
+            let name: syn::Ident = input.parse()?;
+            let _: syn::Token![:] = input.parse()?;
+            let ty: syn::Type = input.parse()?;
+            // Normalize type to string by printing it via syn's Display impl,
+            // which handles spacing consistently.
+            let ty_str = type_to_string(&ty);
+            dynamic_seeds.push((name.to_string(), ty_str));
+        }
+        Ok(SeedsTokens {
+            prefix,
+            dynamic_seeds,
+        })
+    }
+}
+
+/// Convert a syn::Type to a normalized string representation.
+fn type_to_string(ty: &syn::Type) -> String {
+    let tokens = format!("{}", syn::__private::ToTokens::to_token_stream(ty));
+    // Collapse multiple spaces and spaces around :: for consistency
+    let mut result = String::with_capacity(tokens.len());
+    let mut prev_space = false;
+    for c in tokens.chars() {
+        if c.is_whitespace() {
+            if !prev_space && !result.is_empty() {
+                result.push(' ');
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+            result.push(c);
         }
     }
-    result
+    let _ = result.trim_end().to_string();
+    result.trim().to_string()
 }
 
 /// Convert a `RawStateAccount` to an `IdlAccountDef` (for the "accounts"
