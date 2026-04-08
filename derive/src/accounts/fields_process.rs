@@ -13,7 +13,7 @@ use {
     },
     crate::helpers::{
         extract_generic_inner_type, seed_slice_expr_for_parse, strip_generics,
-        typed_seed_slice_expr,
+        typed_seed_method_expr, typed_seed_slice_expr,
     },
     quote::{format_ident, quote},
     syn::{Expr, ExprLit, Ident, Lit, Type},
@@ -1024,12 +1024,11 @@ pub(crate) fn process_fields(
 
             // CPI seed method — generated on the Accounts struct with a
             // bumps parameter. Account keys are referenced live via self,
-            // ix arg captures via bumps.
+            // field access seeds via self, and ix arg captures via bumps.
             let method_name = format_ident!("{}_seeds", field_name);
             // prefix + dynamic args + bump
             let total_seed_count = typed.args.len() + 2;
             let mut seed_elements: Vec<proc_macro2::TokenStream> = Vec::new();
-            let mut has_uncapturable_seeds = false;
 
             // Prefix seed
             seed_elements.push(
@@ -1103,15 +1102,14 @@ pub(crate) fn process_fields(
                     }
                 }
                 if !captured {
-                    // For field accesses and other expressions, re-emit as-is.
-                    // The seed method may not have access; this works for PDA
-                    // verification but CPI signing needs the caller to supply
-                    // signer seeds manually.
+                    // Field access expressions (e.g. config.namespace) and other
+                    // expressions — reference live via self on the Accounts struct.
+                    // On sBPF (little-endian), in-memory representation is LE bytes,
+                    // so this is a zero-cost reference.
                     let seed_expr =
-                        typed_seed_slice_expr(arg, field_name_strings, instruction_args);
+                        typed_seed_method_expr(arg, field_name_strings, instruction_args);
                     seed_elements
                         .push(quote! { quasar_lang::cpi::Seed::from(#seed_expr) });
-                    has_uncapturable_seeds = true;
                 }
             }
 
@@ -1120,18 +1118,12 @@ pub(crate) fn process_fields(
                 quote! { quasar_lang::cpi::Seed::from(&bumps.#bump_arr_field as &[u8]) },
             );
 
-            // Only generate the CPI seed method when all seed components
-            // are resolvable from the Accounts struct and Bumps. Field access
-            // expressions (e.g. config.namespace) are not yet supported in
-            // CPI seed methods.
-            if !has_uncapturable_seeds {
-                seeds_methods.push(quote! {
-                    #[inline(always)]
-                    pub fn #method_name<'a>(&'a self, bumps: &'a #bumps_name) -> [quasar_lang::cpi::Seed<'a>; #total_seed_count] {
-                        [#(#seed_elements),*]
-                    }
-                });
-            }
+            seeds_methods.push(quote! {
+                #[inline(always)]
+                pub fn #method_name<'a>(&'a self, bumps: &'a #bumps_name) -> [quasar_lang::cpi::Seed<'a>; #total_seed_count] {
+                    [#(#seed_elements),*]
+                }
+            });
         }
 
         if is_init_field {

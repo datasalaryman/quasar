@@ -361,6 +361,52 @@ pub(crate) fn typed_seed_slice_expr(
     }
 }
 
+/// Like `typed_seed_slice_expr`, but for use in seed methods on the Accounts
+/// struct. Field access expressions (e.g. `config.namespace`) are prefixed
+/// with `self.` so they resolve to the Accounts struct fields.
+pub(crate) fn typed_seed_method_expr(
+    expr: &Expr,
+    field_names: &[String],
+    instruction_args: &Option<Vec<crate::accounts::InstructionArg>>,
+) -> proc_macro2::TokenStream {
+    match expr {
+        // Bare identifier — should not reach here (handled by caller for
+        // account keys and ix args), but if it does, emit with self prefix
+        // if it's a field name.
+        Expr::Path(ep) if ep.path.segments.len() == 1 && ep.qself.is_none() => {
+            let ident = &ep.path.segments[0].ident;
+            let name = ident.to_string();
+
+            if field_names.contains(&name) {
+                return quote! { self.#ident.to_account_view().address().as_ref() };
+            }
+
+            if let Some(args) = instruction_args {
+                if let Some(arg) = args.iter().find(|a| a.name == *ident) {
+                    return ix_arg_to_seed_bytes(&arg.name, &arg.ty);
+                }
+            }
+
+            quote! { &#ident as &[u8] }
+        }
+
+        // Dotted field access: config.namespace -> self.config.namespace
+        Expr::Field(field_expr) => {
+            quote! {{
+                const _: () = assert!(cfg!(target_endian = "little"), "typed seeds require little-endian");
+                unsafe {
+                    core::slice::from_raw_parts(
+                        &self.#field_expr as *const _ as *const u8,
+                        core::mem::size_of_val(&self.#field_expr),
+                    )
+                }
+            }}
+        }
+
+        _ => quote! { #expr as &[u8] },
+    }
+}
+
 fn ix_arg_to_seed_bytes(name: &syn::Ident, ty: &Type) -> proc_macro2::TokenStream {
     let type_str = quote!(#ty).to_string().replace(' ', "");
     match type_str.as_str() {
