@@ -1,4 +1,7 @@
-use {crate::state::SimpleAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{SimpleAccount, SimpleAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitializeSimple<'info> {
@@ -15,8 +18,11 @@ impl<'info> InitializeSimple<'info> {
         value: u64,
         bumps: &InitializeSimpleBumps,
     ) -> Result<(), ProgramError> {
-        self.account
-            .set_inner(*self.payer.address(), value, bumps.account);
+        self.account.set_inner(SimpleAccountInner {
+            authority: *self.payer.address(),
+            value,
+            bump: bumps.account,
+        });
         Ok(())
     }
 }

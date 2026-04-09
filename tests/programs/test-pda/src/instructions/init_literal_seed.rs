@@ -1,4 +1,7 @@
-use {crate::state::ConfigAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{ConfigAccount, ConfigAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitLiteralSeed<'info> {
@@ -11,7 +14,8 @@ pub struct InitLiteralSeed<'info> {
 impl<'info> InitLiteralSeed<'info> {
     #[inline(always)]
     pub fn handler(&mut self, bumps: &InitLiteralSeedBumps) -> Result<(), ProgramError> {
-        self.config.set_inner(bumps.config);
+        self.config
+            .set_inner(ConfigAccountInner { bump: bumps.config });
         Ok(())
     }
 }

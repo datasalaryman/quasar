@@ -1,4 +1,7 @@
-use {crate::state::ThreeSeedAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{ThreeSeedAccount, ThreeSeedAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitThreeSeeds<'info> {
@@ -13,8 +16,11 @@ pub struct InitThreeSeeds<'info> {
 impl<'info> InitThreeSeeds<'info> {
     #[inline(always)]
     pub fn handler(&mut self, bumps: &InitThreeSeedsBumps) -> Result<(), ProgramError> {
-        self.triple
-            .set_inner(*self.first.address(), *self.second.address(), bumps.triple);
+        self.triple.set_inner(ThreeSeedAccountInner {
+            first: *self.first.address(),
+            second: *self.second.address(),
+            bump: bumps.triple,
+        });
         Ok(())
     }
 }

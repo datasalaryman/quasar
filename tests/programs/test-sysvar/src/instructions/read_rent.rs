@@ -1,5 +1,5 @@
 use {
-    crate::state::RentSnapshot,
+    crate::state::{RentSnapshot, RentSnapshotInner},
     quasar_lang::{
         prelude::*,
         sysvars::{rent::Rent, Sysvar as _},
@@ -19,7 +19,9 @@ impl<'info> ReadRent<'info> {
     pub fn handler(&mut self) -> Result<(), ProgramError> {
         let rent = Rent::get()?;
         let min_balance = rent.minimum_balance_unchecked(100);
-        self.snapshot.set_inner(min_balance);
+        self.snapshot.set_inner(RentSnapshotInner {
+            min_balance_100: min_balance,
+        });
         Ok(())
     }
 }

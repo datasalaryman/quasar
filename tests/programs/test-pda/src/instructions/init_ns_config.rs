@@ -1,4 +1,7 @@
-use {crate::state::NamespaceConfig, quasar_lang::prelude::*};
+use {
+    crate::state::{NamespaceConfig, NamespaceConfigInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitNsConfig<'info> {
@@ -14,7 +17,10 @@ impl<'info> InitNsConfig<'info> {
         namespace: u32,
         bumps: &InitNsConfigBumps,
     ) -> Result<(), ProgramError> {
-        self.config.set_inner(namespace, bumps.config);
+        self.config.set_inner(NamespaceConfigInner {
+            namespace,
+            bump: bumps.config,
+        });
         Ok(())
     }
 }

@@ -1,4 +1,7 @@
-use {crate::state::MaxSeedAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{MaxSeedAccount, MaxSeedAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitMaxSeedLength<'info> {
@@ -11,7 +14,9 @@ pub struct InitMaxSeedLength<'info> {
 impl<'info> InitMaxSeedLength<'info> {
     #[inline(always)]
     pub fn handler(&mut self, bumps: &InitMaxSeedLengthBumps) -> Result<(), ProgramError> {
-        self.max_seed.set_inner(bumps.max_seed);
+        self.max_seed.set_inner(MaxSeedAccountInner {
+            bump: bumps.max_seed,
+        });
         Ok(())
     }
 }

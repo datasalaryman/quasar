@@ -1,4 +1,7 @@
-use {crate::state::ScopedItem, quasar_lang::prelude::*};
+use {
+    crate::state::{ScopedItem, ScopedItemInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 #[instruction(namespace: u32)]
@@ -15,7 +18,11 @@ impl<'info> InitScopedItem<'info> {
         namespace: u32,
         bumps: &InitScopedItemBumps,
     ) -> Result<(), ProgramError> {
-        self.item.set_inner(namespace, 0, bumps.item);
+        self.item.set_inner(ScopedItemInner {
+            namespace,
+            data: 0,
+            bump: bumps.item,
+        });
         Ok(())
     }
 }

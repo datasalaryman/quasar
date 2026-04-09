@@ -1,4 +1,7 @@
-use {crate::state::NoDiscAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{NoDiscAccount, NoDiscAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitNoDisc<'info> {
@@ -11,7 +14,10 @@ pub struct InitNoDisc<'info> {
 impl<'info> InitNoDisc<'info> {
     #[inline(always)]
     pub fn handler(&mut self, value: u64, _bumps: &InitNoDiscBumps) -> Result<(), ProgramError> {
-        self.account.set_inner(*self.payer.address(), value);
+        self.account.set_inner(NoDiscAccountInner {
+            authority: *self.payer.address(),
+            value,
+        });
         Ok(())
     }
 }

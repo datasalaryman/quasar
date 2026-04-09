@@ -1,4 +1,7 @@
-use {crate::state::SimpleAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{SimpleAccount, SimpleAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitIfNeeded<'info> {
@@ -11,8 +14,11 @@ pub struct InitIfNeeded<'info> {
 impl<'info> InitIfNeeded<'info> {
     #[inline(always)]
     pub fn handler(&mut self, value: u64, bumps: &InitIfNeededBumps) -> Result<(), ProgramError> {
-        self.account
-            .set_inner(*self.payer.address(), value, bumps.account);
+        self.account.set_inner(SimpleAccountInner {
+            authority: *self.payer.address(),
+            value,
+            bump: bumps.account,
+        });
         Ok(())
     }
 }

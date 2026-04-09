@@ -1,4 +1,7 @@
-use {crate::state::UserAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{UserAccount, UserAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitPubkeySeed<'info> {
@@ -11,8 +14,11 @@ pub struct InitPubkeySeed<'info> {
 impl<'info> InitPubkeySeed<'info> {
     #[inline(always)]
     pub fn handler(&mut self, value: u64, bumps: &InitPubkeySeedBumps) -> Result<(), ProgramError> {
-        self.user
-            .set_inner(*self.payer.address(), value, bumps.user);
+        self.user.set_inner(UserAccountInner {
+            authority: *self.payer.address(),
+            value,
+            bump: bumps.user,
+        });
         Ok(())
     }
 }

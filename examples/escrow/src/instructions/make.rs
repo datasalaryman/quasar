@@ -1,5 +1,8 @@
 use {
-    crate::{events::MakeEvent, state::Escrow},
+    crate::{
+        events::MakeEvent,
+        state::{Escrow, EscrowInner},
+    },
     quasar_lang::prelude::*,
     quasar_spl::{Mint, Token, TokenCpi},
 };
@@ -24,14 +27,14 @@ pub struct Make<'info> {
 impl<'info> Make<'info> {
     #[inline(always)]
     pub fn make_escrow(&mut self, receive: u64, bumps: &MakeBumps) -> Result<(), ProgramError> {
-        self.escrow.set_inner(
-            *self.maker.address(),
-            *self.mint_a.address(),
-            *self.mint_b.address(),
-            *self.maker_ta_b.address(),
+        self.escrow.set_inner(EscrowInner {
+            maker: *self.maker.address(),
+            mint_a: *self.mint_a.address(),
+            mint_b: *self.mint_b.address(),
+            maker_ta_b: *self.maker_ta_b.address(),
             receive,
-            bumps.escrow,
-        );
+            bump: bumps.escrow,
+        });
         Ok(())
     }
 

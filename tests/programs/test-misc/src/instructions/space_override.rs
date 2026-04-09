@@ -1,4 +1,7 @@
-use {crate::state::SpaceTestAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{SpaceTestAccount, SpaceTestAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct SpaceOverride<'info> {
@@ -11,8 +14,11 @@ pub struct SpaceOverride<'info> {
 impl<'info> SpaceOverride<'info> {
     #[inline(always)]
     pub fn handler(&mut self, value: u64, bumps: &SpaceOverrideBumps) -> Result<(), ProgramError> {
-        self.account
-            .set_inner(*self.payer.address(), value, bumps.account);
+        self.account.set_inner(SpaceTestAccountInner {
+            authority: *self.payer.address(),
+            value,
+            bump: bumps.account,
+        });
         Ok(())
     }
 }

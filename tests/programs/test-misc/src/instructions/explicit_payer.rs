@@ -1,4 +1,7 @@
-use {crate::state::ExplicitPayerAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{ExplicitPayerAccount, ExplicitPayerAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct ExplicitPayer<'info> {
@@ -11,8 +14,11 @@ pub struct ExplicitPayer<'info> {
 impl<'info> ExplicitPayer<'info> {
     #[inline(always)]
     pub fn handler(&mut self, value: u64, bumps: &ExplicitPayerBumps) -> Result<(), ProgramError> {
-        self.account
-            .set_inner(*self.funder.address(), value, bumps.account);
+        self.account.set_inner(ExplicitPayerAccountInner {
+            authority: *self.funder.address(),
+            value,
+            bump: bumps.account,
+        });
         Ok(())
     }
 }

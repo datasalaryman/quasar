@@ -1,5 +1,5 @@
 use {
-    crate::state::MultisigConfig,
+    crate::state::{MultisigConfig, MultisigConfigInner},
     quasar_lang::{prelude::*, remaining::RemainingAccounts},
 };
 
@@ -45,11 +45,13 @@ impl<'info> Create<'info> {
         let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
 
         self.config.set_inner(
-            *self.creator.address(),
-            threshold,
-            bumps.config,
-            "",
-            signers,
+            MultisigConfigInner {
+                creator: *self.creator.address(),
+                threshold,
+                bump: bumps.config,
+                label: "",
+                signers,
+            },
             self.creator.to_account_view(),
             Some(&**self.rent),
         )

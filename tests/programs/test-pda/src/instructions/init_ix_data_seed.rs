@@ -1,4 +1,7 @@
-use {crate::state::IndexedAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{IndexedAccount, IndexedAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 #[instruction(index: u64)]
@@ -13,8 +16,11 @@ pub struct InitIxDataSeed<'info> {
 impl<'info> InitIxDataSeed<'info> {
     #[inline(always)]
     pub fn handler(&mut self, index: u64, bumps: &InitIxDataSeedBumps) -> Result<(), ProgramError> {
-        self.item
-            .set_inner(*self.authority.address(), index, bumps.item);
+        self.item.set_inner(IndexedAccountInner {
+            authority: *self.authority.address(),
+            index,
+            bump: bumps.item,
+        });
         Ok(())
     }
 }

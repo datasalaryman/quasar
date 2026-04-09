@@ -1,4 +1,7 @@
-use {crate::state::EmptySeedAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{EmptySeedAccount, EmptySeedAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitEmptySeed<'info> {
@@ -11,7 +14,8 @@ pub struct InitEmptySeed<'info> {
 impl<'info> InitEmptySeed<'info> {
     #[inline(always)]
     pub fn handler(&mut self, bumps: &InitEmptySeedBumps) -> Result<(), ProgramError> {
-        self.empty.set_inner(bumps.empty);
+        self.empty
+            .set_inner(EmptySeedAccountInner { bump: bumps.empty });
         Ok(())
     }
 }

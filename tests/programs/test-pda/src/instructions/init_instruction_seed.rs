@@ -1,4 +1,7 @@
-use {crate::state::ItemAccount, quasar_lang::prelude::*};
+use {
+    crate::state::{ItemAccount, ItemAccountInner},
+    quasar_lang::prelude::*,
+};
 
 #[derive(Accounts)]
 pub struct InitInstructionSeed<'info> {
@@ -16,7 +19,10 @@ impl<'info> InitInstructionSeed<'info> {
         id: u64,
         bumps: &InitInstructionSeedBumps,
     ) -> Result<(), ProgramError> {
-        self.item.set_inner(id, bumps.item);
+        self.item.set_inner(ItemAccountInner {
+            id,
+            bump: bumps.item,
+        });
         Ok(())
     }
 }

@@ -21,6 +21,7 @@ pub(super) fn generate_fixed_account(
 ) -> TokenStream {
     let vis = &input.vis;
     let attrs = &input.attrs;
+    let inner_name = format_ident!("{}Inner", name);
     let zc_name = format_ident!("{}Zc", name);
     let zc_mod = format_ident!("__{}_zc", pascal_to_snake(&name.to_string()));
 
@@ -144,12 +145,19 @@ pub(super) fn generate_fixed_account(
             );
         }
 
+        // --- Inner struct for named-field initialization ---
+
+        #vis struct #inner_name {
+            #(pub #field_names: #field_types,)*
+        }
+
         // --- set_inner on view type (for mutations after init) ---
 
         impl #name {
             #[inline(always)]
-            pub fn set_inner(&mut self, #(#field_names: #field_types),*) {
+            pub fn set_inner(&mut self, inner: #inner_name) {
                 let __zc = unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_mod::#zc_name) };
+                #(let #field_names = inner.#field_names;)*
                 #(#set_inner_stmts)*
             }
         }

@@ -23,6 +23,7 @@ pub(super) fn generate_dynamic_account(
 ) -> TokenStream {
     let vis = &input.vis;
     let attrs = &input.attrs;
+    let inner_name = format_ident!("{}Inner", name);
     let lt = &input
         .generics
         .lifetimes()
@@ -53,10 +54,10 @@ pub(super) fn generate_dynamic_account(
                 quote! { #fty }
             }
             DynKind::Str { .. } | DynKind::Tail { .. } => {
-                quote! { &str }
+                quote! { &#lt str }
             }
             DynKind::Vec { elem, .. } => {
-                quote! { &[#elem] }
+                quote! { &#lt [#elem] }
             }
         })
         .collect();
@@ -583,12 +584,18 @@ pub(super) fn generate_dynamic_account(
             #(#write_methods)*
         }
 
+        // --- Inner struct for named-field initialization ---
+
+        #vis struct #inner_name<#lt> {
+            #(pub #init_field_names: #init_field_types,)*
+        }
+
         // --- set_inner on view type (writes all fields + reallocs if needed) ---
 
         impl #name<'_> {
             #[inline(always)]
-            #[allow(clippy::too_many_arguments)]
-            pub fn set_inner(&mut self, #(#init_field_names: #init_field_types,)* payer: &AccountView, rent: Option<&Rent>) -> Result<(), ProgramError> {
+            pub fn set_inner(&mut self, inner: #inner_name<'_>, payer: &AccountView, rent: Option<&Rent>) -> Result<(), ProgramError> {
+                #(let #init_field_names = inner.#init_field_names;)*
                 #(#max_checks)*
 
                 let __space = Self::MIN_SPACE #(#space_terms)*;
