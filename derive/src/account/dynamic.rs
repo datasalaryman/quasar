@@ -12,6 +12,7 @@ use {
     syn::DeriveInput,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn generate_dynamic_account(
     name: &syn::Ident,
     disc_bytes: &[syn::LitInt],
