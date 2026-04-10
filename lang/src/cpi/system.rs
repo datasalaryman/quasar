@@ -9,6 +9,12 @@ use {
 declare_id!("11111111111111111111111111111111");
 pub use ID as SYSTEM_PROGRAM_ID;
 
+// System program instruction discriminators (u32 LE in the first 4 bytes).
+const IX_CREATE_ACCOUNT: u8 = 0;
+const IX_ASSIGN: u8 = 1;
+const IX_TRANSFER: u8 = 2;
+const IX_ALLOCATE: u8 = 8;
+
 /// Create a new account via the System program.
 ///
 /// ### Accounts:
@@ -34,10 +40,9 @@ pub fn create_account<'a>(
     let data = unsafe {
         let mut buf = core::mem::MaybeUninit::<[u8; 52]>::uninit();
         let ptr = buf.as_mut_ptr() as *mut u8;
-        // discriminator 0 — four zero bytes
-        core::ptr::write_bytes(ptr, 0, 4);
-        core::ptr::copy_nonoverlapping(lamports.into().to_le_bytes().as_ptr(), ptr.add(4), 8);
-        core::ptr::copy_nonoverlapping(space.to_le_bytes().as_ptr(), ptr.add(12), 8);
+        (ptr as *mut u32).write_unaligned(IX_CREATE_ACCOUNT as u32);
+        (ptr.add(4) as *mut u64).write_unaligned(lamports.into());
+        (ptr.add(12) as *mut u64).write_unaligned(space);
         core::ptr::copy_nonoverlapping(owner.as_ref().as_ptr(), ptr.add(20), 32);
         buf.assume_init()
     };
@@ -74,8 +79,8 @@ pub fn transfer<'a>(
     let data = unsafe {
         let mut buf = core::mem::MaybeUninit::<[u8; 12]>::uninit();
         let ptr = buf.as_mut_ptr() as *mut u8;
-        core::ptr::copy_nonoverlapping(2u32.to_le_bytes().as_ptr(), ptr, 4);
-        core::ptr::copy_nonoverlapping(lamports.into().to_le_bytes().as_ptr(), ptr.add(4), 8);
+        (ptr as *mut u32).write_unaligned(IX_TRANSFER as u32);
+        (ptr.add(4) as *mut u64).write_unaligned(lamports.into());
         buf.assume_init()
     };
 
@@ -106,7 +111,7 @@ pub fn assign<'a>(account: &'a AccountView, owner: &'a Address) -> CpiCall<'a, 1
     let data = unsafe {
         let mut buf = core::mem::MaybeUninit::<[u8; 36]>::uninit();
         let ptr = buf.as_mut_ptr() as *mut u8;
-        core::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), ptr, 4);
+        (ptr as *mut u32).write_unaligned(IX_ASSIGN as u32);
         core::ptr::copy_nonoverlapping(owner.as_ref().as_ptr(), ptr.add(4), 32);
         buf.assume_init()
     };
@@ -137,8 +142,8 @@ pub fn allocate<'a>(account: &'a AccountView, space: u64) -> CpiCall<'a, 1, 12> 
     let data = unsafe {
         let mut buf = core::mem::MaybeUninit::<[u8; 12]>::uninit();
         let ptr = buf.as_mut_ptr() as *mut u8;
-        core::ptr::copy_nonoverlapping(8u32.to_le_bytes().as_ptr(), ptr, 4);
-        core::ptr::copy_nonoverlapping(space.to_le_bytes().as_ptr(), ptr.add(4), 8);
+        (ptr as *mut u32).write_unaligned(IX_ALLOCATE as u32);
+        (ptr.add(4) as *mut u64).write_unaligned(space);
         buf.assume_init()
     };
 

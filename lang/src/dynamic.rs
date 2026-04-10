@@ -147,19 +147,18 @@ impl<'a> TailEncoded<'a> {
 
 /// Convert a validated UTF-8 byte slice to `&str`.
 ///
-/// Dynamic account parsing already validates UTF-8 for string fields. This
-/// helper keeps the accessor path free of UB even if invariants are violated
-/// later by unsafe mutation.
+/// Dynamic account parsing already validates UTF-8 for string fields during
+/// `AccountCheck::check` / `from_account_view`. This accessor skips
+/// re-validation to avoid burning ~1 CU per byte on every field access.
+/// A debug assertion catches mistakes in test builds.
 #[inline(always)]
 pub fn validated_utf8(bytes: &[u8]) -> &str {
-    match core::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(_) => {
-            #[cfg(any(target_os = "solana", target_arch = "bpf"))]
-            crate::abort_program();
-
-            #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]
-            panic!("dynamic account field contains invalid UTF-8");
-        }
-    }
+    debug_assert!(
+        core::str::from_utf8(bytes).is_ok(),
+        "dynamic account field contains invalid UTF-8"
+    );
+    // SAFETY: UTF-8 was validated during account parsing. The only way to
+    // reach this with invalid bytes is via unsafe data_mut_ptr() writes,
+    // which is the caller's responsibility.
+    unsafe { core::str::from_utf8_unchecked(bytes) }
 }

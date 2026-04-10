@@ -28,7 +28,7 @@ pub fn transfer<'a>(
         let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
         let ptr = buf.as_mut_ptr() as *mut u8;
         core::ptr::write(ptr, 3);
-        core::ptr::copy_nonoverlapping(amount.to_le_bytes().as_ptr(), ptr.add(1), 8);
+        (ptr.add(1) as *mut u64).write_unaligned(amount);
         buf.assume_init()
     };
 
