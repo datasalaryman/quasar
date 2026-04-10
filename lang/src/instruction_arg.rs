@@ -20,6 +20,16 @@ pub trait InstructionArg: Sized {
     fn from_zc(zc: &Self::Zc) -> Self;
     /// Convert the native value into its alignment-1 ZC representation.
     fn to_zc(&self) -> Self::Zc;
+
+    /// Validate the raw ZC bytes before calling `from_zc`.
+    ///
+    /// Called by `#[instruction]` codegen on untrusted instruction data.
+    /// The default is a no-op. Override for types with validity constraints
+    /// on their ZC representation (e.g. `Option<T>` rejects tag values > 1).
+    #[inline(always)]
+    fn validate_zc(_zc: &Self::Zc) -> Result<(), crate::prelude::ProgramError> {
+        Ok(())
+    }
 }
 
 // --- Identity impls (already alignment 1) ---
@@ -155,10 +165,20 @@ impl<T: InstructionArg> InstructionArg for Option<T> {
         if zc.tag == 0 {
             None
         } else {
-            // SAFETY: tag != 0 means the value was written by to_zc()
-            // or populated by the SVM instruction data buffer (fully initialized).
+            // SAFETY: tag was validated as 0 or 1 by validate_zc() (called by
+            // codegen before from_zc). Tag == 1 means value was written by
+            // to_zc() or populated by the SVM instruction data buffer.
             Some(T::from_zc(unsafe { zc.value.assume_init_ref() }))
         }
+    }
+
+    /// Reject tag values other than 0 (None) or 1 (Some).
+    #[inline(always)]
+    fn validate_zc(zc: &Self::Zc) -> Result<(), crate::prelude::ProgramError> {
+        if zc.tag > 1 {
+            return Err(crate::prelude::ProgramError::InvalidInstructionData);
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -238,5 +258,118 @@ mod tests {
             core::mem::size_of::<OptionZc<solana_address::Address>>(),
             1 + core::mem::size_of::<solana_address::Address>()
         );
+    }
+
+    #[test]
+    fn option_tag_invalid_rejected() {
+        let zc = OptionZc {
+            tag: 2,
+            value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(42)),
+        };
+        assert!(Option::<u64>::validate_zc(&zc).is_err());
+    }
+
+    #[test]
+    fn option_tag_0xff_rejected() {
+        let zc = OptionZc {
+            tag: 0xFF,
+            value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(42)),
+        };
+        assert!(Option::<u64>::validate_zc(&zc).is_err());
+    }
+
+    #[test]
+    fn option_tag_valid_accepted() {
+        let none_zc = None::<u64>.to_zc();
+        assert!(Option::<u64>::validate_zc(&none_zc).is_ok());
+
+        let some_zc = Some(42u64).to_zc();
+        assert!(Option::<u64>::validate_zc(&some_zc).is_ok());
+    }
+
+    #[test]
+    fn option_none_payload_is_zeroed() {
+        let zc = None::<u64>.to_zc();
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                &zc.value as *const _ as *const u8,
+                core::mem::size_of::<crate::pod::PodU64>(),
+            )
+        };
+        assert!(bytes.iter().all(|&b| b == 0x00));
+    }
+
+    #[test]
+    fn option_nested_round_trip() {
+        let some_some: Option<Option<u64>> = Some(Some(42));
+        let zc = some_some.to_zc();
+        assert_eq!(Option::<Option<u64>>::from_zc(&zc), Some(Some(42)));
+
+        let some_none: Option<Option<u64>> = Some(None);
+        let zc = some_none.to_zc();
+        assert_eq!(Option::<Option<u64>>::from_zc(&zc), Some(None));
+
+        let none: Option<Option<u64>> = None;
+        let zc = none.to_zc();
+        assert_eq!(Option::<Option<u64>>::from_zc(&zc), None);
+    }
+
+    #[test]
+    fn option_nested_size() {
+        // OptionZc<OptionZc<PodU64>> = 1 (outer tag) + 1 (inner tag) + 8 (PodU64) = 10
+        assert_eq!(
+            core::mem::size_of::<OptionZc<OptionZc<crate::pod::PodU64>>>(),
+            10,
+        );
+    }
+
+    #[test]
+    fn option_nested_validate_outer_invalid() {
+        // Outer tag invalid, inner valid
+        let zc = OptionZc {
+            tag: 3,
+            value: core::mem::MaybeUninit::new(Some(42u64).to_zc()),
+        };
+        assert!(Option::<Option<u64>>::validate_zc(&zc).is_err());
+    }
+
+    #[test]
+    fn option_nested_validate_both_valid() {
+        let some_some = Some(Some(42u64)).to_zc();
+        assert!(Option::<Option<u64>>::validate_zc(&some_some).is_ok());
+
+        let some_none = Some(None::<u64>).to_zc();
+        assert!(Option::<Option<u64>>::validate_zc(&some_none).is_ok());
+
+        let none = None::<Option<u64>>.to_zc();
+        assert!(Option::<Option<u64>>::validate_zc(&none).is_ok());
+    }
+
+    #[test]
+    fn validate_zc_noop_for_primitives() {
+        // Primitives always pass validation (default no-op)
+        assert!(u64::validate_zc(&crate::pod::PodU64::from(42)).is_ok());
+        assert!(u8::validate_zc(&0u8).is_ok());
+        assert!(bool::validate_zc(&crate::pod::PodBool::from(true)).is_ok());
+    }
+
+    #[test]
+    fn option_validate_all_boundary_tags() {
+        // Tag 0 and 1 are valid
+        for tag in 0..=1u8 {
+            let zc = OptionZc {
+                tag,
+                value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(0)),
+            };
+            assert!(Option::<u64>::validate_zc(&zc).is_ok(), "tag={tag} should be valid");
+        }
+        // Tags 2..=255 are invalid
+        for tag in 2..=255u8 {
+            let zc = OptionZc {
+                tag,
+                value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(0)),
+            };
+            assert!(Option::<u64>::validate_zc(&zc).is_err(), "tag={tag} should be invalid");
+        }
     }
 }

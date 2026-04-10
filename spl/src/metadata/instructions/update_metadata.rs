@@ -48,11 +48,12 @@ pub fn update_metadata_accounts_v2<'a>(
     cpi.push_account(metadata, false, true)?;
     cpi.push_account(update_authority, true, false)?;
 
-    let data = cpi.data_mut();
     let mut offset = 0;
 
+    // SAFETY: Writing serialized instruction data into the uninitialized buffer.
+    // All bytes [0..offset] are written before set_data_len() is called.
     unsafe {
-        let ptr = data.as_mut_ptr();
+        let ptr = cpi.data_mut() as *mut u8;
 
         core::ptr::write(ptr, UPDATE_METADATA_ACCOUNTS_V2);
         offset += 1;

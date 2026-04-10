@@ -88,8 +88,7 @@ pub(super) fn generate_client_macro(
                             let mut _data = ::alloc::vec![$($disc),*];
                             $(
                                 _data.extend_from_slice(
-                                    &quasar_lang::client::wincode::serialize(&ix.$arg_name)
-                                        .expect("instruction arg serialization")
+                                    &<$arg_ty as quasar_lang::client::SerializeArg>::serialize_arg(&ix.$arg_name)
                                 );
                             )*
                             _data
@@ -119,8 +118,7 @@ pub(super) fn generate_client_macro(
                             let mut _data = ::alloc::vec![$($disc),*];
                             $(
                                 _data.extend_from_slice(
-                                    &quasar_lang::client::wincode::serialize(&ix.$arg_name)
-                                        .expect("instruction arg serialization")
+                                    &<$arg_ty as quasar_lang::client::SerializeArg>::serialize_arg(&ix.$arg_name)
                                 );
                             )*
                             _data

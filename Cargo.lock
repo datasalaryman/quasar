@@ -2316,6 +2316,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quasar-test-heap"
+version = "0.1.0"
+dependencies = [
+ "quasar-lang",
+]
+
+[[package]]
 name = "quasar-test-misc"
 version = "0.1.0"
 dependencies = [
@@ -2340,6 +2347,7 @@ dependencies = [
  "quasar-svm",
  "quasar-test-errors",
  "quasar-test-events",
+ "quasar-test-heap",
  "quasar-test-misc",
  "quasar-test-pda",
  "quasar-test-sysvar",

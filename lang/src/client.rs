@@ -35,6 +35,31 @@ use {
 };
 
 // ---------------------------------------------------------------------------
+// SerializeArg — compile-time dispatch for instruction arg serialization
+// ---------------------------------------------------------------------------
+
+/// Instruction argument serialization for the off-chain client.
+///
+/// Fixed-size types (`u64`, `bool`, `Option<T>`, custom `QuasarSerialize`)
+/// go through `InstructionArg::to_zc()` → raw bytes, guaranteeing the wire
+/// format matches the on-chain zero-copy layout exactly. Dynamic types
+/// (`DynBytes`, `DynVec`, `TailBytes`) use wincode's standard encoding.
+pub trait SerializeArg {
+    fn serialize_arg(&self) -> Vec<u8>;
+}
+
+/// Blanket impl for all fixed-size InstructionArg types.
+impl<T: crate::instruction_arg::InstructionArg> SerializeArg for T
+where
+    T::Zc: SchemaWrite<wincode::config::DefaultConfig, Src = T::Zc>,
+{
+    fn serialize_arg(&self) -> Vec<u8> {
+        let zc = self.to_zc();
+        wincode::serialize(&zc).expect("instruction arg serialization")
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DynBytes<P> — length-prefixed raw byte buffer
 // ---------------------------------------------------------------------------
 
@@ -197,6 +222,35 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for TailBytes {
         }
         dst.write(TailBytes(bytes));
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SerializeArg impls for dynamic types (bypass InstructionArg blanket impl)
+// ---------------------------------------------------------------------------
+
+impl<P> SerializeArg for DynBytes<P>
+where
+    UseIntLen<P>: SeqLen<wincode::config::DefaultConfig>,
+{
+    fn serialize_arg(&self) -> Vec<u8> {
+        wincode::serialize(self).expect("DynBytes serialization")
+    }
+}
+
+impl<T, P> SerializeArg for DynVec<T, P>
+where
+    T: SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+    UseIntLen<P>: SeqLen<wincode::config::DefaultConfig>,
+{
+    fn serialize_arg(&self) -> Vec<u8> {
+        wincode::serialize(self).expect("DynVec serialization")
+    }
+}
+
+impl SerializeArg for TailBytes {
+    fn serialize_arg(&self) -> Vec<u8> {
+        wincode::serialize(self).expect("TailBytes serialization")
     }
 }
 

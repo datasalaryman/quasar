@@ -278,74 +278,48 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
         });
 
         if any_heap {
-            // When any instruction opts into heap, generate inline dispatch
-            // with per-arm cursor initialization instead of using the dispatch!
-            // macro. Heap endpoints get normal cursor init; non-heap endpoints
-            // set cursor past end of heap (clean alloc trap). Debug builds
-            // exempt non-heap endpoints so alloc::format! works in error paths.
-            let inline_arms: Vec<proc_macro2::TokenStream> = arm_disc_tokens
+            // When any instruction opts into heap, build per-arm cursor init
+            // blocks and feed them into the extended dispatch! macro form.
+            // Heap endpoints get normal cursor init; non-heap endpoints poison
+            // the cursor (clean alloc trap). Debug builds exempt non-heap
+            // endpoints so alloc::format! works in error paths.
+            let heap_dispatch_arms: Vec<proc_macro2::TokenStream> = arm_disc_tokens
                 .iter()
                 .zip(arm_fn_names.iter())
                 .zip(arm_accounts_types.iter())
                 .zip(heap_flags.iter())
                 .map(|(((disc_toks, fn_name), accounts_type), &is_heap)| {
                     let cursor_init = if is_heap {
-                        // Heap endpoint: always init cursor normally
                         quote! {
                             #[cfg(feature = "alloc")]
                             {
                                 unsafe {
-                                    *(0x300000000usize as *mut usize) =
-                                        0x300000000usize + core::mem::size_of::<usize>();
+                                    let heap_start = super::allocator::HEAP_START_ADDRESS as usize;
+                                    *(heap_start as *mut usize) =
+                                        heap_start + core::mem::size_of::<usize>();
                                 }
                             }
                         }
                     } else {
-                        // Non-heap endpoint: trap on allocation.
-                        // In debug builds, allow allocation for error formatting.
                         quote! {
                             #[cfg(feature = "alloc")]
                             {
                                 #[cfg(feature = "debug")]
                                 unsafe {
-                                    *(0x300000000usize as *mut usize) =
-                                        0x300000000usize + core::mem::size_of::<usize>();
+                                    let heap_start = super::allocator::HEAP_START_ADDRESS as usize;
+                                    *(heap_start as *mut usize) =
+                                        heap_start + core::mem::size_of::<usize>();
                                 }
                                 #[cfg(not(feature = "debug"))]
                                 unsafe {
-                                    *(0x300000000usize as *mut usize) =
-                                        0x300000000usize + 256 * 1024;
+                                    *(super::allocator::HEAP_START_ADDRESS as *mut usize) =
+                                        super::allocator::HEAP_CURSOR_POISONED;
                                 }
                             }
                         }
                     };
-                    // Replicate the dispatch! macro expansion with cursor init
-                    // injected before the handler call.
                     quote! {
-                        [#(#disc_toks),*] => {
-                            #cursor_init
-                            if (__num_accounts as usize) < <#accounts_type as AccountCount>::COUNT {
-                                return Err(ProgramError::NotEnoughAccountKeys);
-                            }
-                            let mut __buf = core::mem::MaybeUninit::<
-                                [AccountView; <#accounts_type as AccountCount>::COUNT]
-                            >::uninit();
-                            let __remaining_ptr = unsafe {
-                                <#accounts_type>::parse_accounts(
-                                    __accounts_start,
-                                    &mut __buf,
-                                    unsafe { &*(__program_id as *const [u8; 32] as *const Address) },
-                                )?
-                            };
-                            let mut __accounts = unsafe { __buf.assume_init() };
-                            #fn_name(Context {
-                                program_id: __program_id,
-                                accounts: &mut __accounts,
-                                remaining_ptr: __remaining_ptr,
-                                data: instruction_data,
-                                accounts_boundary: unsafe { instruction_data.as_ptr().sub(__U64_SIZE) },
-                            })
-                        }
+                        [#(#disc_toks),*] => { #cursor_init } => #fn_name(#accounts_type)
                     }
                 })
                 .collect();
@@ -353,36 +327,27 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
             items.push(syn::parse_quote! {
                 #[inline(always)]
                 fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
+                    // Initialize cursor to a valid state before the event check.
+                    // __handle_event itself is allocation-free, but this prevents
+                    // UB if it ever changes or if debug error paths allocate.
+                    #[cfg(feature = "alloc")]
+                    unsafe {
+                        let heap_start = super::allocator::HEAP_START_ADDRESS as usize;
+                        *(heap_start as *mut usize) =
+                            heap_start + core::mem::size_of::<usize>();
+                    }
+
                     if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
                         return __handle_event(ptr, instruction_data);
                     }
-                    // Inline dispatch with per-arm heap cursor initialization.
-                    // SAFETY: The SVM appends the 32-byte program ID immediately after
-                    // instruction data in the input buffer.
-                    let __program_id: &[u8; 32] = unsafe {
-                        &*(instruction_data.as_ptr().add(instruction_data.len()) as *const [u8; 32])
-                    };
-                    const __U64_SIZE: usize = core::mem::size_of::<u64>();
-                    // SAFETY: The SVM places the account count (u64) at offset 0.
-                    let __num_accounts = unsafe { *(ptr as *const u64) };
-                    // SAFETY: Skip past the count to reach the first account entry.
-                    let __accounts_start = unsafe { (ptr as *mut u8).add(__U64_SIZE) };
-
-                    if instruction_data.len() < #disc_len_lit {
-                        return Err(ProgramError::InvalidInstructionData);
-                    }
-                    // SAFETY: Length checked above.
-                    let __disc: [u8; #disc_len_lit] = unsafe {
-                        *(instruction_data.as_ptr() as *const [u8; #disc_len_lit])
-                    };
-                    match __disc {
-                        #(#inline_arms),*
-                        _ => Err(ProgramError::InvalidInstructionData),
-                    }
+                    // Per-arm cursor init overrides the safe default above.
+                    dispatch!(ptr, instruction_data, #disc_len_lit, {
+                        #(#heap_dispatch_arms),*
+                    })
                 }
             });
         } else {
-            // No heap annotations — use the dispatch! macro as before
+            // No heap annotations — use the simple dispatch! macro form
             items.push(syn::parse_quote! {
                 #[inline(always)]
                 fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {

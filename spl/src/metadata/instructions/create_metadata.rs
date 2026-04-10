@@ -54,11 +54,12 @@ pub fn create_metadata_accounts_v3<'a>(
     // Borsh-serialize: discriminator + DataV2 + is_mutable + collection_details
     // DataV2 = name(String) + symbol(String) + uri(String) + seller_fee(u16) +
     // creators(Option<Vec>) + collection(Option) + uses(Option)
-    let data = cpi.data_mut();
     let mut offset = 0;
 
+    // SAFETY: Writing serialized instruction data into the uninitialized buffer.
+    // All bytes [0..offset] are written before set_data_len() is called.
     unsafe {
-        let ptr = data.as_mut_ptr();
+        let ptr = cpi.data_mut() as *mut u8;
 
         // Discriminator
         core::ptr::write(ptr, CREATE_METADATA_ACCOUNTS_V3);

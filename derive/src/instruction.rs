@@ -207,7 +207,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const InstructionDataZc) };
             ));
 
-            // Extract fixed fields via InstructionArg::from_zc
+            // Validate and extract fixed fields via InstructionArg
             {
                 let mut zc_idx = 0usize;
                 for (i, kind) in kinds.iter().enumerate() {
@@ -215,6 +215,9 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let name = &field_names[i];
                         let ty = &zc_field_orig_types[zc_idx];
                         zc_idx += 1;
+                        new_stmts.push(syn::parse_quote!(
+                            <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&__zc.#name)?;
+                        ));
                         new_stmts.push(syn::parse_quote!(
                             let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
                         ));

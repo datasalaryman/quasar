@@ -83,3 +83,15 @@ mod test_validate_ata;
 mod test_validate_mint;
 #[cfg(test)]
 mod test_validate_token;
+
+// Option<T> instruction args
+#[cfg(test)]
+mod optional_args;
+
+// InterfaceAccount custom Owners
+#[cfg(test)]
+mod test_interface_migration;
+
+// Heap opt-in
+#[cfg(test)]
+mod test_heap;

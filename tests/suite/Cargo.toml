@@ -19,6 +19,7 @@ quasar-test-events = { path = "../programs/test-events" }
 quasar-test-errors = { path = "../programs/test-errors" }
 quasar-test-token-cpi = { path = "../programs/test-token-cpi" }
 quasar-test-token-validate = { path = "../programs/test-token-validate" }
+quasar-test-heap = { path = "../programs/test-heap", features = ["client"] }
 quasar-test-token-init = { path = "../programs/test-token-init" }
 quasar-spl = { path = "../../spl", features = ["metadata"] }
 quasar-svm = { git = "https://github.com/blueshift-gg/quasar-svm" }

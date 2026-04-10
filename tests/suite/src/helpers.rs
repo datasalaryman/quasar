@@ -271,6 +271,11 @@ pub fn error_test_account(address: Pubkey, authority: Pubkey, value: u64) -> Acc
     )
 }
 
+pub fn svm_heap() -> QuasarSvm {
+    let elf = std::fs::read("../../target/deploy/quasar_test_heap.so").unwrap();
+    QuasarSvm::new().with_program(&quasar_test_heap::ID, &elf)
+}
+
 /// Account with custom lamports (for pre-funded init tests).
 pub fn prefunded_account(address: Pubkey, lamports: u64) -> Account {
     Account {

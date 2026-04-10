@@ -120,3 +120,15 @@ pub use cpi_invoke_ignore_return::*;
 
 pub mod cpi_invoke_missing_return;
 pub use cpi_invoke_missing_return::*;
+
+pub mod option_u64_some;
+pub use option_u64_some::*;
+pub mod option_u64_none;
+pub use option_u64_none::*;
+pub mod option_address_some;
+pub use option_address_some::*;
+pub mod option_address_none;
+pub use option_address_none::*;
+
+pub mod interface_migration_check;
+pub use interface_migration_check::*;

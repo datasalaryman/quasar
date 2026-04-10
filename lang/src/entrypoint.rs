@@ -10,8 +10,20 @@ pub use solana_account_view::{
 
 #[macro_export]
 macro_rules! dispatch {
+    // Simple form — no per-arm pre-handler blocks.
     ($ptr:expr, $ix_data:expr, $disc_len:literal, {
         $([$($disc_byte:literal),+] => $handler:ident($accounts_ty:ty)),+ $(,)?
+    }) => {
+        $crate::dispatch!($ptr, $ix_data, $disc_len, {
+            $([$($disc_byte),+] => {} => $handler($accounts_ty)),+
+        })
+    };
+
+    // Extended form — each arm has an optional block executed before the handler.
+    // Used by `#[program]` codegen when `#[instruction(heap)]` is present to
+    // inject per-arm heap cursor initialization.
+    ($ptr:expr, $ix_data:expr, $disc_len:literal, {
+        $([$($disc_byte:literal),+] => $pre:block => $handler:ident($accounts_ty:ty)),+ $(,)?
     }) => {{
         // SAFETY: The SVM appends the 32-byte program ID immediately after
         // instruction data in the input buffer.
@@ -34,6 +46,7 @@ macro_rules! dispatch {
         match __disc {
             $(
                 [$($disc_byte),+] => {
+                    $pre
                     if (__num_accounts as usize) < <$accounts_ty as AccountCount>::COUNT {
                         return Err(ProgramError::NotEnoughAccountKeys);
                     }
@@ -112,6 +125,15 @@ macro_rules! heap_alloc {
             pub const MAX_HEAP_LENGTH: u32 = 256 * 1024; // 256 KiB
             /// Start address of the memory region used for program heap.
             pub const HEAP_START_ADDRESS: u64 = 0x300000000;
+
+            /// Cursor value that causes the next allocation to fail cleanly.
+            ///
+            /// Used by `#[instruction(heap)]` codegen to trap allocations on
+            /// non-heap endpoints. Setting the cursor to `HEAP_START + MAX_HEAP`
+            /// means the next `alloc()` will see `self.end < end` and return null,
+            /// which the global allocator converts to an abort.
+            pub const HEAP_CURSOR_POISONED: usize =
+                HEAP_START_ADDRESS as usize + MAX_HEAP_LENGTH as usize;
 
             pub struct BumpAllocator {
                 start: usize,

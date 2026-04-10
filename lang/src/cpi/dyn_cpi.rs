@@ -145,13 +145,17 @@ impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> DynCpiCall<'a, MAX_ACCTS
 
     /// Direct access to the data buffer for zero-copy writes.
     ///
-    /// Avoids the double-copy of building data externally then calling
-    /// `set_data()`. Caller must call `set_data_len()` after writing.
+    /// Returns a raw pointer because the buffer contents are logically
+    /// uninitialized — callers must write before reading any byte.
+    /// After writing, call `set_data_len()` with the number of bytes written.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is valid for writes of up to `MAX_DATA` bytes.
+    /// Reading from a byte that has not been written is undefined behavior.
     #[inline(always)]
-    pub fn data_mut(&mut self) -> &mut [u8; MAX_DATA] {
-        // SAFETY: We expose the raw buffer for direct writes.
-        // Caller must set data_len after writing via set_data_len().
-        unsafe { &mut *self.data.as_mut_ptr() }
+    pub fn data_mut(&mut self) -> *mut [u8; MAX_DATA] {
+        self.data.as_mut_ptr()
     }
 
     /// Set the active data length (after writing via `data_mut()`).
@@ -254,5 +258,179 @@ impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> DynCpiCall<'a, MAX_ACCTS
     pub fn instruction_data(&self) -> &[u8] {
         // SAFETY: data[0..data_len] was initialized by set_data or data_mut().
         unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const u8, self.data_len) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use {
+        super::*,
+        solana_account_view::{RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED},
+        solana_address::Address,
+    };
+
+    struct AccountBuffer {
+        inner: std::vec::Vec<u64>,
+    }
+
+    impl AccountBuffer {
+        fn new(data_len: usize) -> Self {
+            let byte_len =
+                core::mem::size_of::<RuntimeAccount>() + data_len + MAX_PERMITTED_DATA_INCREASE;
+            Self {
+                inner: (0..byte_len.div_ceil(8)).map(|_| 0u64).collect(),
+            }
+        }
+
+        fn raw(&mut self) -> *mut RuntimeAccount {
+            self.inner.as_mut_ptr() as *mut RuntimeAccount
+        }
+
+        fn init(
+            &mut self,
+            address: [u8; 32],
+            owner: [u8; 32],
+            data_len: usize,
+            is_signer: bool,
+            is_writable: bool,
+            executable: bool,
+        ) {
+            let raw = self.raw();
+            unsafe {
+                (*raw).borrow_state = NOT_BORROWED;
+                (*raw).is_signer = is_signer as u8;
+                (*raw).is_writable = is_writable as u8;
+                (*raw).executable = executable as u8;
+                (*raw).padding = [0u8; 4];
+                (*raw).address = Address::new_from_array(address);
+                (*raw).owner = Address::new_from_array(owner);
+                (*raw).lamports = 123;
+                (*raw).data_len = data_len as u64;
+            }
+        }
+
+        unsafe fn view(&mut self) -> AccountView {
+            AccountView::new_unchecked(self.raw())
+        }
+    }
+
+    static PROGRAM_ID: Address = Address::new_from_array([0x11; 32]);
+
+    #[test]
+    fn data_mut_write_and_read_back() {
+        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        // SAFETY: Writing 4 bytes into the uninitialized buffer, then reading
+        // only those 4 bytes back via instruction_data().
+        unsafe {
+            let buf = &mut *cpi.data_mut();
+            buf[..4].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        }
+        cpi.set_data_len(4).unwrap();
+        assert_eq!(cpi.instruction_data(), &[0xAA, 0xBB, 0xCC, 0xDD]);
+    }
+
+    #[test]
+    fn push_account_then_set_data_round_trip() {
+        let mut cpi = DynCpiCall::<2, 16>::new(&PROGRAM_ID);
+
+        let mut buf = AccountBuffer::new(0);
+        buf.init([1; 32], [2; 32], 0, true, true, false);
+        let view = unsafe { buf.view() };
+
+        cpi.push_account(&view, true, true).unwrap();
+        cpi.set_data(&[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+        assert_eq!(cpi.instruction_data(), &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn push_account_overflow_returns_error() {
+        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+
+        let mut buf1 = AccountBuffer::new(0);
+        buf1.init([1; 32], [2; 32], 0, true, false, false);
+        let view1 = unsafe { buf1.view() };
+
+        let mut buf2 = AccountBuffer::new(0);
+        buf2.init([3; 32], [4; 32], 0, false, false, false);
+        let view2 = unsafe { buf2.view() };
+
+        assert!(cpi.push_account(&view1, true, false).is_ok());
+        assert!(cpi.push_account(&view2, false, false).is_err());
+    }
+
+    #[test]
+    fn set_data_overflow_returns_error() {
+        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        assert!(cpi.set_data(&[0; 5]).is_err());
+    }
+
+    #[test]
+    fn set_data_exact_capacity() {
+        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        assert!(cpi.set_data(&[0xAA; 4]).is_ok());
+        assert_eq!(cpi.instruction_data(), &[0xAA; 4]);
+    }
+
+    #[test]
+    fn set_data_len_overflow_returns_error() {
+        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        assert!(cpi.set_data_len(5).is_err());
+    }
+
+    #[test]
+    fn set_data_len_exact_capacity() {
+        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        // SAFETY: We're only setting the length; invoke would read these bytes
+        // but we won't invoke — this tests the length validation path.
+        assert!(cpi.set_data_len(4).is_ok());
+    }
+
+    #[test]
+    fn set_data_zero_length() {
+        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        assert!(cpi.set_data(&[]).is_ok());
+        assert_eq!(cpi.instruction_data(), &[]);
+    }
+
+    #[test]
+    fn data_mut_returns_raw_pointer() {
+        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        let ptr = cpi.data_mut();
+        // Verify it's a valid pointer by writing through it.
+        // SAFETY: Writing within the MAX_DATA capacity.
+        unsafe {
+            let buf = &mut *ptr;
+            buf[0] = 0xBE;
+            buf[1] = 0xEF;
+        }
+        cpi.set_data_len(2).unwrap();
+        assert_eq!(cpi.instruction_data(), &[0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn push_account_fills_to_capacity() {
+        let mut cpi = DynCpiCall::<3, 8>::new(&PROGRAM_ID);
+
+        let mut buf0 = AccountBuffer::new(0);
+        let mut buf1 = AccountBuffer::new(0);
+        let mut buf2 = AccountBuffer::new(0);
+        let mut buf3 = AccountBuffer::new(0);
+        buf0.init([1; 32], [0xFF; 32], 0, false, false, false);
+        buf1.init([2; 32], [0xFF; 32], 0, false, false, false);
+        buf2.init([3; 32], [0xFF; 32], 0, false, false, false);
+        buf3.init([4; 32], [0xFF; 32], 0, false, false, false);
+
+        let v0 = unsafe { buf0.view() };
+        let v1 = unsafe { buf1.view() };
+        let v2 = unsafe { buf2.view() };
+        let v3 = unsafe { buf3.view() };
+
+        assert!(cpi.push_account(&v0, false, false).is_ok());
+        assert!(cpi.push_account(&v1, false, false).is_ok());
+        assert!(cpi.push_account(&v2, false, false).is_ok());
+        // 4th push should fail — capacity is 3
+        assert!(cpi.push_account(&v3, false, false).is_err());
     }
 }

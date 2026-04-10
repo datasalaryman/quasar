@@ -122,6 +122,8 @@ build-sbf:
 		echo "Building $$dir (with debug)"; \
 		cargo build-sbf --tools-version $(PLATFORM_TOOLS) --manifest-path "$$dir/Cargo.toml" --features debug,alloc; \
 	done
+	@echo "Building test-heap (alloc only, no debug — tests alloc trap)"
+	cargo build-sbf --tools-version $(PLATFORM_TOOLS) --manifest-path tests/programs/test-heap/Cargo.toml --features alloc
 
 test:
 	@$(MAKE) build
