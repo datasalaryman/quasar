@@ -27,6 +27,23 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let disc_len = disc_bytes.len();
 
+    // Reject multi-byte all-zero discriminators — zeroed instruction data could
+    // accidentally match. Single-byte discriminators are fine (the dispatch
+    // macro's length check rejects empty instruction data).
+    if disc_len > 1
+        && disc_bytes
+            .iter()
+            .all(|lit| matches!(lit.base10_parse::<u8>(), Ok(0)))
+    {
+        return syn::Error::new_spanned(
+            &disc_bytes[0],
+            "instruction discriminator must contain at least one non-zero byte; \
+             all-zero multi-byte discriminators are dangerous because zeroed instruction data would match",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let first_arg = match func.sig.inputs.first() {
         Some(FnArg::Typed(pt)) => pt.clone(),
         _ => {

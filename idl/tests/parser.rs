@@ -311,7 +311,7 @@ fn no_collision_different_kinds() {
         data_structs: vec![],
     };
     // Should not panic
-    let idl = quasar_idl::parser::build_idl(parsed);
+    let idl = quasar_idl::parser::build_idl(parsed).unwrap();
     assert_eq!(idl.instructions.len(), 1);
     assert_eq!(idl.accounts.len(), 1);
 }
@@ -371,7 +371,7 @@ fn build_idl_full_pipeline() {
         data_structs: vec![],
     };
 
-    let idl = quasar_idl::parser::build_idl(parsed);
+    let idl = quasar_idl::parser::build_idl(parsed).unwrap();
 
     // Verify structure
     assert_eq!(idl.address, "ABcDeFgH111111111111111111111111111111111111");
@@ -1537,7 +1537,7 @@ fn ts_codegen_remaining_accounts() {
         has_remaining: true,
     });
 
-    let idl = build_idl(parsed);
+    let idl = build_idl(parsed).unwrap();
     let code = generate_ts_client_kit(&idl);
 
     assert!(code.contains("remainingAccounts?"), "{code}");
@@ -1575,7 +1575,7 @@ fn ts_codegen_prefix_aware_codecs() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let idl = build_idl(parsed);
+    let idl = build_idl(parsed).unwrap();
     let code = generate_ts_client_kit(&idl);
 
     // String<u8, 100> → u8 prefix codec
@@ -1631,7 +1631,7 @@ fn idl_json_has_remaining() {
         has_remaining: false,
     });
 
-    let idl = build_idl(parsed);
+    let idl = build_idl(parsed).unwrap();
     let json = serde_json::to_string_pretty(&idl).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -1676,7 +1676,7 @@ fn idl_json_prefix_bytes_serialization() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let idl = build_idl(parsed);
+    let idl = build_idl(parsed).unwrap();
     let json = serde_json::to_string_pretty(&idl).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 

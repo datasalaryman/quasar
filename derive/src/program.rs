@@ -247,9 +247,7 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 if unsafe { *(ptr as *const u64) } == 0 {
                     return Err(ProgramError::NotEnoughAccountKeys);
                 }
-                // SAFETY: Pointer arithmetic follows the SVM input buffer layout. The u64 casts
-                // for address comparison are technically misaligned (Address is align 1), but SBF
-                // handles unaligned access natively — this 4x u64 compare saves ~20 CU vs memcmp.
+                // SAFETY: Pointer arithmetic follows the SVM input buffer layout.
                 unsafe {
                     let raw = ptr.add(core::mem::size_of::<u64>()) as *const quasar_lang::__internal::RuntimeAccount;
 
@@ -257,13 +255,10 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(ProgramError::MissingRequiredSignature);
                     }
 
-                    let addr = &(*raw).address as *const _ as *const u64;
-                    let expected = super::EventAuthority::ADDRESS.as_ref().as_ptr() as *const u64;
-                    if *addr != *expected
-                        || *addr.add(1) != *expected.add(1)
-                        || *addr.add(2) != *expected.add(2)
-                        || *addr.add(3) != *expected.add(3)
-                    {
+                    if !quasar_lang::keys_eq(
+                        &(*raw).address,
+                        &super::EventAuthority::ADDRESS,
+                    ) {
                         return Err(ProgramError::InvalidSeeds);
                     }
                 }

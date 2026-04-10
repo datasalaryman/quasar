@@ -12,6 +12,14 @@ const _: () = assert!(
     "remaining accounts buffer navigation requires 64-bit usize"
 );
 
+// Guard against upstream ever adding Drop to AccountView. Several code
+// paths use `ptr::read` to create bitwise copies; a Drop impl would cause
+// double-free UB.
+const _: () = assert!(
+    !core::mem::needs_drop::<AccountView>(),
+    "AccountView must not implement Drop — ptr::read copies rely on this"
+);
+
 /// Size of a non-duplicate account entry in the SVM input buffer:
 /// `RuntimeAccount` header + 10 KiB realloc region + u64 padding.
 const ACCOUNT_HEADER: usize = core::mem::size_of::<RuntimeAccount>()
@@ -325,7 +333,10 @@ impl Iterator for RemainingIter<'_> {
                 self.ptr = self.boundary as *mut u8;
                 return Some(Err(QuasarError::RemainingAccountDuplicate.into()));
             }
-            self.resolve_dup(borrow as usize)?
+            match self.resolve_dup(borrow as usize) {
+                Some(v) => v,
+                None => return Some(Err(QuasarError::RemainingAccountDuplicate.into())),
+            }
         };
 
         if self.mode == RemainingMode::Strict && self.has_seen_address(view.address()) {

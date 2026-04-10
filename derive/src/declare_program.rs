@@ -288,19 +288,31 @@ pub fn declare_program(input: TokenStream) -> TokenStream {
             })
             .collect();
 
-        let arg_params: Vec<TokenStream2> = ix
+        let arg_params: Vec<TokenStream2> = match ix
             .args
             .iter()
             .map(|a| {
-                let info = map_idl_type(&a.ty).expect("failed to map IDL type to Rust type");
+                let info = map_idl_type(&a.ty).map_err(|msg| {
+                    syn::Error::new(Span::call_site(), format!("in instruction '{}', arg '{}': {}", ix.name, a.name, msg))
+                })?;
                 let name = Ident::new(&pascal_to_snake(&a.name), Span::call_site());
                 let ty = &info.rust_type;
-                quote! { #name: #ty }
+                Ok(quote! { #name: #ty })
             })
-            .collect();
+            .collect::<Result<Vec<_>, syn::Error>>()
+        {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error().into(),
+        };
 
-        let (data_write, data_size) = generate_data_write(&ix.args, &ix.discriminator)
-            .expect("failed to generate instruction data write code");
+        let (data_write, data_size) = match generate_data_write(&ix.args, &ix.discriminator) {
+            Ok(v) => v,
+            Err(msg) => {
+                return syn::Error::new(Span::call_site(), msg)
+                    .to_compile_error()
+                    .into()
+            }
+        };
 
         // Free function: accounts as &'a AccountView
         let free_acct_params: Vec<TokenStream2> = acct_idents

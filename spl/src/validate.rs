@@ -180,8 +180,11 @@ pub fn validate_ata(
     mint: &Address,
     token_program: &Address,
 ) -> Result<(), ProgramError> {
-    // No allowlist check here — `validate_token_account` (called below)
-    // already verifies `token_program` is SPL Token or Token-2022.
+    // NOTE: We cannot use verify_program_address here as an optimization
+    // because it skips the Ed25519 off-curve check. An attacker could pass an
+    // account at the bump=255 address when that address is ON the curve (has
+    // a private key). The full find_program_address includes the curve check
+    // which ensures the result is a true PDA.
     let (expected, _) = crate::associated_token::get_associated_token_address_with_program(
         wallet,
         mint,

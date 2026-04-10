@@ -52,7 +52,17 @@ pub(crate) fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
         let value = next_discriminant;
-        next_discriminant += 1;
+        next_discriminant = match next_discriminant.checked_add(1) {
+            Some(n) => n,
+            None => {
+                return syn::Error::new_spanned(
+                    &v.ident,
+                    "error code overflow: discriminant exceeds u32::MAX",
+                )
+                .to_compile_error()
+                .into();
+            }
+        };
         match_arms.push(quote! { #value => Ok(#name::#ident) });
     }
 

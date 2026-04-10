@@ -112,10 +112,27 @@ pub fn parse_program(crate_root: &Path) -> ParsedProgram {
 }
 
 /// Build the final `Idl` from parsed program data.
-pub fn build_idl(parsed: ParsedProgram) -> Idl {
-    // Check for discriminator collisions across instructions, accounts, and events
-    check_discriminator_collisions(&parsed);
-    check_instruction_input_name_collision(&parsed);
+///
+/// Returns an error if discriminator collisions or input name collisions are
+/// detected.
+pub fn build_idl(parsed: ParsedProgram) -> Result<Idl, Vec<String>> {
+    let mut errors = Vec::new();
+
+    let collisions = find_discriminator_collisions(&parsed);
+    if !collisions.is_empty() {
+        errors.push("discriminator collisions detected:".to_string());
+        errors.extend(collisions);
+    }
+
+    let name_issues = find_instruction_input_name_collisions(&parsed);
+    if !name_issues.is_empty() {
+        errors.push("duplicate instruction input field names detected:".to_string());
+        errors.extend(name_issues);
+    }
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
 
     let ParsedProgram {
         program_id,
@@ -126,7 +143,7 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
         accounts_structs,
         state_accounts,
         events: raw_events,
-        errors,
+        errors: parsed_errors,
         data_structs,
     } = parsed;
 
@@ -266,7 +283,7 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
         }
     }
 
-    Idl {
+    Ok(Idl {
         address: program_id,
         metadata: IdlMetadata {
             name: program_name,
@@ -278,11 +295,11 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
         accounts: account_defs,
         events: event_defs,
         types: type_defs,
-        errors,
-    }
+        errors: parsed_errors,
+    })
 }
 
-fn check_instruction_input_name_collision(parsed: &ParsedProgram) {
+fn find_instruction_input_name_collisions(parsed: &ParsedProgram) -> Vec<String> {
     let mut issues = Vec::new();
 
     for ix in &parsed.instructions {
@@ -324,13 +341,7 @@ fn check_instruction_input_name_collision(parsed: &ParsedProgram) {
         }
     }
 
-    if !issues.is_empty() {
-        eprintln!("Error: duplicate instruction input field names detected:");
-        for issue in &issues {
-            eprintln!("{}", issue);
-        }
-        std::process::exit(1);
-    }
+    issues
 }
 
 /// Check for discriminator collisions across all instruction, account, and
@@ -396,17 +407,6 @@ pub fn find_discriminator_collisions(parsed: &ParsedProgram) -> Vec<String> {
     }
 
     collisions
-}
-
-fn check_discriminator_collisions(parsed: &ParsedProgram) {
-    let collisions = find_discriminator_collisions(parsed);
-    if !collisions.is_empty() {
-        eprintln!("Error: discriminator collisions detected:");
-        for c in &collisions {
-            eprintln!("{}", c);
-        }
-        std::process::exit(1);
-    }
 }
 
 fn collect_defined_refs(ty: &IdlType, out: &mut BTreeSet<String>) {

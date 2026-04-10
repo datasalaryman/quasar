@@ -410,11 +410,23 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
             }
             _ => format!("\tdata = append(data, input.{}...)\n", name),
         },
-        IdlType::DynString { .. } => format!(
-            "\t{{ b := []byte(input.{n}); var buf [4]byte; binary.LittleEndian.PutUint32(buf[:], \
-             uint32(len(b))); data = append(data, buf[:]...); data = append(data, b...) }}\n",
-            n = name,
-        ),
+        IdlType::DynString { ref string } => match string.prefix_bytes {
+            1 => format!(
+                "\tdata = append(data, byte(len([]byte(input.{n}))))\n\tdata = append(data, \
+                 []byte(input.{n})...)\n",
+                n = name,
+            ),
+            2 => format!(
+                "\t{{ b := []byte(input.{n}); var buf [2]byte; binary.LittleEndian.PutUint16(buf[:], \
+                 uint16(len(b))); data = append(data, buf[:]...); data = append(data, b...) }}\n",
+                n = name,
+            ),
+            _ => format!(
+                "\t{{ b := []byte(input.{n}); var buf [4]byte; binary.LittleEndian.PutUint32(buf[:], \
+                 uint32(len(b))); data = append(data, buf[:]...); data = append(data, b...) }}\n",
+                n = name,
+            ),
+        },
         IdlType::Defined { defined } => {
             if let Some(td) = types.iter().find(|t| t.name == *defined) {
                 let mut result = String::new();
@@ -510,14 +522,12 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 n = name,
             ),
             "f32" => format!(
-                "{t}{n} := math.Float32frombits(binary.LittleEndian.Uint32(data[offset:]))\\
-                 n{t}offset += 4\n",
+                "{t}{n} := math.Float32frombits(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += 4\n",
                 t = t,
                 n = name,
             ),
             "f64" => format!(
-                "{t}{n} := math.Float64frombits(binary.LittleEndian.Uint64(data[offset:]))\\
-                 n{t}offset += 8\n",
+                "{t}{n} := math.Float64frombits(binary.LittleEndian.Uint64(data[offset:]))\n{t}offset += 8\n",
                 t = t,
                 n = name,
             ),
@@ -543,12 +553,26 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 n = name,
             ),
         },
-        IdlType::DynString { .. } => format!(
-            "{t}{n}Len := binary.LittleEndian.Uint32(data[offset:])\n{t}offset += 4\n{t}{n} := \
-             string(data[offset:offset+int({n}Len)])\n{t}offset += int({n}Len)\n",
-            t = t,
-            n = name,
-        ),
+        IdlType::DynString { ref string } => match string.prefix_bytes {
+            1 => format!(
+                "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
+                 string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+            2 => format!(
+                "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset += \
+                 2\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+            _ => format!(
+                "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
+                 4\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+        },
         IdlType::Defined { defined } => {
             if let Some(td) = types.iter().find(|t| t.name == *defined) {
                 let mut result = String::new();
