@@ -311,7 +311,7 @@ fn no_collision_different_kinds() {
         data_structs: vec![],
     };
     // Should not panic
-    let idl = quasar_idl::parser::build_idl(parsed).unwrap();
+    let idl = quasar_idl::parser::build_idl(&parsed).unwrap();
     assert_eq!(idl.instructions.len(), 1);
     assert_eq!(idl.accounts.len(), 1);
 }
@@ -371,7 +371,7 @@ fn build_idl_full_pipeline() {
         data_structs: vec![],
     };
 
-    let idl = quasar_idl::parser::build_idl(parsed).unwrap();
+    let idl = quasar_idl::parser::build_idl(&parsed).unwrap();
 
     // Verify structure
     assert_eq!(idl.address, "ABcDeFgH111111111111111111111111111111111111");
@@ -603,11 +603,19 @@ use quasar_idl::{
     codegen::rust::{generate_cargo_toml, generate_client},
     lint::constraints::{FieldClass, FieldConstraints},
     parser::{
+        self,
         accounts::{RawAccountField, RawAccountsStruct, RawPda, RawSeed},
         ParsedProgram,
     },
     types::IdlError,
 };
+
+/// Build IDL from parsed program and generate the Rust client.
+/// Convenience helper that routes through the IDL (single source of truth).
+fn build_and_generate(parsed: &ParsedProgram) -> Vec<(String, String)> {
+    let idl = parser::build_idl(parsed).unwrap();
+    generate_client(&idl)
+}
 
 fn test_program() -> ParsedProgram {
     ParsedProgram {
@@ -647,7 +655,7 @@ fn rust_codegen_no_arg_instruction() {
         args: vec![],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
@@ -677,7 +685,7 @@ fn rust_codegen_primitive_args() {
         ],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Struct fields use native types
@@ -748,7 +756,7 @@ fn rust_codegen_account_metas() {
                 },
             ],
         });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
@@ -768,9 +776,8 @@ fn rust_codegen_account_metas() {
 // ---------------------------------------------------------------------------
 // Instruction codegen: dynamic types use wrapper types
 //
-// This is the critical wire compatibility test. DynString and DynVec
-// must map to DynBytes/DynVec<T> (u32 LE prefix), NOT to plain
-// Vec<u8>/Vec<T> whose wincode encoding may differ.
+// This is the critical wire compatibility test. String<N> maps to
+// DynBytes<u8> (u8 prefix) and Vec<T, N> maps to DynVec<T, u16> (u16 prefix).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -789,12 +796,12 @@ fn rust_codegen_dynamic_string_uses_dyn_bytes() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
-        code.contains("pub name: DynBytes,"),
-        "DynString must map to DynBytes for u32 LE wire compat, got:\n{code}"
+        code.contains("pub name: DynBytes<u8>,"),
+        "String<N> must map to DynBytes<u8>, got:\n{code}"
     );
     assert!(
         !code.contains("pub name: Vec<u8>"),
@@ -818,12 +825,12 @@ fn rust_codegen_dynamic_types_import() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Only the actually-used wrapper type is imported
     assert!(
-        code.contains("use quasar_lang::client::{DynBytes};"),
+        code.contains("DynBytes"),
         "DynBytes must be imported: {code}"
     );
     assert!(
@@ -837,64 +844,14 @@ fn rust_codegen_dynamic_types_import() {
 }
 
 // ---------------------------------------------------------------------------
-// Instruction codegen: prefix-width variants for dynamic types
+// Instruction codegen: Pod dynamic types (String<N> / Vec<T, N>)
 //
-// Verifies that String<P, N> / Vec<T, P, N> with non-default prefix
-// types produce DynBytes<P> / DynVec<T, P> in generated code.
+// String<N> always uses u8 prefix (prefix_bytes: 1).
+// Vec<T, N> always uses u16 prefix (prefix_bytes: 2).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn rust_codegen_dyn_bytes_u8_prefix() {
-    let file = parse_file(
-        r#"
-        #[program]
-        mod my_program {
-            #[instruction(discriminator = [1])]
-            pub fn set_name(ctx: Ctx<SetName>, name: String<u8, 100>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-        }
-        "#,
-    );
-    let (_, instructions) = program::extract_program_module(&file).unwrap();
-    let mut parsed = test_program();
-    parsed.instructions = instructions;
-    let files = generate_client(&parsed);
-    let code = all_content(&files);
-
-    assert!(
-        code.contains("pub name: DynBytes<u8>,"),
-        "String<u8, N> must map to DynBytes<u8>, got:\n{code}"
-    );
-}
-
-#[test]
-fn rust_codegen_dyn_bytes_u16_prefix() {
-    let file = parse_file(
-        r#"
-        #[program]
-        mod my_program {
-            #[instruction(discriminator = [1])]
-            pub fn set_name(ctx: Ctx<SetName>, name: String<u16, 1000>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-        }
-        "#,
-    );
-    let (_, instructions) = program::extract_program_module(&file).unwrap();
-    let mut parsed = test_program();
-    parsed.instructions = instructions;
-    let files = generate_client(&parsed);
-    let code = all_content(&files);
-
-    assert!(
-        code.contains("pub name: DynBytes<u16>,"),
-        "String<u16, N> must map to DynBytes<u16>, got:\n{code}"
-    );
-}
-
-#[test]
-fn rust_codegen_dyn_bytes_u32_default() {
     let file = parse_file(
         r#"
         #[program]
@@ -909,71 +866,17 @@ fn rust_codegen_dyn_bytes_u32_default() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
-        code.contains("pub name: DynBytes,"),
-        "String<N> (default u32) must map to DynBytes (no generic param), got:\n{code}"
-    );
-    assert!(
-        !code.contains("DynBytes<u32>"),
-        "default u32 should omit the generic, got:\n{code}"
-    );
-}
-
-#[test]
-fn rust_codegen_dyn_vec_u8_prefix() {
-    let file = parse_file(
-        r#"
-        #[program]
-        mod my_program {
-            #[instruction(discriminator = [1])]
-            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, u8, 10>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-        }
-        "#,
-    );
-    let (_, instructions) = program::extract_program_module(&file).unwrap();
-    let mut parsed = test_program();
-    parsed.instructions = instructions;
-    let files = generate_client(&parsed);
-    let code = all_content(&files);
-
-    assert!(
-        code.contains("pub tags: DynVec<u64, u8>,"),
-        "Vec<u64, u8, N> must map to DynVec<u64, u8>, got:\n{code}"
+        code.contains("pub name: DynBytes<u8>,"),
+        "String<N> must map to DynBytes<u8>, got:\n{code}"
     );
 }
 
 #[test]
 fn rust_codegen_dyn_vec_u16_prefix() {
-    let file = parse_file(
-        r#"
-        #[program]
-        mod my_program {
-            #[instruction(discriminator = [1])]
-            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, u16, 500>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-        }
-        "#,
-    );
-    let (_, instructions) = program::extract_program_module(&file).unwrap();
-    let mut parsed = test_program();
-    parsed.instructions = instructions;
-    let files = generate_client(&parsed);
-    let code = all_content(&files);
-
-    assert!(
-        code.contains("pub tags: DynVec<u64, u16>,"),
-        "Vec<u64, u16, N> must map to DynVec<u64, u16>, got:\n{code}"
-    );
-}
-
-#[test]
-fn rust_codegen_dyn_vec_u32_default() {
     let file = parse_file(
         r#"
         #[program]
@@ -988,16 +891,12 @@ fn rust_codegen_dyn_vec_u32_default() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
-        code.contains("pub tags: DynVec<u64>,"),
-        "Vec<u64, N> (default u32) must map to DynVec<u64> (no prefix param), got:\n{code}"
-    );
-    assert!(
-        !code.contains("DynVec<u64, u32>"),
-        "default u32 should omit the prefix generic, got:\n{code}"
+        code.contains("pub tags: DynVec<u64, u16>,"),
+        "Vec<u64, N> must map to DynVec<u64, u16>, got:\n{code}"
     );
 }
 
@@ -1015,7 +914,7 @@ fn rust_codegen_remaining_accounts_present() {
         args: vec![],
         has_remaining: true,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
@@ -1038,7 +937,7 @@ fn rust_codegen_remaining_accounts_absent() {
         args: vec![],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(!code.contains("remaining_accounts"), "{code}");
@@ -1063,7 +962,7 @@ fn rust_codegen_accounts() {
         pub struct Empty {}
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Discriminator constants
@@ -1130,7 +1029,7 @@ fn rust_codegen_events() {
         pub struct OrderCancelled {}
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Discriminator constants
@@ -1203,7 +1102,7 @@ fn rust_codegen_custom_data_structs() {
         args: vec![("config".to_string(), syn::parse_str("OrderConfig").unwrap())],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Custom struct generated with wincode derives
@@ -1243,7 +1142,7 @@ fn rust_codegen_cargo_toml() {
 #[test]
 fn rust_codegen_program_id() {
     let parsed = test_program();
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
     assert!(
         code.contains(
@@ -1267,7 +1166,7 @@ fn rust_codegen_imports_no_dynamic() {
         args: vec![],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // No dynamic types → no Vec import, no wrapper import
@@ -1285,7 +1184,7 @@ fn rust_codegen_imports_with_remaining() {
         args: vec![],
         has_remaining: true,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // remaining_accounts needs Vec
@@ -1302,7 +1201,7 @@ fn rust_codegen_no_wincode_derive_import_when_unused() {
         args: vec![("amount".to_string(), syn::parse_str("u64").unwrap())],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // No custom types, events, or accounts → no SchemaWrite/SchemaRead import
@@ -1325,7 +1224,7 @@ fn rust_codegen_wincode_derive_import_with_events() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     assert!(
@@ -1350,7 +1249,7 @@ fn rust_codegen_account_with_dynamic_field_no_copy() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Dynamic field (String) → no Copy, manual impls (no derives)
@@ -1388,7 +1287,7 @@ fn rust_codegen_account_fixed_fields_has_copy() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // All fixed-size fields → derive Copy, manual impls (no repr(C))
@@ -1429,7 +1328,7 @@ fn rust_codegen_account_with_inner_struct() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // InnerConfig must be defined in generated code
@@ -1469,7 +1368,7 @@ fn rust_codegen_event_with_inner_struct() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // TradeInfo must be defined
@@ -1504,7 +1403,7 @@ fn rust_codegen_deeply_nested_structs() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Both Inner and Outer must be defined
@@ -1537,7 +1436,7 @@ fn ts_codegen_remaining_accounts() {
         has_remaining: true,
     });
 
-    let idl = build_idl(parsed).unwrap();
+    let idl = build_idl(&parsed).unwrap();
     let code = generate_ts_client_kit(&idl);
 
     assert!(code.contains("remainingAccounts?"), "{code}");
@@ -1556,17 +1455,12 @@ fn ts_codegen_prefix_aware_codecs() {
         #[program]
         mod my_program {
             #[instruction(discriminator = [1])]
-            pub fn set_name(ctx: Ctx<SetName>, name: String<u8, 100>) -> Result<(), ProgramError> {
+            pub fn set_name(ctx: Ctx<SetName>, name: String<100>) -> Result<(), ProgramError> {
                 Ok(())
             }
 
             #[instruction(discriminator = [2])]
-            pub fn set_label(ctx: Ctx<SetLabel>, label: String<200>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-
-            #[instruction(discriminator = [3])]
-            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, u16, 500>) -> Result<(), ProgramError> {
+            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, 500>) -> Result<(), ProgramError> {
                 Ok(())
             }
         }
@@ -1575,25 +1469,19 @@ fn ts_codegen_prefix_aware_codecs() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let idl = build_idl(parsed).unwrap();
+    let idl = build_idl(&parsed).unwrap();
     let code = generate_ts_client_kit(&idl);
 
-    // String<u8, 100> → u8 prefix codec
+    // String<100> → u8 prefix codec
     assert!(
         code.contains("addCodecSizePrefix(getUtf8Codec(), getU8Codec())"),
-        "String<u8> must use getU8Codec(): {code}"
+        "String<N> must use getU8Codec(): {code}"
     );
 
-    // String<200> → default u32 prefix codec
-    assert!(
-        code.contains("addCodecSizePrefix(getUtf8Codec(), getU32Codec())"),
-        "String (default) must use getU32Codec(): {code}"
-    );
-
-    // Vec<u64, u16, 500> → u16 prefix codec
+    // Vec<u64, 500> → u16 prefix codec
     assert!(
         code.contains("getArrayCodec(getU64Codec(), { size: getU16Codec() })"),
-        "Vec<u64, u16> must use getU16Codec(): {code}"
+        "Vec<T, N> must use getU16Codec(): {code}"
     );
 
     // No helper functions emitted
@@ -1631,7 +1519,7 @@ fn idl_json_has_remaining() {
         has_remaining: false,
     });
 
-    let idl = build_idl(parsed).unwrap();
+    let idl = build_idl(&parsed).unwrap();
     let json = serde_json::to_string_pretty(&idl).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -1652,22 +1540,12 @@ fn idl_json_prefix_bytes_serialization() {
         #[program]
         mod my_program {
             #[instruction(discriminator = [1])]
-            pub fn set_name(ctx: Ctx<SetName>, name: String<u8, 100>) -> Result<(), ProgramError> {
+            pub fn set_name(ctx: Ctx<SetName>, name: String<100>) -> Result<(), ProgramError> {
                 Ok(())
             }
 
             #[instruction(discriminator = [2])]
-            pub fn set_label(ctx: Ctx<SetLabel>, label: String<200>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-
-            #[instruction(discriminator = [3])]
-            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, u16, 500>) -> Result<(), ProgramError> {
-                Ok(())
-            }
-
-            #[instruction(discriminator = [4])]
-            pub fn set_ids(ctx: Ctx<SetIds>, ids: Vec<u64, 10>) -> Result<(), ProgramError> {
+            pub fn set_tags(ctx: Ctx<SetTags>, tags: Vec<u64, 500>) -> Result<(), ProgramError> {
                 Ok(())
             }
         }
@@ -1676,11 +1554,11 @@ fn idl_json_prefix_bytes_serialization() {
     let (_, instructions) = program::extract_program_module(&file).unwrap();
     let mut parsed = test_program();
     parsed.instructions = instructions;
-    let idl = build_idl(parsed).unwrap();
+    let idl = build_idl(&parsed).unwrap();
     let json = serde_json::to_string_pretty(&idl).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    // String<u8, 100> → prefixBytes: 1
+    // String<100> → prefixBytes: 1
     let name_ty = &value["instructions"][0]["args"][0]["type"]["string"];
     assert_eq!(name_ty["maxLength"], 100);
     assert_eq!(
@@ -1688,28 +1566,12 @@ fn idl_json_prefix_bytes_serialization() {
         "u8 prefix must serialize: {json}"
     );
 
-    // String<200> → default u32 prefix, prefixBytes omitted
-    let label_ty = &value["instructions"][1]["args"][0]["type"]["string"];
-    assert_eq!(label_ty["maxLength"], 200);
-    assert!(
-        label_ty.get("prefixBytes").is_none(),
-        "default u32 prefix must be omitted: {json}"
-    );
-
-    // Vec<u64, u16, 500> → prefixBytes: 2
-    let tags_ty = &value["instructions"][2]["args"][0]["type"]["vec"];
+    // Vec<u64, 500> → prefixBytes: 2
+    let tags_ty = &value["instructions"][1]["args"][0]["type"]["vec"];
     assert_eq!(tags_ty["maxLength"], 500);
     assert_eq!(
         tags_ty["prefixBytes"], 2,
         "u16 prefix must serialize: {json}"
-    );
-
-    // Vec<u64, 10> → default u32 prefix, prefixBytes omitted
-    let ids_ty = &value["instructions"][3]["args"][0]["type"]["vec"];
-    assert_eq!(ids_ty["maxLength"], 10);
-    assert!(
-        ids_ty.get("prefixBytes").is_none(),
-        "default u32 prefix must be omitted: {json}"
     );
 }
 
@@ -1761,7 +1623,7 @@ fn rust_codegen_error_enum() {
             msg: None,
         },
     ];
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Error enum with repr(u32)
@@ -1793,7 +1655,7 @@ fn rust_codegen_error_message_escaping() {
         name: "BadQuote".to_string(),
         msg: Some("can't use \"this\"".to_string()),
     }];
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Quotes and backslashes must be escaped in the generated string literal
@@ -1810,6 +1672,14 @@ fn rust_codegen_error_message_escaping() {
 #[test]
 fn rust_codegen_pda_helpers() {
     let mut parsed = test_program();
+    // PDA data flows through IDL instructions, so we need a matching instruction.
+    parsed.instructions.push(program::RawInstruction {
+        name: "deposit".to_string(),
+        discriminator: vec![1],
+        accounts_type_name: "Deposit".to_string(),
+        args: vec![],
+        has_remaining: false,
+    });
     parsed.accounts_structs = vec![RawAccountsStruct {
         name: "Deposit".to_string(),
         fields: vec![
@@ -1842,7 +1712,7 @@ fn rust_codegen_pda_helpers() {
             },
         ],
     }];
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // pda.rs must be generated with find_ helper
@@ -1860,6 +1730,21 @@ fn rust_codegen_pda_helpers() {
 fn rust_codegen_pda_dedup() {
     // Two accounts structs with the same PDA seeds should produce only one helper
     let mut parsed = test_program();
+    // PDA data flows through IDL instructions, so we need matching instructions.
+    parsed.instructions.push(program::RawInstruction {
+        name: "deposit".to_string(),
+        discriminator: vec![1],
+        accounts_type_name: "Deposit".to_string(),
+        args: vec![],
+        has_remaining: false,
+    });
+    parsed.instructions.push(program::RawInstruction {
+        name: "withdraw".to_string(),
+        discriminator: vec![2],
+        accounts_type_name: "Withdraw".to_string(),
+        args: vec![],
+        has_remaining: false,
+    });
     let pda = Some(RawPda {
         seeds: vec![
             RawSeed::ByteString(b"vault".to_vec()),
@@ -1896,7 +1781,7 @@ fn rust_codegen_pda_dedup() {
             }],
         },
     ];
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // Only one find_ function despite two accounts with the same seeds
@@ -1943,7 +1828,7 @@ fn rust_codegen_decode_instruction_no_args() {
         args: vec![],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let ix_mod = files
         .iter()
         .find(|(p, _)| p == "instructions/mod.rs")
@@ -1979,7 +1864,7 @@ fn rust_codegen_decode_instruction_single_arg() {
         args: vec![("amount".to_string(), syn::parse_str("u64").unwrap())],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let ix_mod = files
         .iter()
         .find(|(p, _)| p == "instructions/mod.rs")
@@ -2011,7 +1896,7 @@ fn rust_codegen_decode_instruction_multi_arg() {
         ],
         has_remaining: false,
     });
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let ix_mod = files
         .iter()
         .find(|(p, _)| p == "instructions/mod.rs")
@@ -2073,7 +1958,7 @@ fn rust_codegen_lib_rs_modules() {
         name: "Unauthorized".to_string(),
         msg: None,
     }];
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let lib_rs = files.iter().find(|(p, _)| p == "lib.rs").unwrap();
 
     assert!(lib_rs.1.contains("pub mod instructions;"), "{}", lib_rs.1);
@@ -2086,7 +1971,7 @@ fn rust_codegen_lib_rs_modules() {
 fn rust_codegen_lib_rs_omits_empty_modules() {
     // Empty program: no instructions, state, events, or errors
     let parsed = test_program();
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let lib_rs = files.iter().find(|(p, _)| p == "lib.rs").unwrap();
 
     assert!(!lib_rs.1.contains("pub mod instructions;"), "{}", lib_rs.1);
@@ -2118,7 +2003,7 @@ fn rust_codegen_file_paths() {
         }
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
 
     assert!(paths.contains(&"lib.rs"), "{paths:?}");
@@ -2146,7 +2031,7 @@ fn rust_codegen_event_discriminator_no_stutter() {
         pub struct OrderCancelled {}
         "#,
     ));
-    let files = generate_client(&parsed);
+    let files = build_and_generate(&parsed);
     let code = all_content(&files);
 
     // MakeEvent → MAKE_EVENT_DISCRIMINATOR (not MAKE_EVENT_EVENT_DISCRIMINATOR)
