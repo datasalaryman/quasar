@@ -1,7 +1,7 @@
 //! Instruction data deserialization helpers for dynamic fields.
 //!
 //! These functions extract variable-length instruction arguments (strings,
-//! byte vectors, tail data) from raw instruction bytes. They are called by
+//! byte vectors) from raw instruction bytes. They are called by
 //! proc-macro-generated `#[instruction]` code.
 //!
 //! Each function uses const generics for the prefix byte width, enabling

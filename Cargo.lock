@@ -2146,6 +2146,7 @@ dependencies = [
  "bs58",
  "const-crypto",
  "proc-macro2",
+ "quasar-idl",
  "quote",
  "serde",
  "serde_json",

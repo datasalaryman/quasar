@@ -166,10 +166,10 @@ fn emit_lib_rs(
         ("pda", has_pdas),
     ];
 
-    let active: Vec<&&str> = modules
+    let active: Vec<&str> = modules
         .iter()
         .filter(|(_, active)| *active)
-        .map(|(name, _)| name)
+        .map(|(name, _)| *name)
         .collect();
 
     if !active.is_empty() {

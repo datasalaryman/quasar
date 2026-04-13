@@ -332,7 +332,7 @@ fn collect_type_refs(ty: &IdlType, idl_types: &[IdlTypeDef], out: &mut HashSet<S
         }
         IdlType::Defined { .. } => {}
         IdlType::DynVec { vec } => collect_type_refs(&vec.items, idl_types, out),
-        _ => {}
+        IdlType::Primitive(_) | IdlType::DynString { .. } => {}
     }
 }
 
