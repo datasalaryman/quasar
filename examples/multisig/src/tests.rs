@@ -8,6 +8,13 @@ use {
     std::println,
 };
 
+const CREATOR: Pubkey = Pubkey::new_from_array([1; 32]);
+const SIGNER1: Pubkey = Pubkey::new_from_array([2; 32]);
+const SIGNER2: Pubkey = Pubkey::new_from_array([3; 32]);
+const SIGNER3: Pubkey = Pubkey::new_from_array([4; 32]);
+const DEPOSITOR: Pubkey = Pubkey::new_from_array([5; 32]);
+const RECIPIENT: Pubkey = Pubkey::new_from_array([6; 32]);
+
 fn setup() -> QuasarSvm {
     let elf = std::fs::read("../../target/deploy/quasar_multisig.so").unwrap();
     QuasarSvm::new().with_program(&crate::ID, &elf)
@@ -56,10 +63,10 @@ fn test_create() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
-    let signer2 = Pubkey::new_unique();
-    let signer3 = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
+    let signer2 = SIGNER2;
+    let signer3 = SIGNER3;
     let (config, _) = Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
 
     let threshold: u8 = 2;
@@ -117,10 +124,10 @@ fn test_deposit() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
-    let signer2 = Pubkey::new_unique();
-    let depositor = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
+    let signer2 = SIGNER2;
+    let depositor = DEPOSITOR;
 
     let (config, config_bump) =
         Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
@@ -159,8 +166,8 @@ fn test_set_label() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
     let (config, config_bump) =
         Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
 
@@ -205,11 +212,11 @@ fn test_execute_transfer() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
-    let signer2 = Pubkey::new_unique();
-    let signer3 = Pubkey::new_unique();
-    let recipient = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
+    let signer2 = SIGNER2;
+    let signer3 = SIGNER3;
+    let recipient = RECIPIENT;
 
     let (config, config_bump) =
         Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
@@ -285,11 +292,11 @@ fn test_execute_transfer_insufficient_signers() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
-    let signer2 = Pubkey::new_unique();
-    let signer3 = Pubkey::new_unique();
-    let recipient = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
+    let signer2 = SIGNER2;
+    let signer3 = SIGNER3;
+    let recipient = RECIPIENT;
 
     let (config, config_bump) =
         Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
@@ -340,9 +347,9 @@ fn test_invalid_utf8_label_rejected() {
     let mut svm = setup();
 
     let system_program = quasar_svm::system_program::ID;
-    let creator = Pubkey::new_unique();
-    let signer1 = Pubkey::new_unique();
-    let depositor = Pubkey::new_unique();
+    let creator = CREATOR;
+    let signer1 = SIGNER1;
+    let depositor = DEPOSITOR;
 
     let (config, config_bump) =
         Pubkey::find_program_address(&[b"multisig", creator.as_ref()], &crate::ID);
