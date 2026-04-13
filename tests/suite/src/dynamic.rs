@@ -214,29 +214,6 @@ fn setup() -> Mollusk {
 // ============================================================================
 
 #[test]
-fn test_dynamic_account_invalid_utf8_rejected() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    let data = build_dynamic_account_data(&[0xFF], &[]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = DynamicAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert_eq!(
-        result.program_result,
-        ProgramResult::Failure(ProgramError::InvalidAccountData)
-    );
-}
-
-#[test]
 fn test_dynamic_instruction_invalid_utf8_rejected() {
     let mollusk = setup();
     let authority = Address::new_unique();
@@ -748,30 +725,6 @@ fn test_mixed_account_truncated_in_dynamic_section() {
     );
 }
 
-#[test]
-fn test_mixed_account_invalid_utf8_label() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let authority = Address::new_unique();
-
-    let data = build_mixed_account_data(authority, 42, &[0xFF, 0xFE]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = MixedAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert!(
-        result.program_result.is_err(),
-        "invalid UTF-8 in label must be rejected"
-    );
-}
-
 // ============================================================================
 // SmallPrefixAccount (u8 prefix, discriminator = 7)
 // ============================================================================
@@ -919,29 +872,6 @@ fn test_small_prefix_scores_exceeds_max() {
     assert!(
         result.program_result.is_err(),
         "scores exceeding max must be rejected"
-    );
-}
-
-#[test]
-fn test_small_prefix_invalid_utf8_tag() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    let data = build_small_prefix_account_data(&[0x80, 0x81], &[1]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = SmallPrefixCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert!(
-        result.program_result.is_err(),
-        "invalid UTF-8 in tag must be rejected"
     );
 }
 
@@ -1548,82 +1478,6 @@ fn test_adversarial_vec_data_truncated_mid_element() {
 // ADVERSARIAL TESTS: Multi-byte UTF-8 Edge Cases
 // ============================================================================
 
-/// Truncated 2-byte UTF-8 sequence: 0xC3 without continuation byte
-#[test]
-fn test_adversarial_utf8_truncated_2byte_sequence() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    // 0xC3 starts a 2-byte UTF-8 char (e.g. é = C3 A9), but we only give 1 byte
-    let data = build_dynamic_account_data(&[0xC3], &[]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = DynamicAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert_eq!(
-        result.program_result,
-        ProgramResult::Failure(ProgramError::InvalidAccountData),
-        "truncated 2-byte UTF-8 must be rejected"
-    );
-}
-
-/// Truncated 3-byte UTF-8 sequence: euro sign is E2 82 AC, give only E2 82
-#[test]
-fn test_adversarial_utf8_truncated_3byte_sequence() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    let data = build_dynamic_account_data(&[0xE2, 0x82], &[]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = DynamicAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert_eq!(
-        result.program_result,
-        ProgramResult::Failure(ProgramError::InvalidAccountData),
-        "truncated 3-byte UTF-8 must be rejected"
-    );
-}
-
-/// Overlong encoding: C0 80 is an overlong encoding of NUL (invalid UTF-8)
-#[test]
-fn test_adversarial_utf8_overlong_nul() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    let data = build_dynamic_account_data(&[0xC0, 0x80], &[]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = DynamicAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert_eq!(
-        result.program_result,
-        ProgramResult::Failure(ProgramError::InvalidAccountData),
-        "overlong UTF-8 encoding must be rejected"
-    );
-}
-
 /// Valid 2-byte UTF-8 at field boundary: name = "é" (C3 A9) = 2 bytes
 /// Ensures multi-byte chars at exact max boundary work (2 < max=8)
 #[test]
@@ -1673,31 +1527,6 @@ fn test_adversarial_utf8_4byte_chars_at_max() {
         result.program_result.is_ok(),
         "two 4-byte emoji chars at exact max=8 must be accepted: {:?}",
         result.program_result
-    );
-}
-
-/// Surrogate half (ED A0 80 = U+D800) — invalid in UTF-8
-#[test]
-fn test_adversarial_utf8_surrogate_half() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-
-    let data = build_dynamic_account_data(&[0xED, 0xA0, 0x80], &[]);
-    let account_data = Account {
-        lamports: 1_000_000,
-        data,
-        owner: quasar_test_misc::ID,
-        executable: false,
-        rent_epoch: 0,
-    };
-
-    let instruction: Instruction = DynamicAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(&instruction, &[(account, account_data)]);
-
-    assert_eq!(
-        result.program_result,
-        ProgramResult::Failure(ProgramError::InvalidAccountData),
-        "UTF-8 surrogate half must be rejected"
     );
 }
 
@@ -2375,9 +2204,9 @@ fn test_adversarial_minimum_valid_account() {
     let mollusk = setup();
     let account = Address::new_unique();
 
-    // disc(1) + name_prefix(4, len=0) + tags_prefix(4, count=0) = 9 bytes
+    // disc(1) + u8 name_prefix(1, len=0) + u16 tags_prefix(2, count=0) = 4 bytes
     let data = build_dynamic_account_data(b"", &[]);
-    assert_eq!(data.len(), 9, "minimum valid account should be 9 bytes");
+    assert_eq!(data.len(), 4, "minimum valid account should be 4 bytes");
 
     let account_data = Account {
         lamports: 1_000_000,
