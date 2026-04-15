@@ -3,7 +3,7 @@
 
 use {
     crate::helpers::{
-        classify_pod_string, classify_pod_vec, extract_generic_inner_type, is_unit_type,
+        classify_lifetime_arg, classify_pod_dynamic, extract_generic_inner_type, is_unit_type,
         InstructionArgs, PodDynField,
     },
     proc_macro::TokenStream,
@@ -135,14 +135,36 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        // Classify each arg as Pod-dynamic or fixed
-        let mut pod_dyns: Vec<Option<PodDynField>> = Vec::with_capacity(remaining.len());
-        for pt in &remaining {
-            pod_dyns.push(classify_pod_string(&pt.ty).or_else(|| classify_pod_vec(&pt.ty)));
+        /// Per-arg classification: fixed ZC, Pod-dynamic, or lifetime decode.
+        ///
+        /// When adding a new variant here, the compiler will force you to
+        /// handle it in every exhaustive `match` below — grep for
+        /// `ArgClass::Fixed =>` to find them all.
+        enum ArgClass {
+            Fixed,
+            PodDyn(PodDynField),
+            Lifetime,
         }
 
-        let has_dynamic = pod_dyns.iter().any(|pd| pd.is_some());
-        let has_fixed = pod_dyns.iter().any(|pd| pd.is_none());
+        impl ArgClass {
+            fn is_fixed(&self) -> bool {
+                matches!(self, ArgClass::Fixed)
+            }
+        }
+
+        let mut arg_classes: Vec<ArgClass> = Vec::with_capacity(remaining.len());
+        for pt in &remaining {
+            if classify_lifetime_arg(&pt.ty) {
+                arg_classes.push(ArgClass::Lifetime);
+            } else if let Some(pd) = classify_pod_dynamic(&pt.ty) {
+                arg_classes.push(ArgClass::PodDyn(pd));
+            } else {
+                arg_classes.push(ArgClass::Fixed);
+            }
+        }
+
+        let has_dynamic = arg_classes.iter().any(|c| !c.is_fixed());
+        let has_fixed = arg_classes.iter().any(|c| c.is_fixed());
 
         // Build ZC struct with ONLY fixed fields, using InstructionArg::Zc
         // for each field type to guarantee alignment 1.
@@ -150,8 +172,8 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut zc_field_types: Vec<proc_macro2::TokenStream> = Vec::new();
         let mut zc_field_orig_types: Vec<syn::Type> = Vec::new();
 
-        for (i, pd) in pod_dyns.iter().enumerate() {
-            if pd.is_none() {
+        for (i, cls) in arg_classes.iter().enumerate() {
+            if cls.is_fixed() {
                 zc_field_names.push(field_names[i].clone());
                 let ty = &remaining[i].ty;
                 zc_field_types
@@ -160,10 +182,10 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        let vec_align_asserts: Vec<proc_macro2::TokenStream> = pod_dyns
+        let vec_align_asserts: Vec<proc_macro2::TokenStream> = arg_classes
             .iter()
-            .filter_map(|pd| match pd {
-                Some(PodDynField::Vec { elem, .. }) => Some(quote! {
+            .filter_map(|cls| match cls {
+                ArgClass::PodDyn(PodDynField::Vec { elem, .. }) => Some(quote! {
                     const _: () = assert!(
                         core::mem::align_of::<#elem>() == 1,
                         "instruction Vec element type must have alignment 1"
@@ -209,8 +231,8 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             // Validate and extract fixed fields via InstructionArg
             {
                 let mut zc_idx = 0usize;
-                for (i, pd) in pod_dyns.iter().enumerate() {
-                    if pd.is_none() {
+                for (i, cls) in arg_classes.iter().enumerate() {
+                    if cls.is_fixed() {
                         let name = &field_names[i];
                         let ty = &zc_field_orig_types[zc_idx];
                         zc_idx += 1;
@@ -225,8 +247,8 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        // Extract dynamic fields with inline prefix reads
-        // String<N> → u8 prefix (1 byte), Vec<T, N> → u16 prefix (2 bytes)
+        // Extract dynamic fields: Pod-dynamic uses read_dynamic_str/vec,
+        // lifetime args use InstructionArgDecode::decode.
         if has_dynamic {
             new_stmts.push(syn::parse_quote!(
                 let __data = #param_ident.data;
@@ -241,37 +263,40 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 ));
             }
 
-            let dyn_count = pod_dyns.iter().filter(|pd| pd.is_some()).count();
+            let dyn_count = arg_classes.iter().filter(|c| !c.is_fixed()).count();
             let mut dyn_idx = 0usize;
 
-            for (i, pd) in pod_dyns.iter().enumerate() {
+            for (i, cls) in arg_classes.iter().enumerate() {
                 let name = &field_names[i];
-                let (read_call, max_lit) = match pd {
-                    None => continue,
-                    Some(PodDynField::Str { max, prefix_bytes }) => (
-                        quote!(quasar_lang::instruction_data::read_dynamic_str::<#prefix_bytes>),
-                        *max,
-                    ),
-                    Some(PodDynField::Vec {
+                let decode_call = match cls {
+                    ArgClass::Fixed => continue,
+                    ArgClass::Lifetime => {
+                        let ty = &remaining[i].ty;
+                        quote!(<#ty as quasar_lang::instruction_arg::InstructionArgDecode<'_>>::decode(__data, __offset)?)
+                    }
+                    ArgClass::PodDyn(PodDynField::Str { max, prefix_bytes }) => {
+                        quote!(quasar_lang::instruction_data::read_dynamic_str::<#prefix_bytes>(__data, __offset, #max)?)
+                    }
+                    ArgClass::PodDyn(PodDynField::Vec {
                         elem,
                         max,
                         prefix_bytes,
-                    }) => (
-                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, #prefix_bytes>),
-                        *max,
-                    ),
+                    }) => {
+                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, #prefix_bytes>(__data, __offset, #max)?)
+                    }
                 };
+
                 dyn_idx += 1;
                 if dyn_idx < dyn_count {
                     new_stmts.push(syn::parse_quote!(
-                        let (#name, __new_offset) = #read_call(__data, __offset, #max_lit)?;
+                        let (#name, __new_offset) = #decode_call;
                     ));
                     new_stmts.push(syn::parse_quote!(
                         __offset = __new_offset;
                     ));
                 } else {
                     new_stmts.push(syn::parse_quote!(
-                        let (#name, _) = #read_call(__data, __offset, #max_lit)?;
+                        let (#name, _) = #decode_call;
                     ));
                 }
             }

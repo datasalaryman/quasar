@@ -114,7 +114,7 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     /// LLVM constant-folds this per monomorphization (e.g., for PFX=2 it
     /// compiles to a 16-bit load).
     #[inline(always)]
-    fn decode_len(&self) -> usize {
+    pub fn decode_len(&self) -> usize {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
         let mut buf = [0u8; 8];
@@ -505,6 +505,50 @@ impl<T: Copy + core::fmt::Debug, const N: usize, const PFX: usize> core::fmt::De
             .field("pfx", &PFX)
             .field("data", &self.as_slice())
             .finish()
+    }
+}
+
+// SchemaWrite / SchemaRead for PodVec — writes/reads the full fixed
+// PFX + N * size_of::<T>() bytes, matching the ZC layout.
+#[cfg(feature = "wincode")]
+unsafe impl<T: Copy, const N: usize, const PFX: usize, C: wincode::config::ConfigCore>
+    wincode::SchemaWrite<C> for PodVec<T, N, PFX>
+{
+    type Src = Self;
+
+    fn size_of(_src: &Self) -> wincode::error::WriteResult<usize> {
+        Ok(core::mem::size_of::<Self>())
+    }
+
+    fn write(
+        mut __writer: impl wincode::io::Writer,
+        src: &Self,
+    ) -> wincode::error::WriteResult<()> {
+        let __bytes = unsafe {
+            core::slice::from_raw_parts(
+                src as *const Self as *const u8,
+                core::mem::size_of::<Self>(),
+            )
+        };
+        __writer.write(__bytes)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "wincode")]
+unsafe impl<'__de, T: Copy, const N: usize, const PFX: usize, C: wincode::config::ConfigCore>
+    wincode::SchemaRead<'__de, C> for PodVec<T, N, PFX>
+{
+    type Dst = Self;
+
+    fn read(
+        mut __reader: impl wincode::io::Reader<'__de>,
+        __dst: &mut core::mem::MaybeUninit<Self>,
+    ) -> wincode::error::ReadResult<()> {
+        let __bytes = __reader.take_scoped(core::mem::size_of::<Self>())?;
+        let __val = unsafe { core::ptr::read_unaligned(__bytes.as_ptr() as *const Self) };
+        __dst.write(__val);
+        Ok(())
     }
 }
 

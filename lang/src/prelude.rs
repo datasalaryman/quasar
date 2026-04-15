@@ -25,7 +25,7 @@ pub use {
         },
         dispatch, emit,
         error::QuasarError,
-        instruction_arg::{InstructionArg, OptionZc},
+        instruction_arg::{InstructionArg, InstructionArgDecode, OptionZc},
         no_alloc, panic_handler,
         pod::{
             PodBool, PodI128, PodI16, PodI32, PodI64, PodString, PodU128, PodU16, PodU32, PodU64,

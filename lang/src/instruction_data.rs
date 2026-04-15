@@ -104,7 +104,11 @@ fn read_prefix<const PREFIX: usize>(data: &[u8], offset: usize) -> usize {
             // SAFETY: Same as above.
             unsafe { core::ptr::read_unaligned(data.as_ptr().add(offset) as *const u32) as usize }
         }
-        // SAFETY: PREFIX is a const generic only instantiated as 1, 2, or 4
+        8 => {
+            // SAFETY: Same as above.
+            unsafe { core::ptr::read_unaligned(data.as_ptr().add(offset) as *const u64) as usize }
+        }
+        // SAFETY: PREFIX is a const generic only instantiated as 1, 2, 4, or 8
         // by the derive macro. This branch is dead code.
         _ => unsafe { core::hint::unreachable_unchecked() },
     }

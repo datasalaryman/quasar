@@ -126,7 +126,7 @@ impl<const N: usize, const PFX: usize> PodString<N, PFX> {
     /// LLVM constant-folds this per monomorphization (e.g., for PFX=1 it
     /// compiles to a single byte load).
     #[inline(always)]
-    fn decode_len(&self) -> usize {
+    pub fn decode_len(&self) -> usize {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
         let mut buf = [0u8; 8];
@@ -401,6 +401,50 @@ impl<const N: usize, const PFX: usize> core::fmt::Debug for PodString<N, PFX> {
 impl<const N: usize, const PFX: usize> core::fmt::Display for PodString<N, PFX> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+// SchemaWrite / SchemaRead for PodString — writes/reads the full fixed
+// PFX + N bytes, matching the ZC layout used by InstructionArg::Zc = Self.
+#[cfg(feature = "wincode")]
+unsafe impl<const N: usize, const PFX: usize, C: wincode::config::ConfigCore>
+    wincode::SchemaWrite<C> for PodString<N, PFX>
+{
+    type Src = Self;
+
+    fn size_of(_src: &Self) -> wincode::error::WriteResult<usize> {
+        Ok(core::mem::size_of::<Self>())
+    }
+
+    fn write(
+        mut __writer: impl wincode::io::Writer,
+        src: &Self,
+    ) -> wincode::error::WriteResult<()> {
+        let __bytes = unsafe {
+            core::slice::from_raw_parts(
+                src as *const Self as *const u8,
+                core::mem::size_of::<Self>(),
+            )
+        };
+        __writer.write(__bytes)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "wincode")]
+unsafe impl<'__de, const N: usize, const PFX: usize, C: wincode::config::ConfigCore>
+    wincode::SchemaRead<'__de, C> for PodString<N, PFX>
+{
+    type Dst = Self;
+
+    fn read(
+        mut __reader: impl wincode::io::Reader<'__de>,
+        __dst: &mut core::mem::MaybeUninit<Self>,
+    ) -> wincode::error::ReadResult<()> {
+        let __bytes = __reader.take_scoped(core::mem::size_of::<Self>())?;
+        let __val = unsafe { core::ptr::read_unaligned(__bytes.as_ptr() as *const Self) };
+        __dst.write(__val);
+        Ok(())
     }
 }
 
