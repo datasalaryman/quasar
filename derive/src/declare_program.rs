@@ -4,14 +4,14 @@
 //! variants), and optional custom struct definitions for cross-program
 //! interaction without runtime IDL parsing.
 //!
-//! Uses canonical IDL types from `quasar_idl::types` — no duplicate
+//! Uses canonical schema types from `quasar_schema` — no duplicate
 //! definitions.
 
 use {
     crate::helpers::pascal_to_snake,
     proc_macro::TokenStream,
     proc_macro2::{Ident, Span, TokenStream as TokenStream2},
-    quasar_idl::types::{Idl, IdlField, IdlType, IdlTypeDef},
+    quasar_schema::{Idl, IdlField, IdlInstruction, IdlType, IdlTypeDef},
     quote::{format_ident, quote},
     std::collections::{HashMap, HashSet},
 };
@@ -308,7 +308,7 @@ fn emit_struct_defs(
 /// Collect all Defined type names referenced (transitively) from instruction
 /// args.
 fn collect_referenced_types(
-    instructions: &[quasar_idl::types::IdlInstruction],
+    instructions: &[IdlInstruction],
     idl_types: &[IdlTypeDef],
 ) -> HashSet<String> {
     let mut referenced = HashSet::new();

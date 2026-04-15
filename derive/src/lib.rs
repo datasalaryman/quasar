@@ -201,7 +201,7 @@ pub fn emit_cpi(input: TokenStream) -> TokenStream {
 /// ```
 ///
 /// All field types must implement wincode's `SchemaWrite` and `SchemaRead`.
-#[proc_macro_derive(QuasarSerialize)]
+#[proc_macro_derive(QuasarSerialize, attributes(max))]
 pub fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
     serialize::derive_quasar_serialize(input)
 }
