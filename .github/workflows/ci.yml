@@ -205,6 +205,10 @@ jobs:
           go-version: '1.25'
           cache: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Force HTTPS for GitHub git dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+          git config --global url."https://github.com/".insteadOf git@github.com:
       - name: Run generated client smoke test
         run: cargo test -p quasar-cli --test generated_clients_smoke -- --nocapture
 
