@@ -1,10 +1,14 @@
 use {
     super::super::{
         resolve::{BumpSyntax, FieldSemantics, FieldShape, PdaConstraint, UserCheckKind},
-        syntax::{render_seed_expr, seeds_to_emit_nodes, SeedEmitNode, SeedRenderContext},
+        syntax::{
+            render_seed_expr, seeds_to_emit_nodes, AccountWrapperKind, SeedEmitNode,
+            SeedRenderContext,
+        },
     },
     crate::helpers::strip_generics,
     quote::{format_ident, quote},
+    std::collections::BTreeMap,
 };
 
 pub(crate) fn emit_parse_body(
@@ -396,6 +400,33 @@ fn emit_seed_bindings_from_nodes(
     ctx: SeedRenderContext,
     name_prefix: &str,
 ) -> SeedBindingParts {
+    let mut rooted_init_bindings = BTreeMap::<String, syn::Ident>::new();
+    let mut root_lets = Vec::new();
+
+    if matches!(ctx, SeedRenderContext::Init) {
+        for node in seeds {
+            let SeedEmitNode::FieldRootedExpr {
+                root_ident,
+                inner_ty: Some(inner_ty),
+                wrapper_kind,
+                ..
+            } = node
+            else {
+                continue;
+            };
+
+            let key = root_ident.to_string();
+            if rooted_init_bindings.contains_key(&key) {
+                continue;
+            }
+
+            let binding_ident = format_ident!("__{}_{}_root_{}", name_prefix, field, root_ident);
+            let typed_cast = emit_root_wrapper_cast(root_ident, inner_ty, wrapper_kind.as_ref());
+            root_lets.push(quote! { let #binding_ident = unsafe { #typed_cast }; });
+            rooted_init_bindings.insert(key, binding_ident);
+        }
+    }
+
     let seed_idents: Vec<syn::Ident> = seeds
         .iter()
         .enumerate()
@@ -406,14 +437,89 @@ fn emit_seed_bindings_from_nodes(
         .iter()
         .zip(seeds.iter())
         .map(|(ident, node)| {
-            let expr = render_seed_expr(node, ctx);
+            let expr = match (ctx, node) {
+                (
+                    SeedRenderContext::Init,
+                    SeedEmitNode::FieldRootedExpr {
+                        expr,
+                        root_ident,
+                        inner_ty: Some(_),
+                        ..
+                    },
+                ) => {
+                    let binding_ident = &rooted_init_bindings[&root_ident.to_string()];
+                    render_expr_with_bound_root(expr, root_ident, binding_ident)
+                }
+                _ => render_seed_expr(node, ctx),
+            };
             quote! { let #ident: &[u8] = #expr; }
         })
         .collect();
 
     SeedBindingParts {
         seed_idents,
-        seed_lets,
+        seed_lets: root_lets.into_iter().chain(seed_lets).collect(),
+    }
+}
+
+fn emit_root_wrapper_cast(
+    root_ident: &syn::Ident,
+    inner_ty: &syn::Type,
+    wrapper_kind: Option<&AccountWrapperKind>,
+) -> proc_macro2::TokenStream {
+    let base_ty = strip_generics(inner_ty);
+    match wrapper_kind {
+        Some(AccountWrapperKind::InterfaceAccount) => {
+            quote! {
+                quasar_lang::accounts::interface_account::InterfaceAccount::<#base_ty>::from_account_view_unchecked(#root_ident)
+            }
+        }
+        _ => {
+            quote! {
+                quasar_lang::accounts::account::Account::<#base_ty>::from_account_view_unchecked(#root_ident)
+            }
+        }
+    }
+}
+
+fn render_expr_with_bound_root(
+    expr: &syn::Expr,
+    root_ident: &syn::Ident,
+    binding_ident: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    match expr {
+        syn::Expr::Path(ep) if ep.path.segments.len() == 1 && ep.qself.is_none() => {
+            let ident = &ep.path.segments[0].ident;
+            if ident == root_ident {
+                quote! { #binding_ident }
+            } else {
+                quote! { #expr }
+            }
+        }
+        syn::Expr::Field(field_expr) => {
+            let base = render_expr_with_bound_root(&field_expr.base, root_ident, binding_ident);
+            let member = &field_expr.member;
+            quote! { (#base).#member }
+        }
+        syn::Expr::Paren(paren_expr) => {
+            let inner = render_expr_with_bound_root(&paren_expr.expr, root_ident, binding_ident);
+            quote! { (#inner) }
+        }
+        syn::Expr::MethodCall(method_call) => {
+            let receiver =
+                render_expr_with_bound_root(&method_call.receiver, root_ident, binding_ident);
+            let method = &method_call.method;
+            let turbofish = &method_call.turbofish;
+            let args: Vec<_> = method_call.args.iter().collect();
+            quote! { (#receiver).#method #turbofish ( #(#args),* ) }
+        }
+        syn::Expr::Reference(reference_expr) => {
+            let inner =
+                render_expr_with_bound_root(&reference_expr.expr, root_ident, binding_ident);
+            let mutability = &reference_expr.mutability;
+            quote! { &#mutability (#inner) }
+        }
+        _ => quote! { #expr },
     }
 }
 
