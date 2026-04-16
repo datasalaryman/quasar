@@ -13,12 +13,7 @@ use {
 /// supported, due to them not being directly serializable in C without length
 /// info
 pub fn generate_c_client(idl: &Idl) -> String {
-    let raw = if idl.metadata.crate_name.is_empty() {
-        &idl.metadata.name
-    } else {
-        &idl.metadata.crate_name
-    };
-    let prefix = raw.replace('-', "_");
+    let prefix = idl.metadata.client_name().replace('-', "_");
     let guard = format!("{}_CLIENT_H", prefix.to_ascii_uppercase());
     let mut out = String::new();
 
