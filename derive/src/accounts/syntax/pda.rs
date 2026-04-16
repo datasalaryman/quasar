@@ -308,8 +308,16 @@ fn render_literal_seed(bytes: &[u8], cast_slice: bool) -> proc_macro2::TokenStre
 
 fn render_expr_as_bytes(expr: &syn::Expr, ctx: SeedRenderContext) -> proc_macro2::TokenStream {
     match ctx {
-        SeedRenderContext::Method => quote! { (self.#expr) as &[u8] },
-        SeedRenderContext::Parse | SeedRenderContext::Init => quote! { (#expr) as &[u8] },
+        SeedRenderContext::Method => {
+            if matches!(expr, syn::Expr::Path(_)) {
+                quote! { quasar_lang::pda::seed_bytes(&(#expr)) }
+            } else {
+                quote! { quasar_lang::pda::seed_bytes(&(self.#expr)) }
+            }
+        }
+        SeedRenderContext::Parse | SeedRenderContext::Init => {
+            quote! { quasar_lang::pda::seed_bytes(&(#expr)) }
+        }
     }
 }
 

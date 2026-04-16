@@ -96,4 +96,9 @@ mod quasar_test_pda {
     ) -> Result<(), ProgramError> {
         ctx.accounts.handler(&ctx.bumps)
     }
+
+    #[instruction(discriminator = 16)]
+    pub fn init_const_seed(ctx: Ctx<InitConstSeed>) -> Result<(), ProgramError> {
+        ctx.accounts.handler(&ctx.bumps)
+    }
 }

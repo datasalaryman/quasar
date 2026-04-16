@@ -351,6 +351,64 @@ pub const fn find_program_address_const(seeds: &[&[u8]], program_id: &Address) -
     (Address::new_from_array(bytes), bump)
 }
 
+/// Seed values that can be borrowed as PDA seed bytes without allocation.
+pub trait SeedBytes {
+    fn as_seed_bytes(&self) -> &[u8];
+}
+
+#[inline(always)]
+pub fn seed_bytes<T: ?Sized + SeedBytes>(value: &T) -> &[u8] {
+    value.as_seed_bytes()
+}
+
+impl<T: ?Sized + SeedBytes> SeedBytes for &T {
+    #[inline(always)]
+    fn as_seed_bytes(&self) -> &[u8] {
+        (*self).as_seed_bytes()
+    }
+}
+
+impl SeedBytes for [u8] {
+    #[inline(always)]
+    fn as_seed_bytes(&self) -> &[u8] {
+        self
+    }
+}
+
+impl<const N: usize> SeedBytes for [u8; N] {
+    #[inline(always)]
+    fn as_seed_bytes(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl SeedBytes for Address {
+    #[inline(always)]
+    fn as_seed_bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+macro_rules! impl_scalar_seed_bytes {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl SeedBytes for $ty {
+                #[inline(always)]
+                fn as_seed_bytes(&self) -> &[u8] {
+                    unsafe {
+                        core::slice::from_raw_parts(
+                            self as *const _ as *const u8,
+                            core::mem::size_of::<Self>(),
+                        )
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_scalar_seed_bytes!(u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, bool);
+
 #[cfg(kani)]
 mod kani_proofs {
     /// `MAX_PDA_SLICES` from the parent module (cfg'd to Solana, so we
