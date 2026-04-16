@@ -1,4 +1,5 @@
 use {
+    super::model::ProgramModel,
     crate::types::{Idl, IdlSeed, IdlType},
     quasar_schema::{snake_to_pascal, to_screaming_snake as pascal_to_screaming_snake},
     std::{
@@ -24,7 +25,36 @@ pub fn generate_ts_client_kit(idl: &Idl) -> String {
     generate_ts(idl, TsTarget::Kit)
 }
 
+pub fn generate_package_json(idl: &Idl) -> String {
+    let model = ProgramModel::new(idl);
+    let codecs_dep = if model.features.needs_codecs {
+        "\n    \"@solana/codecs\": \"^6.2.0\","
+    } else {
+        ""
+    };
+
+    format!(
+        r#"{{
+  "name": "{package_name}",
+  "version": "{version}",
+  "private": true,
+  "exports": {{
+    "./web3.js": "./web3.ts",
+    "./kit": "./kit.ts"
+  }},
+  "dependencies": {{{codecs_dep}
+    "@solana/kit": "^6.0.0",
+    "@solana/web3.js": "git+https://github.com/blueshift-gg/web3.js.git#v2"
+  }}
+}}
+"#,
+        package_name = model.identity.typescript_package,
+        version = idl.metadata.version,
+    )
+}
+
 fn generate_ts(idl: &Idl, target: TsTarget) -> String {
+    let model = ProgramModel::new(idl);
     let mut out = String::new();
     let pdas = collect_pdas(idl);
     let exportable_pda_helpers = pda_helper_lookup(&pdas);
@@ -33,23 +63,10 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     let used = collect_used_codecs(idl);
     let has_dyn_string = used.contains("dynString");
     let has_dyn_vec = used.contains("dynVec");
-    let has_instructions = !idl.instructions.is_empty();
+    let has_instructions = model.features.has_instructions;
     let has_public_key = used.contains("pubkey");
-
-    // Check if any instruction uses PDAs or PDA account seeds
-    let has_pdas = idl
-        .instructions
-        .iter()
-        .any(|ix| ix.accounts.iter().any(|a| a.pda.is_some()));
-    let has_pda_account_seeds = idl.instructions.iter().any(|ix| {
-        ix.accounts.iter().any(|a| {
-            a.pda.as_ref().is_some_and(|pda| {
-                pda.seeds
-                    .iter()
-                    .any(|s| matches!(s, IdlSeed::Account { .. }))
-            })
-        })
-    });
+    let has_pdas = model.features.has_pdas;
+    let has_pda_account_seeds = model.features.has_pda_account_seeds;
 
     // --- Imports ---
     match target {
@@ -57,7 +74,9 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
             if has_instructions {
                 out.push_str("import { Buffer } from \"buffer\";\n");
             }
-            out.push_str("import { Address, TransactionInstruction } from \"@solana/web3.js\";\n");
+            out.push_str(
+                "import { PublicKey, TransactionInstruction } from \"@solana/web3.js\";\n",
+            );
         }
         TsTarget::Kit => {
             let mut kit_imports: Vec<&str> = vec!["type Address", "address"];
@@ -81,8 +100,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     }
 
     // Build codec imports list
-    let has_struct_codec =
-        !idl.types.is_empty() || idl.instructions.iter().any(|ix| !ix.args.is_empty());
+    let has_struct_codec = model.features.needs_codecs;
     let mut codec_imports: Vec<&str> = Vec::new();
     if has_struct_codec {
         codec_imports.push("getStructCodec");
@@ -141,6 +159,11 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
         .expect("write to String");
     }
     out.push('\n');
+
+    if target == TsTarget::Web3js {
+        out.push_str("type Address = PublicKey;\n");
+        out.push_str("const Address = PublicKey;\n\n");
+    }
 
     // --- PublicKey codec helper (web3.js only) ---
     if target == TsTarget::Web3js && has_public_key {
@@ -366,7 +389,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
 
     // === Client class ===
     out.push_str("/* Client */\n");
-    let class_name = format!("{}Client", snake_to_pascal(&idl.metadata.name));
+    let class_name = format!("{}Client", snake_to_pascal(&model.identity.program_name));
     writeln!(out, "export class {} {{", class_name).expect("write to String");
 
     if target == TsTarget::Web3js {
@@ -473,16 +496,19 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
 
     // --- Instruction builders (target-specific) ---
     match target {
-        TsTarget::Web3js => {
-            generate_instruction_builders_web3js(&mut out, idl, &exportable_pda_helpers)
-        }
+        TsTarget::Web3js => generate_instruction_builders_web3js(
+            &mut out,
+            idl,
+            &exportable_pda_helpers,
+            &model.identity.program_name,
+        ),
         TsTarget::Kit => generate_instruction_builders_kit(&mut out, idl, &exportable_pda_helpers),
     }
 
     out.push_str("}\n\n");
 
     if !pdas.is_empty() {
-        emit_pda_helpers(&mut out, &pdas, target, &idl.metadata.name);
+        emit_pda_helpers(&mut out, &pdas, target, &model.identity.program_name);
     }
 
     // === Errors ===
@@ -521,8 +547,9 @@ fn generate_instruction_builders_web3js(
     out: &mut String,
     idl: &Idl,
     exportable_pda_helpers: &HashMap<Vec<IdlSeed>, String>,
+    program_name: &str,
 ) {
-    let class_name = format!("{}Client", snake_to_pascal(&idl.metadata.name));
+    let class_name = format!("{}Client", snake_to_pascal(program_name));
     for ix in &idl.instructions {
         out.push('\n');
         let pascal = snake_to_pascal(&ix.name);

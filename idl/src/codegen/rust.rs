@@ -1,4 +1,5 @@
 use {
+    super::model::ProgramModel,
     crate::types::{Idl, IdlAccountItem, IdlField, IdlSeed, IdlType},
     quasar_schema::{
         camel_to_pascal, camel_to_snake, pascal_to_snake, snake_to_pascal,
@@ -39,12 +40,18 @@ solana-instruction = "3"
     )
 }
 
+pub fn generate_cargo_toml_for_program(model: &ProgramModel<'_>) -> String {
+    generate_cargo_toml(
+        &model.identity.client_name,
+        &model.idl.metadata.version,
+        model.features.has_pdas,
+    )
+}
+
 /// Check whether the IDL has any resolvable PDA annotations.
 /// Used by the CLI to decide whether `generate_cargo_toml` needs PDA deps.
 pub fn has_pdas(idl: &Idl) -> bool {
-    idl.instructions
-        .iter()
-        .any(|ix| ix.accounts.iter().any(|a| a.pda.is_some()))
+    ProgramModel::new(idl).features.has_pdas
 }
 
 /// Generate a standalone Rust client crate from the IDL.
@@ -53,6 +60,7 @@ pub fn has_pdas(idl: &Idl) -> bool {
 /// the client crate `src/` directory (e.g. `"lib.rs"`,
 /// `"instructions/mod.rs"`).
 pub fn generate_client(idl: &Idl) -> Vec<(String, String)> {
+    let model = ProgramModel::new(idl);
     let mut files: Vec<(String, String)> = Vec::new();
 
     // Build type map for custom data types. The IDL already resolved these
@@ -63,15 +71,15 @@ pub fn generate_client(idl: &Idl) -> Vec<(String, String)> {
         .map(|td| (td.name.clone(), td.ty.fields.clone()))
         .collect();
 
-    let has_instructions = !idl.instructions.is_empty();
-    let has_state = !idl.accounts.is_empty();
-    let has_events = !idl.events.is_empty();
-    let has_types = !type_map.is_empty();
-    let has_errors = !idl.errors.is_empty();
+    let has_instructions = model.features.has_instructions;
+    let has_state = model.features.has_accounts;
+    let has_events = model.features.has_events;
+    let has_types = model.features.has_types;
+    let has_errors = model.features.has_errors;
 
     // Collect PDA info for pda.rs generation
     let pdas = collect_pdas(idl);
-    let has_pdas = !pdas.is_empty();
+    let has_pdas = model.features.has_pdas;
 
     // --- lib.rs ---
     files.push((
@@ -726,9 +734,10 @@ fn emit_single_type(
 // ===========================================================================
 
 fn emit_errors(idl: &Idl) -> String {
+    let model = ProgramModel::new(idl);
     let mut out = String::new();
 
-    let enum_name = format!("{}Error", snake_to_pascal(&idl.metadata.name));
+    let enum_name = format!("{}Error", snake_to_pascal(&model.identity.program_name));
 
     out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
     out.push_str("#[repr(u32)]\n");
