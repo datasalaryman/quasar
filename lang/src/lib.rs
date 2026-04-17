@@ -290,6 +290,11 @@ pub mod validation;
 
 pub use crate::pod::{PodString as String, PodVec as Vec};
 
+// Re-export zeropod traits for framework integration.
+pub use zeropod::{
+    ZcElem, ZcField, ZcValidate, ZeroPodCompact, ZeroPodError, ZeroPodFixed, ZeroPodSchema,
+};
+
 /// 32-byte address comparison via four `read_unaligned` u64 words.
 ///
 /// Short-circuits on first mismatch. Uses `read_unaligned` to avoid

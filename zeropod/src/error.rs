@@ -22,3 +22,20 @@ impl core::fmt::Display for ZeroPodError {
         }
     }
 }
+
+#[cfg(feature = "solana-program-error")]
+impl From<ZeroPodError> for solana_program_error::ProgramError {
+    fn from(e: ZeroPodError) -> Self {
+        match e {
+            ZeroPodError::BufferTooSmall => {
+                solana_program_error::ProgramError::InvalidAccountData
+            }
+            ZeroPodError::InvalidLength
+            | ZeroPodError::InvalidBool
+            | ZeroPodError::InvalidTag
+            | ZeroPodError::InvalidDiscriminant
+            | ZeroPodError::InvalidUtf8
+            | ZeroPodError::Overflow => solana_program_error::ProgramError::InvalidAccountData,
+        }
+    }
+}

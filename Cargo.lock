@@ -4682,6 +4682,7 @@ name = "zeropod"
 version = "0.1.0"
 dependencies = [
  "solana-address 2.2.0",
+ "solana-program-error",
  "wincode 0.4.9",
  "zeropod-derive",
 ]
