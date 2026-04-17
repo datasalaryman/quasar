@@ -1,9 +1,10 @@
 //! `#[derive(QuasarSerialize)]` — generates instruction-arg impls.
 //!
 //! **Fixed structs** (no lifetime params, all fields `Copy`):
-//! 1. An alignment-1 ZC companion struct `__NameZc`.
-//! 2. An `InstructionArg` impl for zero-copy deserialization.
-//! 3. Off-chain `SchemaWrite` / `SchemaRead` impls (cfg not-solana).
+//! 1. A hidden `__NameSchema` struct → zeropod generates `__NameSchemaZc`.
+//! 2. A user-visible alias `NameZc = __NameSchemaZc`.
+//! 3. An `InstructionValue` impl (blanket-implies `InstructionArg`).
+//! 4. Off-chain `SchemaWrite` / `SchemaRead` impls (cfg not-solana).
 
 use {
     crate::helpers::{
@@ -68,7 +69,7 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
 
     let schema_name = format_ident!("__{}Schema", name);
     let schema_zc_name = format_ident!("__{}SchemaZc", name);
-    let zc_name = format_ident!("__{}Zc", name);
+    let zc_name = format_ident!("{}Zc", name);
 
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref()).collect();
     let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
@@ -228,6 +229,8 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
             ) -> wincode::error::ReadResult<()> {
                 let __bytes = __reader.take_scoped(core::mem::size_of::<#zc_name #schema_ty_generics>())?;
                 let __zc = unsafe { &*(__bytes.as_ptr() as *const #zc_name #schema_ty_generics) };
+                <#zc_name #schema_ty_generics as quasar_lang::__zeropod::ZcValidate>::validate_ref(__zc)
+                    .map_err(|_| wincode::error::ReadError::InvalidValue("pod validation failed"))?;
                 __dst.write(<Self as quasar_lang::instruction_arg::InstructionValue>::from_pod(__zc));
                 Ok(())
             }

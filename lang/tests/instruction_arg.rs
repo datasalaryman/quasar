@@ -207,8 +207,8 @@ fn nested_custom_struct_round_trip() {
 
 #[test]
 fn nested_custom_struct_validate_recurses() {
-    let bad = __NestedOuterZc::<u64> {
-        inner: __NestedInnerZc {
+    let bad = NestedOuterZc::<u64> {
+        inner: NestedInnerZc {
             maybe_amount: option_zc_with_tag(2, PodU64::from(42)),
         },
         value: PodU64::from(7),
