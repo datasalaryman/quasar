@@ -49,6 +49,8 @@ impl<const N: usize> ZcValidate for [u8; N] {
 impl ZcValidate for PodBool {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
+        // SAFETY: PodBool is #[repr(transparent)] over [u8; 1], alignment 1.
+        // Dereferencing as *const u8 reads the single stored byte.
         let byte = unsafe { *(value as *const PodBool as *const u8) };
         if byte > 1 { Err(ZeroPodError::InvalidBool) } else { Ok(()) }
     }
@@ -88,6 +90,8 @@ impl<T: Copy + ZcValidate> ZcValidate for PodOption<T> {
         match value.raw_tag() {
             0 => Ok(()),
             1 => {
+                // SAFETY: Tag validated as == 1 above, so the MaybeUninit value was
+                // initialized by PodOption::some() or deserialization.
                 let inner = unsafe { value.assume_init_ref() };
                 T::validate_ref(inner)
             }

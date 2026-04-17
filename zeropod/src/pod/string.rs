@@ -66,6 +66,7 @@ impl<const N: usize, const PFX: usize> PodString<N, PFX> {
         let _ = Self::_CAP_CHECK;
         let mut buf = [0u8; 8];
         buf[..PFX].copy_from_slice(&self.len);
+        // Solana programs are 64-bit, so usize == u64 and this cast is lossless.
         u64::from_le_bytes(buf) as usize
     }
 

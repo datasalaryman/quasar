@@ -40,6 +40,7 @@ impl<T: ZcElem, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
         let _ = Self::_CAP_CHECK;
         let mut buf = [0u8; 8];
         buf[..PFX].copy_from_slice(&self.len);
+        // Solana programs are 64-bit, so usize == u64 and this cast is lossless.
         u64::from_le_bytes(buf) as usize
     }
 
@@ -71,6 +72,8 @@ impl<T: ZcElem, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
         let len = self.len();
+        // SAFETY: data[..len] written by push/set methods. MaybeUninit<T> and T have identical
+        // layout. len clamped to N.
         unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const T, len) }
     }
 
