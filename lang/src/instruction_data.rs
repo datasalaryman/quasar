@@ -16,9 +16,9 @@ const _: () = assert!(cfg!(target_endian = "little"));
 
 /// Sequential cursor over raw instruction data.
 ///
-/// This is the canonical low-level decode primitive for instruction-wire
-/// parsing. It intentionally models the wire as declaration-ordered bytes,
-/// not as a split fixed-header + dynamic-tail layout.
+/// Used as the fallback decode path for grouped borrowed instruction args
+/// (types with lifetime parameters like `MintArgs<'a>`). The main
+/// instruction decode path uses zeropod compact layout.
 pub struct InstructionCursor<'a> {
     data: &'a [u8],
     offset: usize,
