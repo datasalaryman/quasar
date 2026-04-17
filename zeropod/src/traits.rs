@@ -50,7 +50,7 @@ impl ZcValidate for PodBool {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
         let byte = unsafe { *(value as *const PodBool as *const u8) };
-        if byte > 1 { Err(ZeroPodError::InvalidData) } else { Ok(()) }
+        if byte > 1 { Err(ZeroPodError::InvalidBool) } else { Ok(()) }
     }
 }
 
@@ -59,9 +59,9 @@ impl ZcValidate for PodBool {
 impl<const N: usize, const PFX: usize> ZcValidate for PodString<N, PFX> {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
-        if value.decode_len() > N { return Err(ZeroPodError::InvalidData); }
+        if value.decode_len() > N { return Err(ZeroPodError::InvalidLength); }
         if core::str::from_utf8(value.as_bytes()).is_err() {
-            return Err(ZeroPodError::InvalidData);
+            return Err(ZeroPodError::InvalidUtf8);
         }
         Ok(())
     }
@@ -72,7 +72,7 @@ impl<const N: usize, const PFX: usize> ZcValidate for PodString<N, PFX> {
 impl<T: Copy + ZcValidate, const N: usize, const PFX: usize> ZcValidate for PodVec<T, N, PFX> {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
-        if value.decode_len() > N { return Err(ZeroPodError::InvalidData); }
+        if value.decode_len() > N { return Err(ZeroPodError::InvalidLength); }
         for item in value.as_slice() {
             T::validate_ref(item)?;
         }
@@ -91,7 +91,7 @@ impl<T: Copy + ZcValidate> ZcValidate for PodOption<T> {
                 let inner = unsafe { value.assume_init_ref() };
                 T::validate_ref(inner)
             }
-            _ => Err(ZeroPodError::InvalidData),
+            _ => Err(ZeroPodError::InvalidTag),
         }
     }
 }

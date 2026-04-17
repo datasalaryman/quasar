@@ -272,3 +272,21 @@ fn podstring_truncate_at_boundary_is_exact() {
     assert_eq!(s.len(), 3);
     assert_eq!(s.as_str(), "h\u{00e9}");
 }
+
+// --- Error variant specificity tests ---
+
+#[test]
+fn error_invalid_bool_variant() {
+    let buf = [2u8]; // bad bool byte
+    let val = unsafe { &*(buf.as_ptr() as *const zeropod::pod::PodBool) };
+    let err = <zeropod::pod::PodBool as zeropod::ZcValidate>::validate_ref(val);
+    assert_eq!(err, Err(zeropod::ZeroPodError::InvalidBool));
+}
+
+#[test]
+fn error_invalid_tag_variant() {
+    let buf = [5u8, 0u8]; // bad option tag
+    let val = unsafe { &*(buf.as_ptr() as *const zeropod::pod::PodOption<u8>) };
+    let err = <zeropod::pod::PodOption<u8> as zeropod::ZcValidate>::validate_ref(val);
+    assert_eq!(err, Err(zeropod::ZeroPodError::InvalidTag));
+}

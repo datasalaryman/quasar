@@ -2,7 +2,11 @@
 pub enum ZeroPodError {
     BufferTooSmall,
     Overflow,
-    InvalidData,
+    InvalidBool,
+    InvalidTag,
+    InvalidDiscriminant,
+    InvalidLength,
+    InvalidUtf8,
 }
 
 impl core::fmt::Display for ZeroPodError {
@@ -10,7 +14,11 @@ impl core::fmt::Display for ZeroPodError {
         match self {
             Self::BufferTooSmall => write!(f, "buffer too small"),
             Self::Overflow => write!(f, "field value exceeds max capacity"),
-            Self::InvalidData => write!(f, "invalid data in buffer"),
+            Self::InvalidBool => write!(f, "invalid bool: byte must be 0 or 1"),
+            Self::InvalidTag => write!(f, "invalid option tag: byte must be 0 or 1"),
+            Self::InvalidDiscriminant => write!(f, "invalid enum discriminant"),
+            Self::InvalidLength => write!(f, "stored length exceeds capacity"),
+            Self::InvalidUtf8 => write!(f, "invalid UTF-8 in string field"),
         }
     }
 }

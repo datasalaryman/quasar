@@ -89,3 +89,10 @@ fn enum_zc_eq_repr() {
     let zc = Status::from_bytes(&buf).unwrap();
     assert!(*zc == 1u8); // PartialEq with repr type
 }
+
+#[test]
+fn error_invalid_discriminant_variant() {
+    let buf = [99u8]; // bad discriminant
+    let err = Status::validate(&buf);
+    assert_eq!(err, Err(zeropod::ZeroPodError::InvalidDiscriminant));
+}

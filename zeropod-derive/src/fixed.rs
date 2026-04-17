@@ -167,7 +167,7 @@ pub fn generate_enum(input: &syn::DeriveInput) -> TokenStream {
                 let v = value.get();
                 match v {
                     #( #valid_arms )|* => Ok(()),
-                    _ => Err(zeropod::ZeroPodError::InvalidData),
+                    _ => Err(zeropod::ZeroPodError::InvalidDiscriminant),
                 }
             }
         }
@@ -240,7 +240,7 @@ pub fn generate_enum(input: &syn::DeriveInput) -> TokenStream {
                 let val = self.get();
                 match val {
                     #( #valid_arms => Ok(#enum_name::#variant_names), )*
-                    _ => Err(zeropod::ZeroPodError::InvalidData),
+                    _ => Err(zeropod::ZeroPodError::InvalidDiscriminant),
                 }
             }
 

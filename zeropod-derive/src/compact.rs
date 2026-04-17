@@ -91,7 +91,7 @@ fn generate_trait_impl(schema: &Schema, header_name: &syn::Ident) -> TokenStream
                 validations.push(quote! {
                     let #len_name = #read_len;
                     if #len_name > #max_lit {
-                        return Err(zeropod::ZeroPodError::InvalidData);
+                        return Err(zeropod::ZeroPodError::InvalidLength);
                     }
                 });
                 tail_size_exprs.push(quote! { #len_name });
@@ -104,7 +104,7 @@ fn generate_trait_impl(schema: &Schema, header_name: &syn::Ident) -> TokenStream
                 validations.push(quote! {
                     let #len_name = #read_len;
                     if #len_name > #max_lit {
-                        return Err(zeropod::ZeroPodError::InvalidData);
+                        return Err(zeropod::ZeroPodError::InvalidLength);
                     }
                 });
                 tail_size_exprs.push(quote! {
@@ -122,7 +122,7 @@ fn generate_trait_impl(schema: &Schema, header_name: &syn::Ident) -> TokenStream
         quote! {
             let __total_tail: usize = 0 #( + #tail_size_exprs )*;
             if core::mem::size_of::<#header_name>() + __total_tail > data.len() {
-                return Err(zeropod::ZeroPodError::InvalidData);
+                return Err(zeropod::ZeroPodError::BufferTooSmall);
             }
         }
     };
@@ -139,7 +139,7 @@ fn generate_trait_impl(schema: &Schema, header_name: &syn::Ident) -> TokenStream
                 {
                     let __str_offset = core::mem::size_of::<#header_name>() #( + #preceding_exprs )*;
                     if core::str::from_utf8(&data[__str_offset..__str_offset + #len_name]).is_err() {
-                        return Err(zeropod::ZeroPodError::InvalidData);
+                        return Err(zeropod::ZeroPodError::InvalidUtf8);
                     }
                 }
             });
