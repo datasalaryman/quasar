@@ -67,10 +67,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     let has_public_key = used.contains("pubkey");
     let has_pdas = model.features.has_pdas;
     let has_pda_account_seeds = model.features.has_pda_account_seeds;
-    let has_dynamic_types = idl
-        .types
-        .iter()
-        .any(|t| has_dynamic_fields(&t.ty.fields));
+    let has_dynamic_types = idl.types.iter().any(|t| has_dynamic_fields(&t.ty.fields));
 
     // --- Imports ---
     match target {
@@ -880,7 +877,10 @@ fn emit_compact_type_codec(
     fields: &[crate::types::IdlField],
     target: TsTarget,
 ) {
-    let fixed_fields: Vec<_> = fields.iter().filter(|f| !is_direct_dynamic(&f.ty)).collect();
+    let fixed_fields: Vec<_> = fields
+        .iter()
+        .filter(|f| !is_direct_dynamic(&f.ty))
+        .collect();
     let dyn_fields: Vec<_> = fields.iter().filter(|f| is_direct_dynamic(&f.ty)).collect();
 
     let buf_ctor = match target {

@@ -268,12 +268,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 match &arg.ty {
                     IdlType::DynString { ref string } => {
                         // Pre-encode string bytes so we know the length.
-                        writeln!(
-                            out,
-                            "\t_{n}Bytes := []byte(input.{n})",
-                            n = name,
-                        )
-                        .unwrap();
+                        writeln!(out, "\t_{n}Bytes := []byte(input.{n})", n = name,).unwrap();
                         match string.prefix_bytes {
                             1 => writeln!(
                                 out,
@@ -305,12 +300,10 @@ pub fn generate_go_client(idl: &Idl) -> String {
                         }
                     }
                     IdlType::DynVec { ref vec } => match vec.prefix_bytes {
-                        1 => writeln!(
-                            out,
-                            "\tdata = append(data, byte(len(input.{n})))",
-                            n = name,
-                        )
-                        .unwrap(),
+                        1 => {
+                            writeln!(out, "\tdata = append(data, byte(len(input.{n})))", n = name,)
+                                .unwrap()
+                        }
                         2 => writeln!(
                             out,
                             "\t{{ var _buf [2]byte; binary.LittleEndian.PutUint16(_buf[:], \
@@ -342,20 +335,10 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 let name = snake_to_pascal(&arg.name);
                 match &arg.ty {
                     IdlType::DynString { .. } => {
-                        writeln!(
-                            out,
-                            "\tdata = append(data, _{n}Bytes...)",
-                            n = name,
-                        )
-                        .unwrap();
+                        writeln!(out, "\tdata = append(data, _{n}Bytes...)", n = name,).unwrap();
                     }
                     IdlType::DynVec { .. } => {
-                        writeln!(
-                            out,
-                            "\tdata = append(data, input.{n}...)",
-                            n = name,
-                        )
-                        .unwrap();
+                        writeln!(out, "\tdata = append(data, input.{n}...)", n = name,).unwrap();
                     }
                     _ => unreachable!(),
                 }

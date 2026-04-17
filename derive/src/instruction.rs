@@ -3,7 +3,8 @@
 //!
 //! Instruction args use the same zeropod layout as accounts:
 //! - Fixed args: `ZeroPodFixed` pointer-cast + validate
-//! - Dynamic args (`String<N>`, `Vec<T, N>`, `&str`, `&[T]`): `ZeroPodCompact` Ref views
+//! - Dynamic args (`String<N>`, `Vec<T, N>`, `&str`, `&[T]`): `ZeroPodCompact`
+//!   Ref views
 //!
 //! Borrowed args (`&'a str`, `&'a [T]`) are desugared to compact schema fields
 //! via `#[max(N)]` annotations — the compact Ref returns zero-copy views.

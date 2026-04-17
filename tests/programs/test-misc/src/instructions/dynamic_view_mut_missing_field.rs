@@ -1,7 +1,4 @@
-use {
-    crate::state::DynamicAccount,
-    quasar_lang::prelude::*,
-};
+use {crate::state::DynamicAccount, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct DynamicViewMutMissingField {

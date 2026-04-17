@@ -26,20 +26,14 @@ pub(super) fn generate_account(
         super::layout::emit_bump_offset_impl(field_infos, has_dynamic, disc_len, &zc.zc_path);
     let dynamic = super::dynamic::build_dynamic_pieces(field_infos, disc_len, &zc.zc_mod);
 
-    let zc_definition =
-        super::layout::emit_zc_definition(name, has_dynamic, &zc);
+    let zc_definition = super::layout::emit_zc_definition(name, has_dynamic, &zc);
     let account_wrapper =
         super::layout::emit_account_wrapper(attrs, vis, name, disc_len, &zc.zc_path);
     let discriminator_impl =
         super::traits::emit_discriminator_impl(name, disc_bytes, &bump_offset_impl);
     let owner_impl = super::traits::emit_owner_impl(name);
-    let space_impl = super::traits::emit_space_impl(
-        name,
-        field_infos,
-        has_dynamic,
-        disc_len,
-        &zc.zc_mod,
-    );
+    let space_impl =
+        super::traits::emit_space_impl(name, field_infos, has_dynamic, disc_len, &zc.zc_mod);
     let account_check_impl =
         super::traits::emit_account_check_impl(super::traits::AccountCheckSpec {
             name,

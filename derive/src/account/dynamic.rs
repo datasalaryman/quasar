@@ -283,12 +283,7 @@ pub(super) fn emit_compact_mut(
     let load_stmts: Vec<proc_macro2::TokenStream> = pieces
         .dyn_fields
         .iter()
-        .map(|(field, pd)| {
-            compact_mut_load(
-                field.ident.as_ref().expect("field must be named"),
-                pd,
-            )
-        })
+        .map(|(field, pd)| compact_mut_load(field.ident.as_ref().expect("field must be named"), pd))
         .collect();
     let field_names: Vec<&syn::Ident> = pieces
         .dyn_fields
@@ -534,10 +529,7 @@ fn compact_mut_field(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2:
 
 /// Load a dynamic field from a CompactRef into a PodString/PodVec.
 /// Assumes `__r` (a `__SchemaRef`) is in scope.
-fn compact_mut_load(
-    name: &syn::Ident,
-    dyn_field: &PodDynField,
-) -> proc_macro2::TokenStream {
+fn compact_mut_load(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::TokenStream {
     match dyn_field {
         PodDynField::Str { max, prefix_bytes } => quote! {
             let mut #name = quasar_lang::pod::PodString::<#max, #prefix_bytes>::default();

@@ -298,7 +298,10 @@ fn pod_option_invalid_tag_is_not_some() {
     let opt = unsafe { &*(buf.as_ptr() as *const zeropod::pod::PodOption<u8>) };
 
     // is_some() must NOT return true for invalid tags.
-    assert!(!opt.is_some(), "invalid tag 0xFF must not be treated as Some");
+    assert!(
+        !opt.is_some(),
+        "invalid tag 0xFF must not be treated as Some"
+    );
     assert!(opt.is_none(), "invalid tag 0xFF must be treated as None");
     // get() must return None for invalid tags.
     assert_eq!(opt.get(), None);
@@ -352,7 +355,7 @@ struct CompactWithVecBool {
 #[test]
 fn compact_validate_rejects_invalid_vec_bool_element() {
     let mut buf = vec![0u8; 13]; // 10 header + 3 tail
-    // flags_len at offset 8, PFX=2 (LE u16)
+                                 // flags_len at offset 8, PFX=2 (LE u16)
     buf[8] = 3; // count = 3
     buf[9] = 0;
     // Tail data at offset 10

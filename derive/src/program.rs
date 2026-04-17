@@ -294,8 +294,8 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         } else if matches!(&*pt.ty, Type::Reference(_)) {
                             // Borrowed arg (&str, &[T]) — parse #[max(N)] and map
                             // to compact client type, same wire format as String<N>/Vec<T,N>.
-                            let (max_n, pfx) = parse_max_attr_from_program_arg(pt)
-                                .unwrap_or((0, 0));
+                            let (max_n, pfx) =
+                                parse_max_attr_from_program_arg(pt).unwrap_or((0, 0));
                             if let Some(pd) = classify_borrowed_as_compact(&pt.ty, max_n, pfx) {
                                 match pd {
                                     PodDynField::Str { prefix_bytes, .. } => {

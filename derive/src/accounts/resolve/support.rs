@@ -33,7 +33,6 @@ pub(super) fn resolve_supports(semantics: &mut [FieldSemantics]) -> syn::Result<
             sem.support.rent_sysvar = index.rent_sysvar.clone();
         }
 
-
         if sem.realloc.is_some() {
             sem.support.realloc_payer = explicit_realloc_payer
                 .or_else(|| sem.support.payer.clone())
