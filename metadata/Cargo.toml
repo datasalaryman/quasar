@@ -12,4 +12,4 @@ workspace = true
 
 [dependencies]
 quasar-lang = { path = "../lang" }
-solana-address = { version = "2.2.0", features = ["copy"] }
+solana-address = { version = ">=2.2, <2.6", features = ["copy"] }
