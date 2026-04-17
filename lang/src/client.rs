@@ -5,8 +5,8 @@
 //!
 //! | Type | Wire format |
 //! |------|-------------|
-//! | [`DynBytes<P>`] | `P` LE length prefix + raw bytes (`P` defaults to `u32`) |
-//! | [`DynVec<T, P>`] | `P` LE count prefix + each item serialized |
+//! | `DynBytes<P>` | `P` LE length prefix + raw bytes (`P` defaults to `u32`) |
+//! | `DynVec<T, P>` | `P` LE count prefix + each item serialized |
 //!
 //! The prefix type `P` (u8, u16, or u32) must match the on-chain declaration.
 //! For example, `String<u8, 100>` on-chain requires `DynBytes<u8>` off-chain.

@@ -317,7 +317,7 @@ pub fn init_account_with_rent(
 
 /// Write a discriminator to an account's data buffer.
 ///
-/// Used by the derive macro after `init_account` to stamp the Account<T>
+/// Used by the derive macro after `init_account` to stamp the `Account<T>`
 /// discriminator. Separated from init so the same CPI body can be reused for
 /// token/mint accounts which don't need discriminator writes.
 #[inline(always)]
