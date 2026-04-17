@@ -10,7 +10,7 @@ pub(super) struct SetInnerSpec<'a> {
     pub field_infos: &'a [PodFieldInfo<'a>],
     pub has_dynamic: bool,
     pub disc_len: usize,
-    pub zc_name: &'a syn::Ident,
+    pub zc_mod: &'a syn::Ident,
     pub zc_path: &'a proc_macro2::TokenStream,
     pub gen_set_inner: bool,
 }
@@ -22,7 +22,7 @@ pub(super) fn emit_set_inner_impl(spec: SetInnerSpec<'_>) -> proc_macro2::TokenS
         field_infos,
         has_dynamic,
         disc_len,
-        zc_name,
+        zc_mod,
         zc_path,
         gen_set_inner,
     } = spec;
@@ -74,13 +74,23 @@ pub(super) fn emit_set_inner_impl(spec: SetInnerSpec<'_>) -> proc_macro2::TokenS
                 )
             })
             .collect();
-        let var_write_stmts: Vec<proc_macro2::TokenStream> = field_infos
+        let compact_set_stmts: Vec<proc_macro2::TokenStream> = field_infos
             .iter()
             .filter_map(|fi| {
                 let field_name = fi.field.ident.as_ref().expect("field must be named");
-                fi.pod_dyn
-                    .as_ref()
-                    .map(|dyn_field| dynamic::emit_write_stmt(field_name, dyn_field))
+                fi.pod_dyn.as_ref().map(|dyn_field| {
+                    let setter = format_ident!("set_{}", field_name);
+                    match dyn_field {
+                        crate::helpers::PodDynField::Str { .. } => quote! {
+                            __compact.#setter(#field_name)
+                                .map_err(|_| ProgramError::InvalidAccountData)?;
+                        },
+                        crate::helpers::PodDynField::Vec { .. } => quote! {
+                            __compact.#setter(#field_name)
+                                .map_err(|_| ProgramError::InvalidAccountData)?;
+                        },
+                    }
+                })
             })
             .collect();
         let init_field_names: Vec<&syn::Ident> = field_infos
@@ -118,17 +128,23 @@ pub(super) fn emit_set_inner_impl(spec: SetInnerSpec<'_>) -> proc_macro2::TokenS
                         )?;
                     }
 
+                    // Write fixed header fields.
                     let __ptr = __view.data_mut_ptr();
-                    let __zc = unsafe { &mut *(__ptr.add(#disc_len) as *mut #zc_name) };
+                    let __zc = unsafe { &mut *(__ptr.add(#disc_len) as *mut #zc_path) };
                     #(#zc_header_stmts)*
-                    let __dyn_start = #disc_len + core::mem::size_of::<#zc_name>();
-                    let __len = __view.data_len();
-                    let __data = unsafe {
-                        core::slice::from_raw_parts_mut(__ptr.add(__dyn_start), __len - __dyn_start)
+
+                    // Write dynamic fields via CompactMut.
+                    let __compact_data = unsafe {
+                        core::slice::from_raw_parts_mut(
+                            __ptr.add(#disc_len),
+                            __view.data_len() - #disc_len,
+                        )
                     };
-                    let mut __offset = 0usize;
-                    #(#var_write_stmts)*
-                    let _ = __offset;
+                    let mut __compact = unsafe {
+                        #zc_mod::__SchemaMut::new_unchecked(__compact_data)
+                    };
+                    #(#compact_set_stmts)*
+                    __compact.commit().map_err(|_| ProgramError::InvalidAccountData)?;
                     Ok(())
                 }
             }

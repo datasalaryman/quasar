@@ -1,6 +1,6 @@
 use {
     super::fixed::PodFieldInfo,
-    crate::helpers::PodDynField,
+    crate::helpers::{map_to_pod_type, PodDynField},
     quote::{format_ident, quote},
 };
 
@@ -9,16 +9,14 @@ pub(super) type DynFieldRef<'a> = (&'a syn::Field, &'a PodDynField);
 pub(super) struct DynamicPieces<'a> {
     pub dyn_fields: Vec<DynFieldRef<'a>>,
     pub align_asserts: Vec<proc_macro2::TokenStream>,
-    pub prefix_total: usize,
     pub max_space_terms: Vec<proc_macro2::TokenStream>,
-    pub validation_stmts: Vec<proc_macro2::TokenStream>,
     pub read_accessors: Vec<proc_macro2::TokenStream>,
 }
 
 pub(super) fn build_dynamic_pieces<'a>(
     field_infos: &'a [PodFieldInfo<'a>],
     disc_len: usize,
-    zc_path: &proc_macro2::TokenStream,
+    zc_mod: &syn::Ident,
 ) -> DynamicPieces<'a> {
     let dyn_fields: Vec<DynFieldRef<'a>> = field_infos
         .iter()
@@ -28,35 +26,22 @@ pub(super) fn build_dynamic_pieces<'a>(
         .iter()
         .filter_map(|(_, pd)| dyn_align_assert(pd))
         .collect();
-    let prefix_total = dyn_fields.iter().map(|(_, pd)| dyn_prefix_bytes(pd)).sum();
     let max_space_terms = dyn_fields
         .iter()
         .map(|(_, pd)| dyn_max_space_term(pd))
         .collect();
-    let validation_stmts = dyn_fields
-        .iter()
-        .map(|(_, pd)| dyn_validation_stmt(pd))
-        .collect();
-    let dyn_start = quote! { #disc_len + core::mem::size_of::<#zc_path>() };
     let read_accessors = dyn_fields
         .iter()
-        .enumerate()
-        .map(|(dyn_idx, (field, pd))| {
+        .map(|(field, pd)| {
             let name = field.ident.as_ref().expect("field must be named");
-            let walk_stmts: Vec<proc_macro2::TokenStream> = dyn_fields[..dyn_idx]
-                .iter()
-                .map(|(_, prev_pd)| dyn_walk_stmt(prev_pd))
-                .collect();
-            dyn_read_accessor(name, pd, &dyn_start, &walk_stmts)
+            compact_read_accessor(name, pd, disc_len, zc_mod)
         })
         .collect();
 
     DynamicPieces {
         dyn_fields,
         align_asserts,
-        prefix_total,
         max_space_terms,
-        validation_stmts,
         read_accessors,
     }
 }
@@ -67,7 +52,10 @@ pub(super) fn emit_inner_field(
 ) -> proc_macro2::TokenStream {
     match dyn_field {
         PodDynField::Str { .. } => quote! { pub #name: &'a str },
-        PodDynField::Vec { elem, .. } => quote! { pub #name: &'a [#elem] },
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! { pub #name: &'a [#mapped] }
+        }
     }
 }
 
@@ -90,44 +78,9 @@ pub(super) fn emit_space_term(
     match dyn_field {
         PodDynField::Str { .. } => quote! { + #name.len() },
         PodDynField::Vec { elem, .. } => {
-            quote! { + #name.len() * core::mem::size_of::<#elem>() }
+            let mapped = map_to_pod_type(elem);
+            quote! { + #name.len() * core::mem::size_of::<#mapped>() }
         }
-    }
-}
-
-pub(super) fn emit_write_stmt(
-    name: &syn::Ident,
-    dyn_field: &PodDynField,
-) -> proc_macro2::TokenStream {
-    let prefix_bytes = dyn_prefix_bytes(dyn_field);
-    match dyn_field {
-        PodDynField::Str { .. } => quote! {
-            {
-                let __len_bytes = (#name.len() as u64).to_le_bytes();
-                __data[__offset..__offset + #prefix_bytes].copy_from_slice(&__len_bytes[..#prefix_bytes]);
-                __offset += #prefix_bytes;
-                __data[__offset..__offset + #name.len()].copy_from_slice(#name.as_bytes());
-                __offset += #name.len();
-            }
-        },
-        PodDynField::Vec { elem, .. } => quote! {
-            {
-                let __count_bytes = (#name.len() as u64).to_le_bytes();
-                __data[__offset..__offset + #prefix_bytes].copy_from_slice(&__count_bytes[..#prefix_bytes]);
-                __offset += #prefix_bytes;
-                let __bytes = #name.len() * core::mem::size_of::<#elem>();
-                if __bytes > 0 {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            #name.as_ptr() as *const u8,
-                            __data[__offset..].as_mut_ptr(),
-                            __bytes,
-                        );
-                    }
-                }
-                __offset += __bytes;
-            }
-        },
     }
 }
 
@@ -135,16 +88,16 @@ pub(super) fn emit_dynamic_impl_block(
     name: &syn::Ident,
     has_dynamic: bool,
     disc_len: usize,
-    zc_path: &proc_macro2::TokenStream,
+    zc_mod: &syn::Ident,
     pieces: &DynamicPieces<'_>,
 ) -> proc_macro2::TokenStream {
     if has_dynamic {
-        let prefix_total = pieces.prefix_total;
         let max_space_terms = &pieces.max_space_terms;
         let read_accessors = &pieces.read_accessors;
         quote! {
             impl #name {
-                pub const MIN_SPACE: usize = #disc_len + core::mem::size_of::<#zc_path>() + #prefix_total;
+                pub const MIN_SPACE: usize = #disc_len
+                    + <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::HEADER_SIZE;
                 pub const MAX_SPACE: usize = Self::MIN_SPACE #(#max_space_terms)*;
 
                 #(#read_accessors)*
@@ -159,7 +112,8 @@ pub(super) fn emit_dyn_guard(
     name: &syn::Ident,
     has_dynamic: bool,
     disc_len: usize,
-    zc_name: &syn::Ident,
+    zc_mod: &syn::Ident,
+    zc_path: &proc_macro2::TokenStream,
     pieces: &DynamicPieces<'_>,
 ) -> proc_macro2::TokenStream {
     if !has_dynamic {
@@ -175,7 +129,7 @@ pub(super) fn emit_dyn_guard(
     let load_stmts: Vec<proc_macro2::TokenStream> = pieces
         .dyn_fields
         .iter()
-        .map(|(field, pd)| dyn_guard_load(field.ident.as_ref().expect("field must be named"), pd))
+        .map(|(field, pd)| compact_guard_load(field.ident.as_ref().expect("field must be named"), pd, zc_mod))
         .collect();
     let field_names: Vec<&syn::Ident> = pieces
         .dyn_fields
@@ -185,20 +139,19 @@ pub(super) fn emit_dyn_guard(
     let save_size_terms: Vec<proc_macro2::TokenStream> = pieces
         .dyn_fields
         .iter()
-        .map(|(field, _)| {
-            let name = field.ident.as_ref().expect("field must be named");
-            quote! { + self.#name.serialized_len() }
+        .map(|(field, pd)| {
+            let fname = field.ident.as_ref().expect("field must be named");
+            compact_guard_size_term(fname, pd)
         })
         .collect();
-    let save_write_stmts: Vec<proc_macro2::TokenStream> = pieces
+    let compact_set_stmts: Vec<proc_macro2::TokenStream> = pieces
         .dyn_fields
         .iter()
-        .map(|(field, _)| {
-            let name = field.ident.as_ref().expect("field must be named");
-            quote! { __off += self.#name.write_to_bytes(&mut __data[__off..]); }
+        .map(|(field, pd)| {
+            let fname = field.ident.as_ref().expect("field must be named");
+            compact_guard_set_stmt(fname, pd)
         })
         .collect();
-
     quote! {
         pub struct #guard_name<'a> {
             __view: &'a mut AccountView,
@@ -209,25 +162,27 @@ pub(super) fn emit_dyn_guard(
         }
 
         impl<'a> core::ops::Deref for #guard_name<'a> {
-            type Target = #zc_name;
+            type Target = #zc_path;
 
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                unsafe { &*(self.__view.data_ptr().add(#disc_len) as *const #zc_name) }
+                unsafe { &*(self.__view.data_ptr().add(#disc_len) as *const #zc_path) }
             }
         }
 
         impl<'a> core::ops::DerefMut for #guard_name<'a> {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
-                unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_name) }
+                unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_path) }
             }
         }
 
         impl<'a> #guard_name<'a> {
             pub fn save(&mut self) -> Result<(), ProgramError> {
-                let __new_total = #disc_len + core::mem::size_of::<#zc_name>()
-                    #(#save_size_terms)*;
+                let __tail_size: usize = 0 #(#save_size_terms)*;
+                let __new_total = #disc_len
+                    + <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::HEADER_SIZE
+                    + __tail_size;
 
                 let __old_total = self.__view.data_len();
                 if __new_total != __old_total {
@@ -237,27 +192,22 @@ pub(super) fn emit_dyn_guard(
                     )?;
                 }
 
-                let __dyn_start = #disc_len + core::mem::size_of::<#zc_name>();
-                let __ptr = self.__view.data_mut_ptr();
-                let __data = unsafe {
+                let __compact_data = unsafe {
                     core::slice::from_raw_parts_mut(
-                        __ptr.add(__dyn_start),
-                        __new_total - __dyn_start,
+                        self.__view.data_mut_ptr().add(#disc_len),
+                        __new_total - #disc_len,
                     )
                 };
-                let mut __off = 0usize;
-                #(#save_write_stmts)*
-                let _ = __off;
+                let mut __compact = unsafe { #zc_mod::__SchemaMut::new_unchecked(__compact_data) };
+                #(#compact_set_stmts)*
+                __compact.commit().map_err(|_| ProgramError::InvalidAccountData)?;
                 Ok(())
             }
 
             pub fn reload(&mut self) {
                 let __data = unsafe { self.__view.borrow_unchecked() };
-                let mut __off = #disc_len + core::mem::size_of::<#zc_name>();
-                #(
-                    __off += self.#field_names.load_from_bytes(&__data[__off..]);
-                )*
-                let _ = __off;
+                let __r = unsafe { #zc_mod::__SchemaRef::new_unchecked(&__data[#disc_len..]) };
+                #(#load_stmts)*
             }
         }
 
@@ -277,9 +227,8 @@ pub(super) fn emit_dyn_guard(
             ) -> #guard_name<'a> {
                 let (#(#field_names,)*) = {
                     let __data = unsafe { self.__view.borrow_unchecked() };
-                    let mut __off = #disc_len + core::mem::size_of::<#zc_name>();
+                    let __r = unsafe { #zc_mod::__SchemaRef::new_unchecked(&__data[#disc_len..]) };
                     #(#load_stmts)*
-                    let _ = __off;
                     (#(#field_names,)*)
                 };
                 let __view = unsafe { &mut *(&mut self.__view as *mut AccountView) };
@@ -299,7 +248,8 @@ pub(super) fn emit_dyn_writer(
     name: &syn::Ident,
     has_dynamic: bool,
     disc_len: usize,
-    zc_name: &syn::Ident,
+    zc_mod: &syn::Ident,
+    zc_path: &proc_macro2::TokenStream,
     pieces: &DynamicPieces<'_>,
 ) -> proc_macro2::TokenStream {
     if !has_dynamic {
@@ -342,15 +292,15 @@ pub(super) fn emit_dyn_writer(
         .iter()
         .map(|(field, pd)| {
             let name = field.ident.as_ref().expect("field must be named");
-            dynamic_view_space_term(name, pd)
+            writer_space_term(name, pd)
         })
         .collect();
-    let write_stmts: Vec<proc_macro2::TokenStream> = pieces
+    let compact_set_stmts: Vec<proc_macro2::TokenStream> = pieces
         .dyn_fields
         .iter()
         .map(|(field, pd)| {
             let name = field.ident.as_ref().expect("field must be named");
-            dynamic_view_write_stmt(name, pd)
+            writer_compact_set_stmt(name, pd)
         })
         .collect();
 
@@ -364,18 +314,18 @@ pub(super) fn emit_dyn_writer(
         }
 
         impl<'a> core::ops::Deref for #writer_name<'a> {
-            type Target = #zc_name;
+            type Target = #zc_path;
 
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                unsafe { &*(self.__view.data_ptr().add(#disc_len) as *const #zc_name) }
+                unsafe { &*(self.__view.data_ptr().add(#disc_len) as *const #zc_path) }
             }
         }
 
         impl<'a> core::ops::DerefMut for #writer_name<'a> {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
-                unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_name) }
+                unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_path) }
             }
         }
 
@@ -385,7 +335,8 @@ pub(super) fn emit_dyn_writer(
             pub fn commit(&mut self) -> Result<(), ProgramError> {
                 #(#binding_stmts)*
 
-                let __new_total = #disc_len + core::mem::size_of::<#zc_name>()
+                let __new_total = #disc_len
+                    + <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::HEADER_SIZE
                     #(#size_terms)*;
                 let __old_total = self.__view.data_len();
                 if __new_total != __old_total {
@@ -398,17 +349,15 @@ pub(super) fn emit_dyn_writer(
                     )?;
                 }
 
-                let __dyn_start = #disc_len + core::mem::size_of::<#zc_name>();
-                let __ptr = self.__view.data_mut_ptr();
-                let __data = unsafe {
+                let __compact_data = unsafe {
                     core::slice::from_raw_parts_mut(
-                        __ptr.add(__dyn_start),
-                        __new_total - __dyn_start,
+                        self.__view.data_mut_ptr().add(#disc_len),
+                        __new_total - #disc_len,
                     )
                 };
-                let mut __offset = 0usize;
-                #(#write_stmts)*
-                let _ = __offset;
+                let mut __compact = unsafe { #zc_mod::__SchemaMut::new_unchecked(__compact_data) };
+                #(#compact_set_stmts)*
+                __compact.commit().map_err(|_| ProgramError::InvalidAccountData)?;
                 Ok(())
             }
         }
@@ -439,23 +388,22 @@ pub(super) fn emit_dyn_writer(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 fn dyn_align_assert(dyn_field: &PodDynField) -> Option<proc_macro2::TokenStream> {
     match dyn_field {
-        PodDynField::Vec { elem, .. } => Some(quote! {
-            const _: () = assert!(
-                core::mem::align_of::<#elem>() == 1,
-                "PodVec element type must have alignment 1"
-            );
-        }),
-        PodDynField::Str { .. } => None,
-    }
-}
-
-fn dyn_prefix_bytes(dyn_field: &PodDynField) -> usize {
-    match dyn_field {
-        PodDynField::Str { prefix_bytes, .. } | PodDynField::Vec { prefix_bytes, .. } => {
-            *prefix_bytes
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            Some(quote! {
+                const _: () = assert!(
+                    core::mem::align_of::<#mapped>() == 1,
+                    "PodVec element type must have alignment 1"
+                );
+            })
         }
+        PodDynField::Str { .. } => None,
     }
 }
 
@@ -463,121 +411,39 @@ fn dyn_max_space_term(dyn_field: &PodDynField) -> proc_macro2::TokenStream {
     match dyn_field {
         PodDynField::Str { max, .. } => quote! { + #max },
         PodDynField::Vec { elem, max, .. } => {
-            quote! { + #max * core::mem::size_of::<#elem>() }
+            let mapped = map_to_pod_type(elem);
+            quote! { + #max * core::mem::size_of::<#mapped>() }
         }
     }
 }
 
-fn dyn_validation_stmt(dyn_field: &PodDynField) -> proc_macro2::TokenStream {
-    let prefix_bytes = dyn_prefix_bytes(dyn_field);
-    match dyn_field {
-        PodDynField::Str { max, .. } => quote! {
-            {
-                if __offset + #prefix_bytes > __data_len {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                let __len = {
-                    let mut __buf = [0u8; 8];
-                    __buf[..#prefix_bytes].copy_from_slice(&__data[__offset..__offset + #prefix_bytes]);
-                    u64::from_le_bytes(__buf) as usize
-                };
-                __offset += #prefix_bytes;
-                if __len > #max {
-                    return Err(ProgramError::InvalidAccountData);
-                }
-                if __offset + __len > __data_len {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                __offset += __len;
-            }
-        },
-        PodDynField::Vec { elem, max, .. } => quote! {
-            {
-                if __offset + #prefix_bytes > __data_len {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                let __count = {
-                    let mut __buf = [0u8; 8];
-                    __buf[..#prefix_bytes].copy_from_slice(&__data[__offset..__offset + #prefix_bytes]);
-                    u64::from_le_bytes(__buf) as usize
-                };
-                __offset += #prefix_bytes;
-                if __count > #max {
-                    return Err(ProgramError::InvalidAccountData);
-                }
-                let __byte_len = __count * core::mem::size_of::<#elem>();
-                if __offset + __byte_len > __data_len {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                __offset += __byte_len;
-            }
-        },
-    }
-}
-
-fn dyn_walk_stmt(dyn_field: &PodDynField) -> proc_macro2::TokenStream {
-    let prefix_bytes = dyn_prefix_bytes(dyn_field);
-    match dyn_field {
-        PodDynField::Str { .. } => quote! {
-            {
-                let mut __buf = [0u8; 8];
-                __buf[..#prefix_bytes].copy_from_slice(&__data[__off..__off + #prefix_bytes]);
-                let __field_len = u64::from_le_bytes(__buf) as usize;
-                __off += #prefix_bytes + __field_len;
-            }
-        },
-        PodDynField::Vec { elem, .. } => quote! {
-            {
-                let mut __buf = [0u8; 8];
-                __buf[..#prefix_bytes].copy_from_slice(&__data[__off..__off + #prefix_bytes]);
-                let __field_count = u64::from_le_bytes(__buf) as usize;
-                __off += #prefix_bytes + __field_count * core::mem::size_of::<#elem>();
-            }
-        },
-    }
-}
-
-fn dyn_read_accessor(
+/// Read accessor: construct a CompactRef, delegate to its accessor.
+fn compact_read_accessor(
     name: &syn::Ident,
     dyn_field: &PodDynField,
-    dyn_start: &proc_macro2::TokenStream,
-    walk_stmts: &[proc_macro2::TokenStream],
+    disc_len: usize,
+    zc_mod: &syn::Ident,
 ) -> proc_macro2::TokenStream {
-    let prefix_bytes = dyn_prefix_bytes(dyn_field);
     match dyn_field {
         PodDynField::Str { .. } => quote! {
             #[inline(always)]
             pub fn #name(&self) -> &str {
                 let __data = unsafe { self.__view.borrow_unchecked() };
-                let mut __off = #dyn_start;
-                #(#walk_stmts)*
-                let __len = {
-                    let mut __buf = [0u8; 8];
-                    __buf[..#prefix_bytes].copy_from_slice(&__data[__off..__off + #prefix_bytes]);
-                    u64::from_le_bytes(__buf) as usize
-                };
-                unsafe { core::str::from_utf8_unchecked(&__data[__off + #prefix_bytes..__off + #prefix_bytes + __len]) }
+                let __r = unsafe { #zc_mod::__SchemaRef::new_unchecked(&__data[#disc_len..]) };
+                __r.#name()
             }
         },
-        PodDynField::Vec { elem, .. } => quote! {
-            #[inline(always)]
-            pub fn #name(&self) -> &[#elem] {
-                let __data = unsafe { self.__view.borrow_unchecked() };
-                let mut __off = #dyn_start;
-                #(#walk_stmts)*
-                let __count = {
-                    let mut __buf = [0u8; 8];
-                    __buf[..#prefix_bytes].copy_from_slice(&__data[__off..__off + #prefix_bytes]);
-                    u64::from_le_bytes(__buf) as usize
-                };
-                unsafe {
-                    core::slice::from_raw_parts(
-                        __data[__off + #prefix_bytes..].as_ptr() as *const #elem,
-                        __count,
-                    )
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! {
+                #[inline(always)]
+                pub fn #name(&self) -> &[#mapped] {
+                    let __data = unsafe { self.__view.borrow_unchecked() };
+                    let __r = unsafe { #zc_mod::__SchemaRef::new_unchecked(&__data[#disc_len..]) };
+                    __r.#name()
                 }
             }
-        },
+        }
     }
 }
 
@@ -590,25 +456,67 @@ fn dyn_guard_field(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::T
             elem,
             max,
             prefix_bytes,
-        } => quote! {
-            pub #name: quasar_lang::pod::PodVec<#elem, #max, #prefix_bytes>
-        },
+        } => {
+            let mapped = map_to_pod_type(elem);
+            quote! {
+                pub #name: quasar_lang::pod::PodVec<#mapped, #max, #prefix_bytes>
+            }
+        }
     }
 }
 
-fn dyn_guard_load(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::TokenStream {
+/// Load a dynamic field from a CompactRef into a PodString/PodVec.
+/// Assumes `__r` (a `__SchemaRef`) is in scope.
+fn compact_guard_load(
+    name: &syn::Ident,
+    dyn_field: &PodDynField,
+    _zc_mod: &syn::Ident,
+) -> proc_macro2::TokenStream {
     match dyn_field {
         PodDynField::Str { max, prefix_bytes } => quote! {
             let mut #name = quasar_lang::pod::PodString::<#max, #prefix_bytes>::default();
-            __off += #name.load_from_bytes(&__data[__off..]);
+            let _ = #name.set(__r.#name());
         },
         PodDynField::Vec {
             elem,
             max,
             prefix_bytes,
-        } => quote! {
-            let mut #name = quasar_lang::pod::PodVec::<#elem, #max, #prefix_bytes>::default();
-            __off += #name.load_from_bytes(&__data[__off..]);
+        } => {
+            let mapped = map_to_pod_type(elem);
+            quote! {
+                let mut #name = quasar_lang::pod::PodVec::<#mapped, #max, #prefix_bytes>::default();
+                let _ = #name.set_from_slice(__r.#name());
+            }
+        }
+    }
+}
+
+/// Size contribution of a guard field's current content (for tail region).
+fn compact_guard_size_term(
+    name: &syn::Ident,
+    dyn_field: &PodDynField,
+) -> proc_macro2::TokenStream {
+    match dyn_field {
+        PodDynField::Str { .. } => quote! { + self.#name.len() },
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! { + self.#name.len() * core::mem::size_of::<#mapped>() }
+        }
+    }
+}
+
+/// Set a dynamic field on a CompactMut from the guard's PodString/PodVec.
+fn compact_guard_set_stmt(
+    name: &syn::Ident,
+    dyn_field: &PodDynField,
+) -> proc_macro2::TokenStream {
+    let setter = format_ident!("set_{}", name);
+    match dyn_field {
+        PodDynField::Str { .. } => quote! {
+            __compact.#setter(self.#name.as_str()).map_err(|_| ProgramError::InvalidAccountData)?;
+        },
+        PodDynField::Vec { .. } => quote! {
+            __compact.#setter(self.#name.as_slice()).map_err(|_| ProgramError::InvalidAccountData)?;
         },
     }
 }
@@ -617,7 +525,10 @@ fn dyn_view_field(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::To
     let slot = format_ident!("__{}", name);
     match dyn_field {
         PodDynField::Str { .. } => quote! { #slot: Option<&'a str> },
-        PodDynField::Vec { elem, .. } => quote! { #slot: Option<&'a [#elem]> },
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! { #slot: Option<&'a [#mapped]> }
+        }
     }
 }
 
@@ -639,59 +550,43 @@ fn dyn_view_setter(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::T
                 Ok(())
             }
         },
-        PodDynField::Vec { elem, .. } => quote! {
-            #[inline(always)]
-            pub fn #setter(&mut self, value: &'a [#elem]) -> Result<(), ProgramError> {
-                if value.len() > #max {
-                    return Err(QuasarError::DynamicFieldTooLong.into());
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! {
+                #[inline(always)]
+                pub fn #setter(&mut self, value: &'a [#mapped]) -> Result<(), ProgramError> {
+                    if value.len() > #max {
+                        return Err(QuasarError::DynamicFieldTooLong.into());
+                    }
+                    self.#slot = Some(value);
+                    Ok(())
                 }
-                self.#slot = Some(value);
-                Ok(())
             }
-        },
-    }
-}
-
-fn dynamic_view_space_term(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::TokenStream {
-    match dyn_field {
-        PodDynField::Str { prefix_bytes, .. } => quote! { + #prefix_bytes + #name.len() },
-        PodDynField::Vec {
-            elem, prefix_bytes, ..
-        } => {
-            quote! { + #prefix_bytes + #name.len() * core::mem::size_of::<#elem>() }
         }
     }
 }
 
-fn dynamic_view_write_stmt(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::TokenStream {
-    let prefix_bytes = dyn_prefix_bytes(dyn_field);
+fn writer_space_term(name: &syn::Ident, dyn_field: &PodDynField) -> proc_macro2::TokenStream {
+    match dyn_field {
+        PodDynField::Str { .. } => quote! { + #name.len() },
+        PodDynField::Vec { elem, .. } => {
+            let mapped = map_to_pod_type(elem);
+            quote! { + #name.len() * core::mem::size_of::<#mapped>() }
+        }
+    }
+}
+
+fn writer_compact_set_stmt(
+    name: &syn::Ident,
+    dyn_field: &PodDynField,
+) -> proc_macro2::TokenStream {
+    let setter = format_ident!("set_{}", name);
     match dyn_field {
         PodDynField::Str { .. } => quote! {
-            {
-                let __len_bytes = (#name.len() as u64).to_le_bytes();
-                __data[__offset..__offset + #prefix_bytes].copy_from_slice(&__len_bytes[..#prefix_bytes]);
-                __offset += #prefix_bytes;
-                __data[__offset..__offset + #name.len()].copy_from_slice(#name.as_bytes());
-                __offset += #name.len();
-            }
+            __compact.#setter(#name).map_err(|_| ProgramError::InvalidAccountData)?;
         },
-        PodDynField::Vec { elem, .. } => quote! {
-            {
-                let __count_bytes = (#name.len() as u64).to_le_bytes();
-                __data[__offset..__offset + #prefix_bytes].copy_from_slice(&__count_bytes[..#prefix_bytes]);
-                __offset += #prefix_bytes;
-                let __bytes = #name.len() * core::mem::size_of::<#elem>();
-                if __bytes > 0 {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            #name.as_ptr() as *const u8,
-                            __data[__offset..].as_mut_ptr(),
-                            __bytes,
-                        );
-                    }
-                }
-                __offset += __bytes;
-            }
+        PodDynField::Vec { .. } => quote! {
+            __compact.#setter(#name).map_err(|_| ProgramError::InvalidAccountData)?;
         },
     }
 }

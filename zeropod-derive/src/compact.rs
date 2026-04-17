@@ -415,6 +415,19 @@ fn generate_mut(schema: &Schema, header_name: &syn::Ident, mut_name: &syn::Ident
                 })
             }
 
+            /// # Safety
+            /// Caller must ensure `data` is at least `HEADER_SIZE` bytes and
+            /// contains a valid compact header. The tail region must be
+            /// consistent with the header length prefixes.
+            pub unsafe fn new_unchecked(data: &'a mut [u8]) -> Self {
+                let total_len = data.len();
+                Self {
+                    data,
+                    total_len,
+                    #( #edit_inits ),*
+                }
+            }
+
             fn header(&self) -> &#header_name {
                 unsafe { &*(self.data.as_ptr() as *const #header_name) }
             }

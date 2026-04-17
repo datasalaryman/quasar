@@ -24,7 +24,7 @@ pub(super) fn generate_account(
     let zc = super::layout::build_zc_spec(name, field_infos, has_dynamic);
     let bump_offset_impl =
         super::layout::emit_bump_offset_impl(field_infos, has_dynamic, disc_len, &zc.zc_path);
-    let dynamic = super::dynamic::build_dynamic_pieces(field_infos, disc_len, &zc.zc_path);
+    let dynamic = super::dynamic::build_dynamic_pieces(field_infos, disc_len, &zc.zc_mod);
 
     let zc_definition =
         super::layout::emit_zc_definition(name, has_dynamic, &zc, &dynamic.align_asserts);
@@ -38,8 +38,8 @@ pub(super) fn generate_account(
         field_infos,
         has_dynamic,
         disc_len,
+        &zc.zc_mod,
         &zc.zc_path,
-        dynamic.prefix_total,
     );
     let account_check_impl =
         super::traits::emit_account_check_impl(super::traits::AccountCheckSpec {
@@ -50,22 +50,20 @@ pub(super) fn generate_account(
             disc_bytes,
             zc_path: &zc.zc_path,
             zc_mod: &zc.zc_mod,
-            prefix_total: dynamic.prefix_total,
-            validation_stmts: &dynamic.validation_stmts,
         });
     let dynamic_impl_block =
-        super::dynamic::emit_dynamic_impl_block(name, has_dynamic, disc_len, &zc.zc_path, &dynamic);
+        super::dynamic::emit_dynamic_impl_block(name, has_dynamic, disc_len, &zc.zc_mod, &dynamic);
     let dyn_guard =
-        super::dynamic::emit_dyn_guard(name, has_dynamic, disc_len, &zc.zc_name, &dynamic);
+        super::dynamic::emit_dyn_guard(name, has_dynamic, disc_len, &zc.zc_mod, &zc.zc_path, &dynamic);
     let dyn_writer =
-        super::dynamic::emit_dyn_writer(name, has_dynamic, disc_len, &zc.zc_name, &dynamic);
+        super::dynamic::emit_dyn_writer(name, has_dynamic, disc_len, &zc.zc_mod, &zc.zc_path, &dynamic);
     let set_inner_impl = super::methods::emit_set_inner_impl(super::methods::SetInnerSpec {
         name,
         vis,
         field_infos,
         has_dynamic,
         disc_len,
-        zc_name: &zc.zc_name,
+        zc_mod: &zc.zc_mod,
         zc_path: &zc.zc_path,
         gen_set_inner,
     });
