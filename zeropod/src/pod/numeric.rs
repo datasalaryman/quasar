@@ -129,7 +129,7 @@ macro_rules! define_pod_common {
 
         impl core::hash::Hash for $name {
             fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.0.hash(state);
+                self.get().hash(state);
             }
         }
 
@@ -225,7 +225,7 @@ macro_rules! define_pod_common {
 
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}({})", stringify!($name), self.get())
+                fmt::Debug::fmt(&self.get(), f)
             }
         }
     };

@@ -86,7 +86,7 @@ impl fmt::Display for PodBool {
 
 impl fmt::Debug for PodBool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PodBool({})", self.get())
+        fmt::Debug::fmt(&self.get(), f)
     }
 }
 

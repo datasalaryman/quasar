@@ -289,7 +289,7 @@ impl<const N: usize, const PFX: usize> PartialEq<&str> for PodString<N, PFX> {
 
 impl<const N: usize, const PFX: usize> core::fmt::Debug for PodString<N, PFX> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "PodString<{}, {}>(\"{}\")", N, PFX, self.as_str())
+        core::fmt::Debug::fmt(self.as_str(), f)
     }
 }
 

@@ -369,12 +369,7 @@ impl<T: Copy + core::fmt::Debug, const N: usize, const PFX: usize> core::fmt::De
     for PodVec<T, N, PFX>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("PodVec")
-            .field("len", &self.len())
-            .field("capacity", &N)
-            .field("pfx", &PFX)
-            .field("data", &self.as_slice())
-            .finish()
+        core::fmt::Debug::fmt(self.as_slice(), f)
     }
 }
 
