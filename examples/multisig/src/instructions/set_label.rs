@@ -20,6 +20,21 @@ pub struct SetLabel {
 impl SetLabel {
     #[inline(always)]
     pub fn update_label(&mut self, label: &str) -> Result<(), ProgramError> {
+        // Snapshot unchanged dynamic fields before taking &mut for the writer.
+        // CompactWriter requires all dynamic fields to be set before commit().
+        let mut signers_buf = core::mem::MaybeUninit::<[Address; 10]>::uninit();
+        let signers = {
+            let src = self.config.signers();
+            let dst = unsafe {
+                core::slice::from_raw_parts_mut(
+                    signers_buf.as_mut_ptr() as *mut Address,
+                    src.len(),
+                )
+            };
+            dst.copy_from_slice(src);
+            &*dst as &[Address]
+        };
+
         let rent = Rent::get()?;
         let mut writer = self.config.compact_mut(
             self.creator.to_account_view(),
@@ -27,6 +42,7 @@ impl SetLabel {
             rent.exemption_threshold_raw(),
         );
         writer.set_label(label)?;
+        writer.set_signers(signers)?;
         writer.commit()?;
         Ok(())
     }
