@@ -288,3 +288,18 @@ fn error_invalid_tag_variant() {
     let err = <zeropod::pod::PodOption<u8> as zeropod::ZcValidate>::validate_ref(val);
     assert_eq!(err, Err(zeropod::ZeroPodError::InvalidTag));
 }
+
+// --- PodOption: is_some/is_none on invalid tag ---
+
+#[test]
+fn pod_option_invalid_tag_is_not_some() {
+    // Construct a PodOption with raw tag = 0xFF (invalid).
+    let buf = [0xFFu8, 42u8]; // PodOption<u8>: tag(1) + value(1)
+    let opt = unsafe { &*(buf.as_ptr() as *const zeropod::pod::PodOption<u8>) };
+
+    // is_some() must NOT return true for invalid tags.
+    assert!(!opt.is_some(), "invalid tag 0xFF must not be treated as Some");
+    assert!(opt.is_none(), "invalid tag 0xFF must be treated as None");
+    // get() must return None for invalid tags.
+    assert_eq!(opt.get(), None);
+}

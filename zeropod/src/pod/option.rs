@@ -10,12 +10,14 @@ pub struct PodOption<T: Copy> {
 const _: () = assert!(core::mem::align_of::<PodOption<u8>>() == 1);
 
 impl<T: Copy> PodOption<T> {
+    #[inline(always)]
     pub fn none() -> Self {
         Self {
             tag: 0,
             value: MaybeUninit::zeroed(),
         }
     }
+    #[inline(always)]
     pub fn some(value: T) -> Self {
         Self {
             tag: 1,
@@ -24,11 +26,11 @@ impl<T: Copy> PodOption<T> {
     }
     #[inline(always)]
     pub fn is_some(&self) -> bool {
-        self.tag != 0
+        self.tag == 1
     }
     #[inline(always)]
     pub fn is_none(&self) -> bool {
-        self.tag == 0
+        !self.is_some()
     }
     #[inline(always)]
     pub fn get(&self) -> Option<T> {
@@ -38,6 +40,7 @@ impl<T: Copy> PodOption<T> {
             None
         }
     }
+    #[inline(always)]
     pub fn set(&mut self, value: Option<T>) {
         match value {
             Some(v) => {
