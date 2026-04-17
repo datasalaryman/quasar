@@ -1,8 +1,7 @@
 error[E0080]: evaluation panicked: PodString<N, PFX>: PFX must be 1, 2, 4, or 8
  --> $RUST/core/src/panic.rs
   |
-  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `quasar_lang::String::<10, 3>::_CAP_CHECK` failed here
+  = note: evaluation of `quasar_lang::String::<10, 3>::_CAP_CHECK` failed here
   |
  ::: $WORKSPACE/zeropod/src/pod/string.rs
   |

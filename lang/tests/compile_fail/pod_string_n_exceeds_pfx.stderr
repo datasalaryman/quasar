@@ -1,8 +1,7 @@
 error[E0080]: evaluation panicked: PodString<N, PFX>: N exceeds the maximum value representable by the PFX-byte length prefix
  --> $RUST/core/src/panic.rs
   |
-  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `quasar_lang::String::<256>::_CAP_CHECK` failed here
+  = note: evaluation of `quasar_lang::String::<256>::_CAP_CHECK` failed here
   |
  ::: $WORKSPACE/zeropod/src/pod/string.rs
   |
