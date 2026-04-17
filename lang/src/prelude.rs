@@ -28,7 +28,7 @@ pub use {
             AccountCheck, AccountCount, AsAccountView, CheckOwner, Discriminator, Event, HasSeeds,
             Id, Owner, Owners, ParseAccounts, ProgramInterface, Space, StaticView, ZeroCopyDeref,
         },
-        ZcElem, ZcValidate,
+        ZcElem, ZcField, ZcValidate, ZeroPodError,
         String, Vec,
     },
     core::ops::{Deref, DerefMut},
