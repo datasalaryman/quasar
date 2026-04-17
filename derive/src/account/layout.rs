@@ -9,6 +9,8 @@ pub(super) struct ZcSpec {
     pub zc_mod: syn::Ident,
     pub zc_path: proc_macro2::TokenStream,
     pub fields: Vec<proc_macro2::TokenStream>,
+    /// Native-typed fields for the zeropod schema struct (fixed accounts only).
+    pub schema_fields: Vec<proc_macro2::TokenStream>,
 }
 
 pub(super) fn build_zc_spec(
@@ -16,9 +18,13 @@ pub(super) fn build_zc_spec(
     field_infos: &[PodFieldInfo<'_>],
     has_dynamic: bool,
 ) -> ZcSpec {
-    let fields = field_infos
+    let static_fields: Vec<_> = field_infos
         .iter()
         .filter(|fi| fi.pod_dyn.is_none())
+        .collect();
+
+    let fields = static_fields
+        .iter()
         .map(|fi| {
             let field = fi.field;
             let vis = &field.vis;
@@ -27,6 +33,18 @@ pub(super) fn build_zc_spec(
             quote! { #vis #name: #zc_ty }
         })
         .collect();
+
+    let schema_fields = static_fields
+        .iter()
+        .map(|fi| {
+            let field = fi.field;
+            let vis = &field.vis;
+            let name = field.ident.as_ref().expect("field must be named");
+            let ty = &field.ty;
+            quote! { #vis #name: #ty }
+        })
+        .collect();
+
     let zc_name = format_ident!("{}Zc", name);
     let zc_mod = format_ident!("__{}_zc", pascal_to_snake(&name.to_string()));
     let zc_path = if has_dynamic {
@@ -40,6 +58,7 @@ pub(super) fn build_zc_spec(
         zc_mod,
         zc_path,
         fields,
+        schema_fields,
     }
 }
 
@@ -97,21 +116,19 @@ pub(super) fn emit_zc_definition(
             );
         }
     } else {
+        let schema_fields = &zc.schema_fields;
         quote! {
             #[doc(hidden)]
             pub mod #zc_mod {
                 use super::*;
+                use quasar_lang::__zeropod as zeropod;
 
-                #[repr(C)]
-                #[derive(Copy, Clone)]
-                pub struct #zc_name {
-                    #(#zc_fields,)*
+                #[derive(zeropod::ZeroPod)]
+                pub struct __Schema {
+                    #(#schema_fields,)*
                 }
 
-                const _: () = assert!(
-                    core::mem::align_of::<#zc_name>() == 1,
-                    "ZC companion struct must have alignment 1; all fields must use Pod types or alignment-1 types"
-                );
+                pub type #zc_name = __SchemaZc;
             }
         }
     }
