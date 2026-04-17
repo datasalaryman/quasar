@@ -136,11 +136,26 @@ fn generated_clients_compile_from_fresh_project() -> Result<(), Box<dyn Error>> 
     let clients_path = temp.path().join("clients");
     idl::generate(&fixture, &["typescript", "python", "golang"], &clients_path)?;
 
-    compile_rust_client(
-        &clients_path
-            .join("rust")
-            .join(&model.identity.rust_client_crate),
-    )?;
+    // Patch the generated Cargo.toml to use the local workspace `quasar-lang`
+    // instead of the GitHub remote, so the smoke test validates against the
+    // current (possibly unreleased) source.
+    let rust_client_dir = clients_path
+        .join("rust")
+        .join(&model.identity.rust_client_crate);
+    {
+        let cargo_toml_path = rust_client_dir.join("Cargo.toml");
+        let cargo_toml = fs::read_to_string(&cargo_toml_path)?;
+        let patched = cargo_toml.replace(
+            "quasar-lang = { git = \"https://github.com/blueshift-gg/quasar\", branch = \"master\" }",
+            &format!(
+                "quasar-lang = {{ path = \"{}\" }}",
+                workspace_root().join("lang").display()
+            ),
+        );
+        fs::write(&cargo_toml_path, &patched)?;
+    }
+
+    compile_rust_client(&rust_client_dir)?;
     compile_typescript_client(
         &clients_path
             .join("typescript")

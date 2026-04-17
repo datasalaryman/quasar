@@ -75,6 +75,21 @@ impl<P> DynBytes<P> {
     pub fn new(data: Vec<u8>) -> Self {
         Self(data, PhantomData)
     }
+
+    /// Number of bytes in the payload (excludes the prefix).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` if the payload is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The raw byte payload.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl<P> From<Vec<u8>> for DynBytes<P> {
@@ -149,6 +164,21 @@ impl<P> DynString<P> {
     pub fn new(s: &str) -> Self {
         Self(DynBytes::new(s.as_bytes().to_vec()))
     }
+
+    /// Number of UTF-8 bytes in the string (excludes the prefix).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` if the string is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The raw UTF-8 bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
 }
 
 impl<P> From<&str> for DynString<P> {
@@ -213,6 +243,21 @@ pub struct DynVec<T, P = u32>(pub Vec<T>, PhantomData<P>);
 impl<T, P> DynVec<T, P> {
     pub fn new(data: Vec<T>) -> Self {
         Self(data, PhantomData)
+    }
+
+    /// Number of elements (excludes the prefix).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` if the vector is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Iterate over the elements.
+    pub fn iter(&self) -> core::slice::Iter<'_, T> {
+        self.0.iter()
     }
 }
 
