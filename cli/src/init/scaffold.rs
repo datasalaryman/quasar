@@ -556,7 +556,7 @@ use solana_address::Address;
 use solana_instruction::{{AccountMeta, Instruction}};
 
 fn setup() -> QuasarSvm {{
-    let elf = std::fs::read("../target/deploy/{libname}.so").unwrap();
+    let elf = std::fs::read("target/deploy/{libname}.so").unwrap();
     QuasarSvm::new()
         .with_program(&Pubkey::from(crate::ID), &elf)
 }}
