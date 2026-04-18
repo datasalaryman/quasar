@@ -563,7 +563,8 @@ pub(super) fn emit_pda_bump_assignment(
     // Const-PDA fast path: when every seed is a compile-time byte literal
     // and the bump is bare, evaluate the PDA at compile time via
     // `find_program_address_const` and emit a single `keys_eq` at runtime —
-    // skipping ~300 CU of `find_bump_for_address` / `based_try_find_program_address`.
+    // skipping ~300 CU of `find_bump_for_address` /
+    // `based_try_find_program_address`.
     if let (Some(bytes), Some(BumpSyntax::Bare) | None) = (literal_seeds.as_ref(), &pda.bump) {
         let invalid_pda_error = emit_invalid_pda_error_expr(field, log_failure);
         let seed_bytes = bytes.iter().map(|seed| {
