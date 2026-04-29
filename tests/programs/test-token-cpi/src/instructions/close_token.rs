@@ -4,8 +4,8 @@ use {
 };
 
 /// Tests closing a token account via the `close =` attribute.
-/// The macro's epilogue calls `Account::close(dest)` which zeros the account,
-/// transfers lamports, and reassigns to the system program.
+/// The macro's epilogue routes through `AccountExit::close()` which issues
+/// a CPI to the token program's `close_account` instruction.
 #[derive(Accounts)]
 pub struct CloseToken {
     pub authority: Signer,
