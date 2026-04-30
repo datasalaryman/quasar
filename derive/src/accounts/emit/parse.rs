@@ -424,16 +424,24 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
         }
 
         // Phase 3c: address verification for NON-init fields (after load).
-        // Uses verify_existing (fast path) — skips on-curve check since the
-        // account already exists on-chain. Safe because SHA256 collision is
-        // computationally infeasible. Init fields use full verify() in Phase 1.
+        // Account<T>, InterfaceAccount<T>, Migration<From,To> use verify_existing
+        // (fast path) — safe because owner+disc validation during load guarantees
+        // the program created this account with the canonical bump.
+        // UncheckedAccount, SystemAccount, Signer use full verify() — no owner
+        // validation means non-canonical bumps could exist.
         if !sem.has_init() {
             if let Some(address_expr) = &sem.address {
                 let bump_var = format_ident!("__bumps_{}", ident);
+                let use_fast_path = is_validated_account_type(&sem.core.effective_ty);
+                let verify_method = if use_fast_path {
+                    quote! { verify_existing }
+                } else {
+                    quote! { verify }
+                };
                 let call = quote! {
                     {
                         let __addr = #address_expr;
-                        #bump_var = quasar_lang::address::AddressVerify::verify_existing(
+                        #bump_var = quasar_lang::address::AddressVerify::#verify_method(
                             &__addr, #ident.to_account_view().address(), __program_id,
                         )?;
                     }
@@ -701,4 +709,14 @@ pub(crate) fn emit_bump_struct_def(
     } else {
         quote! { #[derive(Copy, Clone)] pub struct #bumps_name { #(#fields,)* } }
     }
+}
+
+/// Returns true for account types with owner + discriminator validation (Account<T>,
+/// InterfaceAccount<T>, Migration<From,To>). These are safe for verify_existing
+/// because the program created them with the canonical bump.
+fn is_validated_account_type(ty: &syn::Type) -> bool {
+    use crate::helpers::extract_generic_inner_type;
+    extract_generic_inner_type(ty, "Account").is_some()
+        || extract_generic_inner_type(ty, "InterfaceAccount").is_some()
+        || extract_generic_inner_type(ty, "Migration").is_some()
 }
