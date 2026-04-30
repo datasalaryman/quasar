@@ -157,7 +157,7 @@ build-sbf:
 test:
 	@$(MAKE) build
 	@$(MAKE) build-sbf
-	@cargo test -p quasar-lang -p quasar-derive -p quasar-spl \
+	@TRYBUILD=overwrite cargo test -p quasar-lang -p quasar-derive -p quasar-spl \
 		-p quasar-vault -p quasar-escrow -p quasar-multisig \
 		-p quasar-test-suite \
 		--all-features
