@@ -7,6 +7,17 @@ pub(crate) enum FieldKind {
     Composite,
 }
 
+/// Op classification for direct capability dispatch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OpKind {
+    /// Validation only (after typed load).
+    Constraint,
+    /// Constraint + init param contribution.
+    ConstraintAndInit,
+    /// Epilogue action (exit phase).
+    Exit,
+}
+
 pub(crate) struct FieldCore {
     pub ident: Ident,
     pub field: syn::Field,
@@ -60,10 +71,16 @@ pub(crate) struct FieldSemantics {
     pub address: Option<Expr>,
     /// `realloc = expr` — realloc size expression.
     pub realloc: Option<Expr>,
-    /// Op groups. The derive dispatches ALL groups at ALL lifecycle phases.
-    /// Each op's trait methods are mostly no-ops (default impls). The op
-    /// decides which phases are real — not the derive, not the user.
+    /// All op groups (used for legacy AccountOp dispatch until fully migrated).
     pub groups: Vec<GroupDirective>,
+    /// Constraint ops (Constraint + ConstraintAndInit): run after load.
+    pub constraints: Vec<GroupDirective>,
+    /// Init contributor ops (ConstraintAndInit only): run during init phase.
+    /// Only populated when `has_init()`.
+    pub init_contributors: Vec<GroupDirective>,
+    /// Exit action ops (Exit kind): run in epilogue.
+    /// Sorted: sweep before close/close_program.
+    pub exit_actions: Vec<GroupDirective>,
     /// Structural assertions: has_one, address, constraints.
     pub user_checks: Vec<UserCheck>,
 }

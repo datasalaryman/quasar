@@ -27,7 +27,7 @@ use {
     super::{
         super::resolve::{FieldKind, FieldSemantics, UserCheck},
         ops::{
-            emit_op_struct, emit_op_type, emit_op_type_static, exit_arg, typed_arg,
+            emit_op_type_static, exit_arg, typed_arg,
             OpEmitCtx,
         },
     },
@@ -156,26 +156,6 @@ fn emit_init_phase(
         if let Some(init) = &sem.init {
             stmts.push(emit_init_before_load(sem, init, op_ctx)?);
         }
-
-        // before_load for ALL groups on init fields.
-        // Args use typed_arg because referenced non-init fields are loaded.
-        if sem.has_init() {
-            for group in &sem.groups {
-                let op_static = emit_op_type_static(group);
-                let op_live = emit_op_type(group);
-                let op = emit_op_struct(group, typed_arg, op_ctx);
-                stmts.push(quote! {
-                    if <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_BEFORE_LOAD {
-                        <#op_live as quasar_lang::ops::AccountOp<
-                            #ty,
-                        >>::before_load(
-                            &#op,
-                            #ident, &__ctx,
-                        )?;
-                    }
-                });
-            }
-        }
     }
 
     Ok(stmts)
@@ -195,9 +175,9 @@ fn emit_init_before_load(
         .ok_or_else(|| syn::Error::new_spanned(&sem.core.field, "init requires `payer`"))?;
 
     // Space from Space::SPACE for program-owned accounts.
-    // When groups contribute init params (token, mint, ata_init), space is 0
+    // When init contributors exist (token, mint, ata_init), space is 0
     // because the SPL init CPI handles allocation.
-    let has_param_contributors = !sem.groups.is_empty();
+    let has_param_contributors = !sem.init_contributors.is_empty();
     let space = if has_param_contributors {
         quote! { 0u64 }
     } else {
@@ -210,11 +190,10 @@ fn emit_init_before_load(
     };
     let idempotent = init.idempotent;
 
-    // Init params: when no groups, use default. When groups exist, construct
-    // default then apply each group's init params. The default() + apply pattern
-    // is needed for multi-group accumulation but works for single-group too.
-    let has_groups = !sem.groups.is_empty();
-    let params_block = if has_groups {
+    // Init params: when contributors exist, construct mutable default then
+    // apply each contributor. Otherwise use immutable default.
+    let has_contributors = !sem.init_contributors.is_empty();
+    let params_block = if has_contributors {
         quote! {
             let mut __init_params = <
                 #ty
@@ -231,30 +210,15 @@ fn emit_init_before_load(
         }
     };
 
-    // Gate apply_init_params on HAS_INIT_PARAMS — op struct only
-    // constructed when the group actually contributes init params.
-    let (op_locals, contributor_calls): (Vec<_>, Vec<_>) = sem
-        .groups
+    // Direct capability trait calls for init contributors.
+    let spl_crate = format_ident!("quasar_{}", "spl");
+    let contributor_calls: Vec<proc_macro2::TokenStream> = sem
+        .init_contributors
         .iter()
-        .enumerate()
-        .map(|(i, group)| {
-            let op = emit_op_struct(group, typed_arg, op_ctx);
-            let op_static = emit_op_type_static(group);
-            let op_live = emit_op_type(group);
-            let op_name = format_ident!("__init_op_{}", i);
-            let local = quote! {};
-            let call = quote! {
-                if <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_INIT_PARAMS {
-                    let #op_name = #op;
-                    <#op_live as quasar_lang::ops::AccountOp<#ty>>::apply_init_params(
-                        &#op_name,
-                        &mut __init_params as *mut _ as *mut u8,
-                    )?;
-                }
-            };
-            (local, call)
+        .map(|group| {
+            emit_init_contributor_call(ty, group, op_ctx, &spl_crate)
         })
-        .unzip();
+        .collect();
 
     let init_call = quote! {
         let __init_op = quasar_lang::ops::init::Op {
@@ -269,7 +233,6 @@ fn emit_init_before_load(
 
     let inner_body = quote! {
             #params_block
-            #(#op_locals)*
             #(#contributor_calls)*
             #init_call
     };
@@ -385,38 +348,14 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
         let ty = &sem.core.effective_ty;
         let is_optional = sem.core.optional;
 
-        // Phase 3a: after_load — gated on HAS_AFTER_LOAD.
-        // Op struct only constructed when the gate is true.
-        for group in &sem.groups {
-            let op_static = emit_op_type_static(group);
-            let op_live = emit_op_type(group);
-            let op = emit_op_struct(group, typed_arg, op_ctx);
-            let call = quote! {
-                if <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_AFTER_LOAD {
-                    <#op_live as quasar_lang::ops::AccountOp<
-                        #ty,
-                    >>::after_load(&#op, &#ident, &__ctx)?;
-                }
-            };
+        // Phase 3a: constraint checks — direct capability trait calls.
+        for group in &sem.constraints {
+            let call = emit_constraint_call(ty, ident, group, op_ctx);
             stmts.push(wrap_optional(is_optional, ident, &call, false));
         }
 
-        // Phase 3b: after_load_mut — gated on HAS_AFTER_LOAD_MUT.
+        // Phase 3b: after_load_mut (realloc + lifecycle).
         if sem.core.is_mut && sem.core.kind == FieldKind::Single {
-            for group in &sem.groups {
-                let op_static = emit_op_type_static(group);
-                let op_live = emit_op_type(group);
-                let op = emit_op_struct(group, typed_arg, op_ctx);
-                let call = quote! {
-                    if <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_AFTER_LOAD_MUT {
-                        <#op_live as quasar_lang::ops::AccountOp<
-                            #ty,
-                        >>::after_load_mut(&#op, &mut #ident, &__ctx)?;
-                    }
-                };
-                stmts.push(wrap_optional(is_optional, ident, &call, true));
-            }
-
             // Realloc op (Phase 3b) — emitted when field has `realloc = expr`
             if let Some(realloc_expr) = &sem.realloc {
                 let payer = sem.payer.as_ref().expect("realloc requires payer");
@@ -491,8 +430,8 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
             stmts.push(wrap_optional(is_optional, ident, &combined, false));
         }
 
-        // REQUIRES_MUT compile-time assertions
-        for group in &sem.groups {
+        // REQUIRES_MUT compile-time assertions for exit ops.
+        for group in &sem.exit_actions {
             let op_static = emit_op_type_static(group);
             let path = &group.path;
             let is_mut = sem.core.is_mut;
@@ -510,6 +449,202 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
     }
 
     stmts
+}
+
+/// Fields relevant to each check context struct.
+const TOKEN_CHECK_FIELDS: &[&str] = &["mint", "authority", "token_program"];
+const MINT_CHECK_FIELDS: &[&str] = &["decimals", "authority", "freeze_authority", "token_program"];
+const ATA_CHECK_FIELDS: &[&str] = &["mint", "authority", "token_program"];
+
+/// Emit a direct capability trait call for a constraint group.
+fn emit_constraint_call(
+    ty: &syn::Type,
+    ident: &syn::Ident,
+    group: &super::super::resolve::GroupDirective,
+    op_ctx: &OpEmitCtx,
+) -> proc_macro2::TokenStream {
+    let name = group
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+
+    let spl_crate = format_ident!("quasar_{}", "spl");
+
+    // Filter group args to only those relevant for the check context struct.
+    let check_fields: &[&str] = match name.as_str() {
+        "token" => TOKEN_CHECK_FIELDS,
+        "mint" => MINT_CHECK_FIELDS,
+        "associated_token" | "ata_init" => ATA_CHECK_FIELDS,
+        _ => &[],
+    };
+
+    let args: Vec<proc_macro2::TokenStream> = group
+        .args
+        .iter()
+        .filter(|a| a.key != "target" && check_fields.contains(&a.key.to_string().as_str()))
+        .map(|arg| {
+            let key = &arg.key;
+            let value = typed_arg(arg, op_ctx);
+            quote! { #key: #value }
+        })
+        .collect();
+
+    match name.as_str() {
+        "token" => quote! {
+            <#ty as #spl_crate::ops::capabilities::TokenCheck>::check_token_view(
+                #ident.to_account_view(),
+                #spl_crate::ops::ctx::TokenCheckCtx { #(#args,)* },
+            )?;
+        },
+        "mint" => quote! {
+            <#ty as #spl_crate::ops::capabilities::MintCheck>::check_mint_view(
+                #ident.to_account_view(),
+                #spl_crate::ops::ctx::MintCheckCtx { #(#args,)* },
+            )?;
+        },
+        "associated_token" | "ata_init" => quote! {
+            <#ty as #spl_crate::ops::capabilities::AtaCheck>::check_ata_view(
+                #ident.to_account_view(),
+                #spl_crate::ops::ctx::AtaCheckCtx { #(#args,)* },
+            )?;
+        },
+        _ => unreachable!("classify_group ensures only known groups reach here"),
+    }
+}
+
+/// Emit a direct capability trait call for an init contributor group.
+fn emit_init_contributor_call(
+    ty: &syn::Type,
+    group: &super::super::resolve::GroupDirective,
+    op_ctx: &OpEmitCtx,
+    spl_crate: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    let name = group
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+
+    // Build context struct fields from group args (excluding target).
+    let args: Vec<proc_macro2::TokenStream> = group
+        .args
+        .iter()
+        .filter(|a| a.key != "target")
+        .map(|arg| {
+            let key = &arg.key;
+            let value = typed_arg(arg, op_ctx);
+            quote! { #key: #value }
+        })
+        .collect();
+
+    match name.as_str() {
+        "token" => quote! {
+            <#ty as #spl_crate::ops::capabilities::TokenInitContributor>::apply_token_init(
+                &mut __init_params,
+                #spl_crate::ops::ctx::TokenInitCtx { #(#args,)* },
+            )?;
+        },
+        "mint" => quote! {
+            <#ty as #spl_crate::ops::capabilities::MintInitContributor>::apply_mint_init(
+                &mut __init_params,
+                #spl_crate::ops::ctx::MintInitCtx { #(#args,)* },
+            )?;
+        },
+        "ata_init" => quote! {
+            <#ty as #spl_crate::ops::capabilities::AtaInitContributor>::apply_ata_init(
+                &mut __init_params,
+                #spl_crate::ops::ctx::AtaInitCtx { #(#args,)* },
+            )?;
+        },
+        _ => unreachable!("only ConstraintAndInit ops reach init_contributors"),
+    }
+}
+
+/// Emit a direct capability trait call for an exit action group.
+fn emit_exit_action_call(
+    ty: &syn::Type,
+    field: &syn::Ident,
+    group: &super::super::resolve::GroupDirective,
+    op_ctx: &OpEmitCtx,
+    spl_crate: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    let name = group
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+
+    // Helper: look up an arg value by key name.
+    let arg_val = |key: &str| -> proc_macro2::TokenStream {
+        group
+            .args
+            .iter()
+            .find(|a| a.key == key)
+            .map(|a| exit_arg(a, op_ctx))
+            .unwrap_or_else(|| quote! { compile_error!(concat!("missing arg: ", #key)) })
+    };
+
+    match name.as_str() {
+        "sweep" => {
+            let receiver = arg_val("receiver");
+            let mint = arg_val("mint");
+            let authority = arg_val("authority");
+            let token_program = arg_val("token_program");
+            let trait_name = format_ident!("Token{}", "Sweep");
+            quote! {
+                <#ty as #spl_crate::ops::sweep::#trait_name>::sweep(
+                    self.#field.to_account_view(),
+                    #receiver,
+                    #mint,
+                    #authority,
+                    #token_program,
+                )?;
+            }
+        }
+        "close" => {
+            let dest = arg_val("dest");
+            let authority = arg_val("authority");
+            let token_program = arg_val("token_program");
+            let trait_name = format_ident!("Token{}", "Close");
+            quote! {
+                {
+                    let __view = unsafe {
+                        <#ty as quasar_lang::account_load::AccountLoad>::to_account_view_mut(
+                            &mut self.#field
+                        )
+                    };
+                    <#ty as #spl_crate::ops::close::#trait_name>::close(
+                        __view,
+                        #dest,
+                        #authority,
+                        #token_program,
+                    )?;
+                }
+            }
+        }
+        "close_program" => {
+            let dest = arg_val("dest");
+            let trait_name = format_ident!("{}Close", "Account");
+            quote! {
+                {
+                    let __view = unsafe {
+                        <#ty as quasar_lang::account_load::AccountLoad>::to_account_view_mut(
+                            &mut self.#field
+                        )
+                    };
+                    <#ty as quasar_lang::ops::close_program::#trait_name>::close(
+                        __view,
+                        #dest,
+                    )?;
+                }
+            }
+        }
+        _ => unreachable!("only Exit ops reach exit_actions"),
+    }
 }
 
 /// Wrap a code block in `if let Some(ref field) = field { ... }` for optional
@@ -594,25 +729,15 @@ pub(crate) fn emit_epilogue(
     op_ctx: &OpEmitCtx,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let mut exit_stmts = Vec::new();
+    let spl_crate = format_ident!("quasar_{}", "spl");
 
     for sem in semantics {
         let ty = &sem.core.effective_ty;
         let field = &sem.core.ident;
 
-        // Phase 4: exit — unconditional emission, symmetric with before_load.
-        // Op-arg grammar guarantees exit_arg always produces valid code.
-        // Gated on HAS_EXIT — dead code eliminated by LLVM.
-        for group in &sem.groups {
-            let op_static = emit_op_type_static(group);
-            let op_live = emit_op_type(group);
-            let op = emit_op_struct(group, exit_arg, op_ctx);
-            exit_stmts.push(quote! {
-                if <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_EXIT {
-                    <#op_live as quasar_lang::ops::AccountOp<
-                        #ty,
-                    >>::exit(&#op, &mut self.#field, &__ctx)?;
-                }
-            });
+        // Exit actions — direct capability trait calls, sorted (sweep before close).
+        for group in &sem.exit_actions {
+            exit_stmts.push(emit_exit_action_call(ty, field, group, op_ctx, &spl_crate));
         }
 
         // FieldLifecycle exit check for types with lifecycle behavior.
@@ -650,18 +775,15 @@ pub(crate) fn emit_epilogue(
 pub(crate) fn emit_has_epilogue(semantics: &[FieldSemantics]) -> proc_macro2::TokenStream {
     let mut exprs: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    // Op-level HAS_EXIT
     for sem in semantics {
-        let ty = sem.core.effective_ty.clone();
-        for group in &sem.groups {
-            let op_static = emit_op_type_static(group);
-            exprs.push(quote! {
-                <#op_static as quasar_lang::ops::AccountOp<#ty>>::HAS_EXIT
-            });
+        // Exit actions are known statically — if any exist, epilogue is needed.
+        if !sem.exit_actions.is_empty() {
+            exprs.push(quote! { true });
         }
 
         // FieldLifecycle exit for types with lifecycle behavior.
         if sem.core.is_mut && sem.core.kind == FieldKind::Single && has_field_lifecycle(sem) {
+            let ty = &sem.core.effective_ty;
             exprs.push(quote! {
                 <#ty as quasar_lang::traits::FieldLifecycle>::HAS_LIFECYCLE_EXIT
             });

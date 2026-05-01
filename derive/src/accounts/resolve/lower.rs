@@ -7,7 +7,7 @@ use {
             parse_field_attrs,
         },
         rules::validate_semantics,
-        FieldCore, FieldKind, FieldSemantics, InitDirective,
+        FieldCore, FieldKind, FieldSemantics, GroupDirective, InitDirective, OpKind,
     },
     crate::helpers::{extract_generic_inner_type, is_composite_type},
     syn::Type,
@@ -38,6 +38,9 @@ pub(super) fn lower_semantics(
                 address: None,
                 realloc: None,
                 groups: Vec::new(),
+                constraints: Vec::new(),
+                init_contributors: Vec::new(),
+                exit_actions: Vec::new(),
                 user_checks: Vec::new(),
             };
             lower_directives(&mut sem, directives)?;
@@ -46,6 +49,12 @@ pub(super) fn lower_semantics(
         .collect::<syn::Result<_>>()?;
 
     validate_semantics(&semantics)?;
+
+    // Classify groups into buckets after validation.
+    let semantics = semantics
+        .into_iter()
+        .map(|sem| classify_groups(sem))
+        .collect::<syn::Result<_>>()?;
 
     Ok(semantics)
 }
@@ -177,4 +186,67 @@ fn detect_dynamic(effective_ty: &Type, inner_ty: Option<&Type>) -> bool {
         }
     }
     false
+}
+
+// --- Op classification ---
+
+/// Classify a group directive by its last path segment.
+fn classify_group(group: &GroupDirective) -> syn::Result<OpKind> {
+    let name = group
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+    match name.as_str() {
+        "token" | "mint" | "ata_init" => Ok(OpKind::ConstraintAndInit),
+        "associated_token" => Ok(OpKind::Constraint),
+        "close" | "close_program" | "sweep" => Ok(OpKind::Exit),
+        _ => Err(syn::Error::new_spanned(
+            &group.path,
+            format!(
+                "unknown op group `{name}`. Valid: token, mint, \
+                 associated_token, ata_init, close, close_program, sweep"
+            ),
+        )),
+    }
+}
+
+/// Classify groups into buckets and sort exit actions.
+fn classify_groups(mut sem: FieldSemantics) -> syn::Result<FieldSemantics> {
+    for group in &sem.groups {
+        let kind = classify_group(group)?;
+        match kind {
+            OpKind::Constraint => {
+                sem.constraints.push(group.clone());
+            }
+            OpKind::ConstraintAndInit => {
+                sem.constraints.push(group.clone());
+                // Only populate init_contributors when field has init.
+                if sem.has_init() {
+                    sem.init_contributors.push(group.clone());
+                }
+            }
+            OpKind::Exit => {
+                sem.exit_actions.push(group.clone());
+            }
+        }
+    }
+
+    // Sort exit_actions: sweep before close/close_program.
+    sem.exit_actions.sort_by_key(|g| {
+        let name = g
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        match name.as_str() {
+            "sweep" => 0,
+            "close" | "close_program" => 1,
+            _ => 2,
+        }
+    });
+
+    Ok(sem)
 }
