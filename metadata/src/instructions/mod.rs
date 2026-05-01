@@ -19,7 +19,7 @@ mod verify_collection;
 use {
     crate::codec::BorshCpiEncode,
     quasar_lang::{
-        cpi::{CpiCall, DynCpiCall},
+        cpi::{CpiCall, CpiDynamic},
         prelude::*,
     },
 };
@@ -34,7 +34,7 @@ const MAX_URI_LEN: usize = 200;
 /// Implemented by [`crate::MetadataProgram`].
 pub trait MetadataCpi: AsAccountView {
     // -----------------------------------------------------------------------
-    // Variable-length instructions (DynCpiCall)
+    // Variable-length instructions (CpiDynamic)
     // -----------------------------------------------------------------------
 
     /// Create a metadata account for an SPL Token mint.
@@ -58,7 +58,7 @@ pub trait MetadataCpi: AsAccountView {
         seller_fee_basis_points: u16,
         is_mutable: bool,
         update_authority_is_signer: bool,
-    ) -> Result<DynCpiCall<'a, 7, 512>, ProgramError> {
+    ) -> Result<CpiDynamic<'a, 7, 512>, ProgramError> {
         create_metadata::create_metadata_accounts_v3(
             self.to_account_view(),
             metadata.to_account_view(),
@@ -93,7 +93,7 @@ pub trait MetadataCpi: AsAccountView {
         seller_fee_basis_points: Option<u16>,
         primary_sale_happened: Option<bool>,
         is_mutable: Option<bool>,
-    ) -> Result<DynCpiCall<'a, 2, 512>, ProgramError> {
+    ) -> Result<CpiDynamic<'a, 2, 512>, ProgramError> {
         update_metadata::update_metadata_accounts_v2(
             self.to_account_view(),
             metadata.to_account_view(),
@@ -847,7 +847,7 @@ mod kani_proofs {
     // depends on runtime field lengths. We prove that every valid combination
     // of field lengths keeps the total offset within the 512-byte buffer.
 
-    // -- create_metadata_accounts_v3 (disc=33, 512-byte DynCpiCall buf) ------
+    // -- create_metadata_accounts_v3 (disc=33, 512-byte CpiDynamic buf) ------
 
     /// Prove that `create_metadata_accounts_v3` offset arithmetic stays within
     /// the 512-byte buffer for all valid field lengths.
@@ -926,7 +926,7 @@ mod kani_proofs {
         assert!(offset == expected);
     }
 
-    // -- update_metadata_accounts_v2 (disc=15, 512-byte DynCpiCall buf) ------
+    // -- update_metadata_accounts_v2 (disc=15, 512-byte CpiDynamic buf) ------
 
     /// Prove that `update_metadata_accounts_v2` offset arithmetic stays within
     /// the 512-byte buffer in the worst case: all `Option` fields are `Some`

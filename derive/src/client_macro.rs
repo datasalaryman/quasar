@@ -122,8 +122,11 @@ fn describe_accounts(
                 name: sem.core.ident.to_string(),
                 writable: sem.is_writable(),
                 signer: is_signer || client_requires_signer(sem),
+                optional: sem.core.optional,
+                docs: vec![],
                 pda: None, // PDA info now opaque via AddressVerify
                 address: known_address(ty, is_program, is_sysvar).map(str::to_owned),
+                relations: vec![],
                 migration: None,
             }
         })

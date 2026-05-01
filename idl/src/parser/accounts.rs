@@ -21,6 +21,8 @@ pub struct RawAccountField {
     pub name: String,
     pub writable: bool,
     pub signer: bool,
+    pub optional: bool,
+    pub docs: Vec<String>,
     pub pda: Option<RawPda>,
     pub address: Option<String>,
     pub field_class: FieldClass,
@@ -138,6 +140,31 @@ fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccou
         || has_writable_directive(&field.attrs)
         || migration.is_some();
 
+    // Detect Option<T> wrapping
+    let optional = helpers::type_base_name(&field.ty).as_deref() == Some("Option");
+
+    // Extract /// doc comments
+    let docs: Vec<String> = field
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .filter_map(|a| match &a.meta {
+            syn::Meta::NameValue(nv) => {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    Some(s.value().trim().to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
     // Collect sibling field names for seed reference detection
     let sibling_names: Vec<String> = match &parent.fields {
         Fields::Named(named) => named
@@ -160,6 +187,8 @@ fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccou
         name,
         writable,
         signer,
+        optional,
+        docs,
         pda,
         address,
         field_class,
@@ -536,12 +565,22 @@ fn to_idl_account_item(
             to: to.clone(),
         });
 
+    let relations: Vec<String> = field
+        .constraints
+        .has_ones
+        .iter()
+        .map(|s| helpers::to_camel_case(s))
+        .collect();
+
     IdlAccountItem {
         name: helpers::to_camel_case(&field.name),
         writable: field.writable,
         signer: field.signer,
+        optional: field.optional,
+        docs: field.docs.clone(),
         pda,
         address: field.address.clone(),
+        relations,
         migration,
     }
 }

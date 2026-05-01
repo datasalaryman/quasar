@@ -121,6 +121,7 @@ fn lower_directives(sem: &mut FieldSemantics, directives: Vec<Directive>) -> syn
             Directive::Realloc(expr) => {
                 sem.realloc = Some(expr);
             }
+            Directive::Allow(_) => { /* lint-only, ignored by derive */ }
             Directive::Group(group) => {
                 groups.push(group);
             }

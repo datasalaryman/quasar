@@ -95,26 +95,12 @@ pub fn classify_field_type(ty: &syn::Type) -> (FieldClass, Option<String>) {
     }
 }
 
-/// Parse all `#[account(...)]` and `#[allow(quasar::*)]` attributes on a field.
+/// Parse all `#[account(...)]` attributes on a field, including
+/// `allow(...)` lint suppressions within the `#[account(...)]` block.
 pub fn parse_field_constraints(attrs: &[syn::Attribute]) -> FieldConstraints {
     let mut c = FieldConstraints::default();
 
     for attr in attrs {
-        // Parse #[allow(quasar::...)] suppressions
-        if attr.path().is_ident("allow") {
-            if let Ok(list) = attr.meta.require_list() {
-                let tokens_str = list.tokens.to_string();
-                for part in tokens_str.split(',') {
-                    // Normalize spaces around `::` that syn inserts
-                    let normalized: String = part.split_whitespace().collect::<Vec<_>>().join("");
-                    if normalized.starts_with("quasar::") {
-                        c.suppressions.push(normalized);
-                    }
-                }
-            }
-            continue;
-        }
-
         if !attr.path().is_ident("account") {
             continue;
         }
@@ -158,6 +144,19 @@ pub fn parse_field_constraints(attrs: &[syn::Attribute]) -> FieldConstraints {
                 c.seeds_account_refs.extend(refs);
             } else if d.starts_with("constraint") {
                 c.has_constraint = true;
+            } else if d.starts_with("allow") {
+                // Parse allow(unconstrained, ...) within #[account(...)]
+                if let Some(paren_start) = d.find('(') {
+                    if let Some(paren_end) = d.rfind(')') {
+                        let inner = &d[paren_start + 1..paren_end];
+                        for name in inner.split(',') {
+                            let name = name.trim();
+                            if !name.is_empty() {
+                                c.suppressions.push(name.to_string());
+                            }
+                        }
+                    }
+                }
             } else if d.starts_with("close") {
                 c.has_close = true;
             } else if d.starts_with("payer") {
@@ -503,10 +502,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_allow_suppression() {
+    fn parse_allow_suppression_in_account_attr() {
         let code = r#"
             pub struct Foo {
-                #[allow(quasar::unconstrained)]
+                #[account(mut, allow(unconstrained))]
                 pub x: u32,
             }
         "#;
@@ -516,11 +515,11 @@ mod tests {
                 let field = &fields.named[0];
                 let c = parse_field_constraints(&field.attrs);
                 assert!(
-                    c.suppressions
-                        .contains(&"quasar::unconstrained".to_string()),
-                    "expected quasar::unconstrained suppression, got: {:?}",
+                    c.suppressions.contains(&"unconstrained".to_string()),
+                    "expected unconstrained suppression from account attr, got: {:?}",
                     c.suppressions
                 );
+                assert!(c.is_mut, "mut directive should also be parsed");
             }
         }
     }

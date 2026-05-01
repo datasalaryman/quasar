@@ -1,6 +1,6 @@
 use {
     crate::codec::CpiEncode,
-    quasar_lang::{cpi::DynCpiCall, prelude::*},
+    quasar_lang::{cpi::CpiDynamic, prelude::*},
 };
 
 const UPDATE_METADATA_ACCOUNTS_V2: u8 = 15;
@@ -24,7 +24,7 @@ pub fn update_metadata_accounts_v2<'a>(
     seller_fee_basis_points: Option<u16>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
-) -> Result<DynCpiCall<'a, 2, 512>, ProgramError> {
+) -> Result<CpiDynamic<'a, 2, 512>, ProgramError> {
     if let Some(n) = name {
         if n.len() > super::MAX_NAME_LEN {
             return Err(metadata_field_too_long());
@@ -41,7 +41,7 @@ pub fn update_metadata_accounts_v2<'a>(
         }
     }
 
-    let mut cpi = DynCpiCall::<2, 512>::new(program.address());
+    let mut cpi = CpiDynamic::<2, 512>::new(program.address());
 
     // Push accounts.
     cpi.push_account(metadata, false, true)?;

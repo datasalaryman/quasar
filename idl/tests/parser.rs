@@ -768,6 +768,8 @@ fn rust_codegen_account_metas() {
             name: "Transfer".to_string(),
             fields: vec![
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "from".to_string(),
                     writable: true,
                     signer: true,
@@ -780,6 +782,8 @@ fn rust_codegen_account_metas() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "to".to_string(),
                     writable: true,
                     signer: false,
@@ -792,6 +796,8 @@ fn rust_codegen_account_metas() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "authority".to_string(),
                     writable: false,
                     signer: true,
@@ -1652,6 +1658,8 @@ fn ts_codegen_pda_helpers_are_exported_and_reused() {
         name: "Deposit".to_string(),
         fields: vec![
             RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "vault".to_string(),
                 writable: true,
                 signer: false,
@@ -1669,6 +1677,8 @@ fn ts_codegen_pda_helpers_are_exported_and_reused() {
                 migration: None,
             },
             RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "user".to_string(),
                 writable: false,
                 signer: true,
@@ -1732,6 +1742,8 @@ fn ts_codegen_pda_arg_seeds_are_encoded_by_type() {
     parsed.accounts_structs = vec![RawAccountsStruct {
         name: "Deposit".to_string(),
         fields: vec![RawAccountField {
+            optional: false,
+            docs: vec![],
             name: "vault".to_string(),
             writable: true,
             signer: false,
@@ -1811,6 +1823,8 @@ fn ts_codegen_duplicate_seed_sets_reuse_one_helper_name() {
             name: "Deposit".to_string(),
             fields: vec![
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "vault".to_string(),
                     writable: true,
                     signer: false,
@@ -1828,6 +1842,8 @@ fn ts_codegen_duplicate_seed_sets_reuse_one_helper_name() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "user".to_string(),
                     writable: false,
                     signer: true,
@@ -1845,6 +1861,8 @@ fn ts_codegen_duplicate_seed_sets_reuse_one_helper_name() {
             name: "Withdraw".to_string(),
             fields: vec![
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "escrow".to_string(),
                     writable: true,
                     signer: false,
@@ -1862,6 +1880,8 @@ fn ts_codegen_duplicate_seed_sets_reuse_one_helper_name() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "user".to_string(),
                     writable: false,
                     signer: true,
@@ -1923,6 +1943,8 @@ fn ts_codegen_helper_name_collisions_are_disambiguated() {
             name: "Deposit".to_string(),
             fields: vec![
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "vault".to_string(),
                     writable: true,
                     signer: false,
@@ -1940,6 +1962,8 @@ fn ts_codegen_helper_name_collisions_are_disambiguated() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "user".to_string(),
                     writable: false,
                     signer: true,
@@ -1957,6 +1981,8 @@ fn ts_codegen_helper_name_collisions_are_disambiguated() {
             name: "Settle".to_string(),
             fields: vec![
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "vault".to_string(),
                     writable: true,
                     signer: false,
@@ -1974,6 +2000,8 @@ fn ts_codegen_helper_name_collisions_are_disambiguated() {
                     migration: None,
                 },
                 RawAccountField {
+                    optional: false,
+                    docs: vec![],
                     name: "user".to_string(),
                     writable: false,
                     signer: true,
@@ -2199,6 +2227,8 @@ fn rust_codegen_pda_helpers() {
         name: "Deposit".to_string(),
         fields: vec![
             RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "vault".to_string(),
                 writable: true,
                 signer: false,
@@ -2216,6 +2246,8 @@ fn rust_codegen_pda_helpers() {
                 migration: None,
             },
             RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "user".to_string(),
                 writable: false,
                 signer: true,
@@ -2272,6 +2304,8 @@ fn rust_codegen_pda_dedup() {
         RawAccountsStruct {
             name: "Deposit".to_string(),
             fields: vec![RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "vault".to_string(),
                 writable: true,
                 signer: false,
@@ -2287,6 +2321,8 @@ fn rust_codegen_pda_dedup() {
         RawAccountsStruct {
             name: "Withdraw".to_string(),
             fields: vec![RawAccountField {
+                optional: false,
+                docs: vec![],
                 name: "vault".to_string(),
                 writable: true,
                 signer: false,
@@ -2571,5 +2607,41 @@ fn rust_codegen_event_discriminator_no_stutter() {
     assert!(
         code.contains("ORDER_CANCELLED_EVENT_DISCRIMINATOR"),
         "{code}"
+    );
+}
+
+// ===========================================================================
+// Optional accounts — `Option<Account<T>>` emits `"optional": true` in IDL
+// ===========================================================================
+
+#[test]
+fn optional_account_emits_optional_flag() {
+    use quasar_idl::parser::accounts;
+
+    let file = parse_file(
+        r#"
+        #[derive(Accounts)]
+        pub struct TransferFunds {
+            pub payer: Signer,
+            #[account(mut)]
+            pub vault: Account<Vault>,
+            pub maybe_dest: Option<Account<Vault>>,
+        }
+        "#,
+    );
+
+    let structs = accounts::extract_accounts_structs(&file);
+    assert_eq!(structs.len(), 1);
+    let raw = &structs[0];
+    assert_eq!(raw.fields.len(), 3);
+
+    // payer (Signer) — not optional
+    assert!(!raw.fields[0].optional, "payer should not be optional");
+    // vault (Account<Vault>) — not optional
+    assert!(!raw.fields[1].optional, "vault should not be optional");
+    // maybe_dest (Option<Account<Vault>>) — optional
+    assert!(
+        raw.fields[2].optional,
+        "Option<Account<Vault>> should be optional"
     );
 }

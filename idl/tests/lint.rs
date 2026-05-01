@@ -213,7 +213,7 @@ fn l001_suppressed_by_allow_attribute() {
         #[derive(Accounts)]
         pub struct S<'info> {
             pub authority: Signer,
-            #[allow(quasar::unconstrained)]
+            #[account(allow(unconstrained))]
             pub vault: Account<Vault<'info>>,
         }
         #[account(discriminator = 1)]

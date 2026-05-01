@@ -453,6 +453,15 @@ fn pod_alias_type(ty: &Type, accept_pod_aliases: bool) -> Option<proc_macro2::To
                 if accept_pod_aliases {
                     return Some(quote! { quasar_lang::pod::PodVec });
                 }
+            } else if seg.ident == "Option" {
+                // Recursively unwrap Option<T> and apply pod alias to inner type.
+                if let PathArguments::AngleBracketed(ab) = &seg.arguments {
+                    if let Some(syn::GenericArgument::Type(inner)) = ab.args.first() {
+                        if let Some(inner_pod) = pod_alias_type(inner, accept_pod_aliases) {
+                            return Some(quote! { Option<#inner_pod> });
+                        }
+                    }
+                }
             }
         }
     }

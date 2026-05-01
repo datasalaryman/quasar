@@ -2,7 +2,7 @@
 //!
 //! `CpiCall` is the primary type — a const-generic struct where account count
 //! and data size are known at compile time, keeping everything on the stack.
-//! `DynCpiCall` is the variable-length variant where both account count and
+//! `CpiDynamic` is the variable-length variant where both account count and
 //! data size are runtime-tracked within compile-time capacity bounds.
 //!
 //! Account types (`CpiAccount`, `InstructionAccount`, `Seed`, `Signer`) come
@@ -20,7 +20,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
 };
 pub use {
-    dyn_cpi::DynCpiCall,
+    dyn_cpi::CpiDynamic,
     solana_instruction_view::{
         cpi::{CpiAccount, Seed, Signer, MAX_RETURN_DATA},
         InstructionAccount, InstructionView,
@@ -53,7 +53,7 @@ struct CInstruction<'a> {
 /// - `cpi_accounts[..cpi_accounts_len]` must be valid.
 #[inline(always)]
 #[allow(clippy::too_many_arguments, unused_variables)]
-pub(crate) unsafe fn invoke_raw(
+pub unsafe fn invoke_raw(
     program_id: *const Address,
     instruction_accounts: *const InstructionAccount,
     instruction_accounts_len: usize,
@@ -102,7 +102,7 @@ pub(crate) unsafe fn invoke_raw(
 
 /// Convert a raw syscall result to `ProgramResult`.
 #[inline(always)]
-pub(crate) fn result_from_raw(result: u64) -> ProgramResult {
+pub fn result_from_raw(result: u64) -> ProgramResult {
     if result == 0 {
         Ok(())
     } else {

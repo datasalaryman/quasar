@@ -1,6 +1,6 @@
 //! Dynamic CPI builder with runtime-tracked account and data lengths.
 //!
-//! `DynCpiCall` is the variable-length counterpart to [`super::CpiCall`].
+//! `CpiDynamic` is the variable-length counterpart to [`super::CpiCall`].
 //! Both accounts and data are backed by `MaybeUninit` stack arrays with
 //! compile-time capacity, while the active count is tracked at runtime.
 //! This replaces `BufCpiCall` which only supported variable data.
@@ -36,7 +36,7 @@ const _: () = assert!(!core::mem::needs_drop::<CpiAccount>());
 ///
 /// - `MAX_ACCTS`: maximum number of accounts (capacity, not initial count).
 /// - `MAX_DATA`: maximum byte length of instruction data.
-pub struct DynCpiCall<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> {
+pub struct CpiDynamic<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> {
     program_id: &'a Address,
     accounts: MaybeUninit<[InstructionAccount<'a>; MAX_ACCTS]>,
     cpi_accounts: MaybeUninit<[CpiAccount<'a>; MAX_ACCTS]>,
@@ -45,16 +45,21 @@ pub struct DynCpiCall<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> {
     data_len: usize,
 }
 
-impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> DynCpiCall<'a, MAX_ACCTS, MAX_DATA> {
+impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> CpiDynamic<'a, MAX_ACCTS, MAX_DATA> {
     // Compile-time stack overflow guard — fires at monomorphization time.
     // InstructionAccount is 24 bytes, CpiAccount is 56 bytes, plus data +
     // bookkeeping.
     const _STACK_CHECK: () = assert!(
         56 * MAX_ACCTS + 24 * MAX_ACCTS + MAX_DATA + 24 <= 3072,
-        "DynCpiCall exceeds safe 3 KiB stack budget for SVM 4 KiB frames"
+        "CpiDynamic exceeds safe 3 KiB stack budget for SVM 4 KiB frames"
     );
 
     /// Create a new builder targeting the given program.
+    ///
+    /// Includes a compile-time assertion that the monomorphized struct fits
+    /// within the SVM 3 KiB safe stack budget. Use
+    /// [`new_unchecked`](Self::new_unchecked) to bypass this check when you
+    /// manage stack usage yourself.
     #[inline(always)]
     pub fn new(program_id: &'a Address) -> Self {
         // Force compile-time stack size check.
@@ -63,6 +68,26 @@ impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> DynCpiCall<'a, MAX_ACCTS
         Self {
             program_id,
             // Stable MaybeUninit pattern (not nightly uninit_array).
+            accounts: MaybeUninit::uninit(),
+            cpi_accounts: MaybeUninit::uninit(),
+            acct_len: 0,
+            data: MaybeUninit::uninit(),
+            data_len: 0,
+        }
+    }
+
+    /// Create a new builder **without** the compile-time stack budget check.
+    ///
+    /// Use this when you know your call site has sufficient stack headroom
+    /// (e.g., the CPI is the only large stack allocation in the frame, or you
+    /// have explicitly verified the frame fits within the SVM 4 KiB limit).
+    ///
+    /// The resulting `CpiDynamic` behaves identically to one created by
+    /// [`new`](Self::new) — only the static assertion is skipped.
+    #[inline(always)]
+    pub fn new_unchecked(program_id: &'a Address) -> Self {
+        Self {
+            program_id,
             accounts: MaybeUninit::uninit(),
             cpi_accounts: MaybeUninit::uninit(),
             acct_len: 0,
@@ -285,7 +310,7 @@ mod tests {
 
     #[test]
     fn data_mut_write_and_read_back() {
-        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 8>::new(&PROGRAM_ID);
         // SAFETY: Writing 4 bytes into the uninitialized buffer, then reading
         // only those 4 bytes back via instruction_data().
         unsafe {
@@ -298,7 +323,7 @@ mod tests {
 
     #[test]
     fn push_account_then_set_data_round_trip() {
-        let mut cpi = DynCpiCall::<2, 16>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<2, 16>::new(&PROGRAM_ID);
 
         let mut buf = AccountBuffer::new(0);
         buf.init([1; 32], [2; 32], 0, true, true, false);
@@ -311,7 +336,7 @@ mod tests {
 
     #[test]
     fn push_account_overflow_returns_error() {
-        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 8>::new(&PROGRAM_ID);
 
         let mut buf1 = AccountBuffer::new(0);
         buf1.init([1; 32], [2; 32], 0, true, false, false);
@@ -327,26 +352,26 @@ mod tests {
 
     #[test]
     fn set_data_overflow_returns_error() {
-        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 4>::new(&PROGRAM_ID);
         assert!(cpi.set_data(&[0; 5]).is_err());
     }
 
     #[test]
     fn set_data_exact_capacity() {
-        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 4>::new(&PROGRAM_ID);
         assert!(cpi.set_data(&[0xAA; 4]).is_ok());
         assert_eq!(cpi.instruction_data(), &[0xAA; 4]);
     }
 
     #[test]
     fn set_data_len_overflow_returns_error() {
-        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 4>::new(&PROGRAM_ID);
         assert!(cpi.set_data_len(5).is_err());
     }
 
     #[test]
     fn set_data_len_exact_capacity() {
-        let mut cpi = DynCpiCall::<1, 4>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 4>::new(&PROGRAM_ID);
         // SAFETY: We're only setting the length; invoke would read these bytes
         // but we won't invoke — this tests the length validation path.
         assert!(cpi.set_data_len(4).is_ok());
@@ -354,14 +379,14 @@ mod tests {
 
     #[test]
     fn set_data_zero_length() {
-        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 8>::new(&PROGRAM_ID);
         assert!(cpi.set_data(&[]).is_ok());
         assert_eq!(cpi.instruction_data(), &[]);
     }
 
     #[test]
     fn data_mut_returns_raw_pointer() {
-        let mut cpi = DynCpiCall::<1, 8>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<1, 8>::new(&PROGRAM_ID);
         let ptr = cpi.data_mut();
         // Verify it's a valid pointer by writing through it.
         // SAFETY: Writing within the MAX_DATA capacity.
@@ -376,7 +401,7 @@ mod tests {
 
     #[test]
     fn push_account_fills_to_capacity() {
-        let mut cpi = DynCpiCall::<3, 8>::new(&PROGRAM_ID);
+        let mut cpi = CpiDynamic::<3, 8>::new(&PROGRAM_ID);
 
         let mut buf0 = AccountBuffer::new(0);
         let mut buf1 = AccountBuffer::new(0);
@@ -407,7 +432,7 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use {
-        super::DynCpiCall,
+        super::CpiDynamic,
         crate::cpi::{AccountBuffer, MIN_ACCOUNT_BUF},
     };
 
@@ -421,7 +446,7 @@ mod kani_proofs {
         kani::assume(target <= MAX_ACCTS);
 
         let addr = solana_address::Address::new_from_array([0x11; 32]);
-        let mut cpi = DynCpiCall::<MAX_ACCTS, 8>::new(&addr);
+        let mut cpi = CpiDynamic::<MAX_ACCTS, 8>::new(&addr);
 
         let mut buf = AccountBuffer::<MIN_ACCOUNT_BUF>::new();
         buf.init([1; 32], [0; 32], 0, true, true, false);
@@ -449,7 +474,7 @@ mod kani_proofs {
         kani::assume(data_len <= 32);
 
         let addr = solana_address::Address::new_from_array([0x11; 32]);
-        let mut cpi = DynCpiCall::<1, MAX_DATA>::new(&addr);
+        let mut cpi = CpiDynamic::<1, MAX_DATA>::new(&addr);
         let buf = [0u8; 32];
 
         if data_len <= MAX_DATA {
@@ -465,7 +490,7 @@ mod kani_proofs {
     fn sequential_pushes_cover_all_indices() {
         const MAX_ACCTS: usize = 4;
         let addr = solana_address::Address::new_from_array([0x11; 32]);
-        let mut cpi = DynCpiCall::<MAX_ACCTS, 8>::new(&addr);
+        let mut cpi = CpiDynamic::<MAX_ACCTS, 8>::new(&addr);
 
         let mut buf0 = AccountBuffer::<MIN_ACCOUNT_BUF>::new();
         let mut buf1 = AccountBuffer::<MIN_ACCOUNT_BUF>::new();

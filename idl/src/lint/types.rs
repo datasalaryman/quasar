@@ -38,14 +38,14 @@ impl LintRule {
 
     pub fn suppression_attr(&self) -> &'static str {
         match self {
-            Self::L001 => "quasar::unconstrained",
-            Self::L002 => "quasar::disconnected_graph",
-            Self::L003 => "quasar::missing_has_one",
-            Self::L004 => "quasar::unvalidated_mint",
-            Self::L005 => "quasar::unvalidated_authority",
-            Self::L006 => "quasar::writable_no_authority",
-            Self::L007 => "quasar::unchecked_account",
-            Self::L009 => "quasar::cross_instruction",
+            Self::L001 => "unconstrained",
+            Self::L002 => "disconnected_graph",
+            Self::L003 => "missing_has_one",
+            Self::L004 => "unvalidated_mint",
+            Self::L005 => "unvalidated_authority",
+            Self::L006 => "writable_no_authority",
+            Self::L007 => "unchecked_account",
+            Self::L009 => "cross_instruction",
         }
     }
 }

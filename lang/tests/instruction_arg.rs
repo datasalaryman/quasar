@@ -428,18 +428,12 @@ fn repr_u8_enum_validate_recurses_through_option() {
     // the payload bytes. A corrupt inner enum with `Some` outer is the
     // highest-risk path because `from_zc` on the inner side panics via
     // `unreachable!` when `validate_zc` has not filtered it out.
-    let bad: OptionZc<u8> = OptionZc {
-        tag: 1,
-        value: core::mem::MaybeUninit::new(99u8),
-    };
+    let bad: OptionZc<u8> = OptionZc::some(99u8);
     assert!(<Option<Status> as InstructionArg>::validate_zc(&bad).is_err());
 
     // Positive control: a valid `Some(Pending)` must pass recursive
     // validation.
-    let ok: OptionZc<u8> = OptionZc {
-        tag: 1,
-        value: core::mem::MaybeUninit::new(Status::Pending as u8),
-    };
+    let ok: OptionZc<u8> = OptionZc::some(Status::Pending as u8);
     assert!(<Option<Status> as InstructionArg>::validate_zc(&ok).is_ok());
 
     // `None` is also valid and carries no inner constraint.

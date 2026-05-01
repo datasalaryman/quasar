@@ -326,4 +326,16 @@ mod quasar_test_misc {
     pub fn cpi_mut_readback(ctx: Ctx<CpiMutReadback>, new_value: u64) -> Result<(), ProgramError> {
         ctx.accounts.handler(new_value)
     }
+
+    /// Proves Option<String<N>> and Option<Vec<T, N>> compile as instruction
+    /// arguments (#144).
+    #[instruction(discriminator = 61)]
+    pub fn optional_dynamic_arg(
+        ctx: Ctx<PlainOk>,
+        maybe_name: Option<String<32>>,
+        maybe_addrs: Option<Vec<Address, 4>>,
+    ) -> Result<(), ProgramError> {
+        let _ = (maybe_name, maybe_addrs);
+        ctx.accounts.handler()
+    }
 }

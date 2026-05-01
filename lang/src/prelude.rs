@@ -13,7 +13,7 @@ pub use {
         context::{Context, Ctx, CtxWithRemaining},
         cpi::{
             system::{SystemProgram, SYSTEM_PROGRAM_ID},
-            CpiReturn, DynCpiCall, Seed,
+            CpiDynamic, CpiReturn, Seed,
         },
         dispatch, emit,
         error::QuasarError,

@@ -25,6 +25,64 @@ impl Id for AssociatedTokenProgram {
     const ID: Address = Address::new_from_array(ATA_PROGRAM_BYTES);
 }
 
+/// Trait for types that can execute ATA program CPI calls.
+///
+/// Implemented by `Program<AssociatedTokenProgram>`. Import this trait to
+/// call `.create()` and `.create_idempotent()` directly on the program account.
+pub trait AssociatedTokenCpi: AsAccountView {
+    /// Create an associated token account.
+    ///
+    /// Fails if the associated token account already exists. Use
+    /// [`create_idempotent`](Self::create_idempotent) if you want a no-op on
+    /// an existing account.
+    #[inline(always)]
+    fn create<'a>(
+        &'a self,
+        payer: &'a impl AsAccountView,
+        ata: &'a AccountView,
+        wallet: &'a impl AsAccountView,
+        mint: &'a impl AsAccountView,
+        system_program: &'a Program<SystemProgram>,
+        token_program: &'a impl TokenCpi,
+    ) -> CpiCall<'a, 6, 1> {
+        build_ata_cpi(
+            self.to_account_view(),
+            payer,
+            ata,
+            wallet,
+            mint,
+            system_program,
+            token_program,
+            ATA_CREATE,
+        )
+    }
+
+    /// Create an associated token account, no-op if it already exists.
+    #[inline(always)]
+    fn create_idempotent<'a>(
+        &'a self,
+        payer: &'a impl AsAccountView,
+        ata: &'a AccountView,
+        wallet: &'a impl AsAccountView,
+        mint: &'a impl AsAccountView,
+        system_program: &'a Program<SystemProgram>,
+        token_program: &'a impl TokenCpi,
+    ) -> CpiCall<'a, 6, 1> {
+        build_ata_cpi(
+            self.to_account_view(),
+            payer,
+            ata,
+            wallet,
+            mint,
+            system_program,
+            token_program,
+            ATA_CREATE_IDEMPOTENT,
+        )
+    }
+}
+
+impl AssociatedTokenCpi for Program<AssociatedTokenProgram> {}
+
 // ---------------------------------------------------------------------------
 // Address derivation
 // ---------------------------------------------------------------------------
@@ -74,7 +132,7 @@ pub fn create<'a>(
     token_program: &'a impl TokenCpi,
 ) -> CpiCall<'a, 6, 1> {
     build_ata_cpi(
-        ata_program,
+        ata_program.to_account_view(),
         payer,
         ata,
         wallet,
@@ -102,7 +160,7 @@ pub fn create_idempotent<'a>(
     token_program: &'a impl TokenCpi,
 ) -> CpiCall<'a, 6, 1> {
     build_ata_cpi(
-        ata_program,
+        ata_program.to_account_view(),
         payer,
         ata,
         wallet,
@@ -116,7 +174,7 @@ pub fn create_idempotent<'a>(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn build_ata_cpi<'a>(
-    ata_program: &'a AssociatedTokenProgram,
+    ata_program: &'a AccountView,
     payer: &'a impl AsAccountView,
     ata: &'a AccountView,
     wallet: &'a impl AsAccountView,

@@ -45,92 +45,6 @@
 
 #![no_std]
 
-/// Implements the shared account wrapper contract for a type owned by a single
-/// program.
-///
-/// Generates the wrapper, owner, and zero-copy deref machinery. Account-data
-/// validation can either use the default fixed-length implementation here or a
-/// custom `AccountCheck` impl when the type needs parameterized validation.
-///
-/// Generates these trait implementations:
-///
-/// - `StaticView` — marks the type as having a fixed layout
-/// - `AsAccountView` — provides access to the underlying `AccountView`
-/// - `CheckOwner` — validates `owner == $id`
-/// - `Deref` / `DerefMut` → `$target` — zero-copy access to account data
-/// - `ZeroCopyDeref` — enables `InterfaceAccount<T>` to deref through this type
-///
-/// # Safety
-///
-/// The `Deref` / `DerefMut` impls perform `unsafe` pointer casts from the
-/// raw account data to `$target`. This is sound because:
-///
-/// 1. `AccountCheck::check` for the account type validated `data_len >=
-///    $target::LEN`
-/// 2. `$target` is `#[repr(C)]` with alignment 1 (any pointer is valid)
-/// 3. The owner check guarantees the data was written by the expected program
-macro_rules! impl_program_account {
-    ($ty:ty, $id:expr, $target:ty) => {
-        unsafe impl StaticView for $ty {}
-
-        impl AsAccountView for $ty {
-            #[inline(always)]
-            fn to_account_view(&self) -> &AccountView {
-                &self.__view
-            }
-        }
-
-        impl CheckOwner for $ty {
-            #[inline(always)]
-            fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
-                if quasar_lang::utils::hint::unlikely(!quasar_lang::keys_eq(view.owner(), &$id)) {
-                    return Err(ProgramError::IllegalOwner);
-                }
-                Ok(())
-            }
-        }
-
-        impl core::ops::Deref for $ty {
-            type Target = $target;
-
-            #[inline(always)]
-            fn deref(&self) -> &Self::Target {
-                // SAFETY: `AccountCheck::check` validated `data_len >= LEN`.
-                // `$target` is `#[repr(C)]` with alignment 1 — any data
-                // pointer is valid.
-                unsafe { &*(self.__view.data_ptr() as *const $target) }
-            }
-        }
-
-        impl core::ops::DerefMut for $ty {
-            #[inline(always)]
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                // SAFETY: Same as Deref — length validated, alignment 1.
-                // Mutability checked by the writable constraint.
-                unsafe { &mut *(self.__view.data_mut_ptr() as *mut $target) }
-            }
-        }
-
-        impl ZeroCopyDeref for $ty {
-            type Target = $target;
-
-            #[inline(always)]
-            unsafe fn deref_from(view: &AccountView) -> &Self::Target {
-                // SAFETY: Caller ensures `view.data_len() >= LEN`.
-                // `$target` is `#[repr(C)]` with alignment 1.
-                &*(view.data_ptr() as *const $target)
-            }
-
-            #[inline(always)]
-            unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-                // SAFETY: Same as `deref_from` — caller ensures length
-                // and writable.
-                &mut *(view.data_mut_ptr() as *mut $target)
-            }
-        }
-    };
-}
-
 /// Implements `AccountCheck`, `TokenClose`, and `TokenSweep` for a token
 /// account type (Token / Token2022). All token account types share the same
 /// validation logic and close/sweep dispatch.
@@ -301,7 +215,7 @@ pub use {
     associated_token::{
         create as ata_create, create_idempotent as ata_create_idempotent,
         get_associated_token_address_const, get_associated_token_address_with_program_const,
-        AssociatedTokenProgram,
+        AssociatedTokenCpi, AssociatedTokenProgram,
     },
     constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
     exit::{close_token_account, sweep_token_account},

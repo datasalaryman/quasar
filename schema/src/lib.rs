@@ -176,10 +176,16 @@ pub struct IdlAccountItem {
     pub writable: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub signer: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub optional: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub docs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pda: Option<IdlPda>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations: Vec<String>,
     /// Present when the field is `Migration<From, To>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration: Option<IdlMigration>,

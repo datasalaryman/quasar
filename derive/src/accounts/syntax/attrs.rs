@@ -1,13 +1,14 @@
 //! V3 directive parser for `#[account(...)]` attributes.
 //!
 //! Grammar:
-//!   directive ::= bare_flag | init | key_value | group | check
+//!   directive ::= bare_flag | init | key_value | group | check | allow
 //!   bare_flag ::= 'mut' | 'dup'
 //!   init      ::= 'init' | 'init' '(' 'idempotent' ')'
 //!   key_value ::= 'payer' '=' ident | 'address' '=' expr | 'realloc' '=' expr
 //!   group     ::= path '(' args ')'
 //!   check     ::= 'has_one' '(' ident_list ')' | 'constraints' '(' expr_list
-//! ')'   args      ::= (ident '=' expr),*
+//! ')'   allow     ::= 'allow' '(' ident_list ')'
+//!   args      ::= (ident '=' expr),*
 //!
 //! Phase placement is NOT part of the user syntax. No `pre(...)` or
 //! `exit(...)`. The lowering layer decides which phases each op participates
@@ -23,10 +24,16 @@ use {
 
 pub(crate) enum Directive {
     Bare(Ident),
-    Init { idempotent: bool },
+    Init {
+        idempotent: bool,
+    },
     Payer(Ident),
     Address(syn::Expr, Option<syn::Expr>),
     Realloc(syn::Expr),
+    /// `allow(unconstrained, ...)` — lint suppression, consumed by the linter
+    /// only. The derive macro ignores these during lowering.
+    #[allow(dead_code)]
+    Allow(Vec<Ident>),
     Group(GroupDirective),
     Check(UserCheck),
 }
@@ -112,6 +119,14 @@ impl Parse for ParsedDirective {
                     };
                     return Ok(ParsedDirective {
                         inner: Directive::Init { idempotent },
+                    });
+                }
+
+                // Lint suppressions: allow(unconstrained, ...)
+                "allow" => {
+                    let idents = parse_ident_list(&content)?;
+                    return Ok(ParsedDirective {
+                        inner: Directive::Allow(idents),
                     });
                 }
 

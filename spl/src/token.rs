@@ -7,15 +7,17 @@ use {
     quasar_lang::{prelude::*, traits::Id},
 };
 
-/// Token account data marker — validates owner is SPL Token program.
-///
-/// Use as `Account<Token>` for single-program token accounts,
-/// or `InterfaceAccount<Token>` to accept both SPL Token and Token-2022.
-#[repr(transparent)]
-pub struct Token {
-    __view: AccountView,
+quasar_lang::define_account!(
+    /// Token account data — validates owner is SPL Token program.
+    ///
+    /// Use as `Account<Token>` for single-program token accounts,
+    /// or `InterfaceAccount<Token>` to accept both SPL Token and Token-2022.
+    pub struct Token => [checks::Owner]: TokenAccountState
+);
+
+impl Owner for Token {
+    const OWNER: Address = SPL_TOKEN_ID;
 }
-impl_program_account!(Token, SPL_TOKEN_ID, TokenAccountState);
 
 // SPL Token program marker. Use as `Program<TokenProgram>`.
 quasar_lang::define_account!(pub struct TokenProgram => [checks::Executable, checks::Address]);
@@ -24,17 +26,26 @@ impl Id for TokenProgram {
     const ID: Address = Address::new_from_array(SPL_TOKEN_BYTES);
 }
 
-/// Mint account view — validates owner is SPL Token program.
-///
-/// Use as `Account<Mint>` for single-program mints,
-/// or `InterfaceAccount<Mint>` to accept both SPL Token and Token-2022.
-#[repr(transparent)]
-pub struct Mint {
-    __view: AccountView,
-}
-impl_program_account!(Mint, SPL_TOKEN_ID, MintAccountState);
+quasar_lang::define_account!(
+    /// Mint account — validates owner is SPL Token program.
+    ///
+    /// Use as `Account<Mint>` for single-program mints,
+    /// or `InterfaceAccount<Mint>` to accept both SPL Token and Token-2022.
+    pub struct Mint => [checks::Owner]: MintAccountState
+);
 
-/// Valid owner programs for token interface accounts (SPL Token + Token-2022).
+impl Owner for Mint {
+    const OWNER: Address = SPL_TOKEN_ID;
+}
+
+/// Valid owner programs for `InterfaceAccount<Token>` and
+/// `InterfaceAccount<Mint>` — accepts accounts owned by either SPL Token
+/// or Token-2022.
+///
+/// Note: `Account<Token>` does NOT use this trait. It validates via
+/// `checks::Owner` which checks only `SPL_TOKEN_ID`. The `Owners` trait
+/// is consumed exclusively by `InterfaceAccount<T>` for multi-program
+/// acceptance.
 static SPL_TOKEN_OWNERS: [Address; 2] = [SPL_TOKEN_ID, TOKEN_2022_ID];
 
 impl quasar_lang::traits::Owners for Token {
@@ -54,8 +65,7 @@ impl quasar_lang::traits::Owners for Mint {
 impl TokenCpi for Program<TokenProgram> {}
 
 // ---------------------------------------------------------------------------
-// Shared trait impls via macros (AccountCheck, TokenClose, TokenSweep,
-// AccountInit)
+// Shared trait impls (AccountCheck, TokenClose, TokenSweep, AccountInit)
 // ---------------------------------------------------------------------------
 
 impl_token_account_traits!(Token);

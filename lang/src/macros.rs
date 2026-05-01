@@ -9,6 +9,51 @@
 
 #[macro_export]
 macro_rules! define_account {
+    // With deref target: `pub struct Token => [checks::Owner]: TokenAccountState`
+    // Generates everything from the base form plus Deref/DerefMut/ZeroCopyDeref/StaticView.
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident => [$($check:path),* $(,)?] : $target:ty
+    ) => {
+        $crate::define_account!($(#[$meta])* $vis struct $name => [$($check),*]);
+
+        unsafe impl $crate::traits::StaticView for $name {}
+
+        impl core::ops::Deref for $name {
+            type Target = $target;
+
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                // SAFETY: AccountCheck validated data_len >= size_of::<$target>.
+                // $target is #[repr(C)] with alignment 1.
+                unsafe { &*(self.view.data_ptr() as *const $target) }
+            }
+        }
+
+        impl core::ops::DerefMut for $name {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                // SAFETY: Same as Deref — length validated, alignment 1.
+                unsafe { &mut *(self.view.data_mut_ptr() as *mut $target) }
+            }
+        }
+
+        impl $crate::traits::ZeroCopyDeref for $name {
+            type Target = $target;
+
+            #[inline(always)]
+            unsafe fn deref_from(view: &AccountView) -> &Self::Target {
+                &*(view.data_ptr() as *const $target)
+            }
+
+            #[inline(always)]
+            unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
+                &mut *(view.data_mut_ptr() as *mut $target)
+            }
+        }
+    };
+
+    // Base form: `pub struct Signer => [checks::Signer]`
     (
         $(#[$meta:meta])*
         $vis:vis struct $name:ident => [$($check:path),* $(,)?]

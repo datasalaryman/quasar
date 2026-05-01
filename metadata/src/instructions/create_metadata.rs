@@ -1,6 +1,6 @@
 use {
     crate::codec::BorshCpiEncode,
-    quasar_lang::{cpi::DynCpiCall, prelude::*},
+    quasar_lang::{cpi::CpiDynamic, prelude::*},
 };
 
 const CREATE_METADATA_ACCOUNTS_V3: u8 = 33;
@@ -28,7 +28,7 @@ pub fn create_metadata_accounts_v3<'a>(
     seller_fee_basis_points: u16,
     is_mutable: bool,
     update_authority_is_signer: bool,
-) -> Result<DynCpiCall<'a, 7, 512>, ProgramError> {
+) -> Result<CpiDynamic<'a, 7, 512>, ProgramError> {
     let name_len = name.encoded_len() - 4;
     let symbol_len = symbol.encoded_len() - 4;
     let uri_len = uri.encoded_len() - 4;
@@ -39,7 +39,7 @@ pub fn create_metadata_accounts_v3<'a>(
         return Err(metadata_field_too_long());
     }
 
-    let mut cpi = DynCpiCall::<7, 512>::new(program.address());
+    let mut cpi = CpiDynamic::<7, 512>::new(program.address());
 
     // Push accounts.
     cpi.push_account(metadata, false, true)?;

@@ -99,7 +99,10 @@ fn print_diagnostics(report: &LintReport) {
             println!("    \u{2192} {}", suggestion);
         }
 
-        println!("    Suppress: #[allow({})]\n", diag.rule.suppression_attr());
+        println!(
+            "    Suppress: #[account(allow({}))]\n",
+            diag.rule.suppression_attr()
+        );
     }
 }
 
