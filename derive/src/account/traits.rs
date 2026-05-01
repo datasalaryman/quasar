@@ -59,7 +59,8 @@ pub(super) fn emit_space_impl(
     }
 }
 
-pub(super) fn emit_account_check_impl(spec: AccountCheckSpec<'_>) -> proc_macro2::TokenStream {
+/// Emit the validation body for dynamic/compact accounts as an `AccountLoad::check` impl.
+pub(super) fn emit_dynamic_account_load(spec: AccountCheckSpec<'_>) -> proc_macro2::TokenStream {
     let AccountCheckSpec {
         name,
         has_dynamic,
@@ -70,52 +71,50 @@ pub(super) fn emit_account_check_impl(spec: AccountCheckSpec<'_>) -> proc_macro2
         zc_mod,
     } = spec;
 
-    if has_dynamic {
-        // Single ZeroPodCompact::validate call replaces all manual prefix walks.
-        // It validates: header size, all prefix values <= max, tail bounds, UTF-8.
+    let body = if has_dynamic {
         quote! {
-            impl AccountCheck for #name {
-
-                #[inline(always)]
-                fn check(view: &AccountView) -> Result<(), ProgramError> {
-                    let __data = unsafe { view.borrow_unchecked() };
-                    let __min = #disc_len
-                        + <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::HEADER_SIZE;
-                    if __data.len() < __min {
-                        return Err(ProgramError::AccountDataTooSmall);
-                    }
-                    #(
-                        if unsafe { *__data.get_unchecked(#disc_indices) } != #disc_bytes {
-                            return Err(ProgramError::InvalidAccountData);
-                        }
-                    )*
-                    <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::validate(
-                        &__data[#disc_len..]
-                    ).map_err(|_| ProgramError::InvalidAccountData)?;
-                    Ok(())
-                }
+            let __data = unsafe { view.borrow_unchecked() };
+            let __min = #disc_len
+                + <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::HEADER_SIZE;
+            if __data.len() < __min {
+                return Err(ProgramError::AccountDataTooSmall);
             }
+            #(
+                if unsafe { *__data.get_unchecked(#disc_indices) } != #disc_bytes {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            )*
+            <#zc_mod::__Schema as quasar_lang::ZeroPodCompact>::validate(
+                &__data[#disc_len..]
+            ).map_err(|_| ProgramError::InvalidAccountData)?;
+            Ok(())
         }
     } else {
         quote! {
-            impl AccountCheck for #name {
-
-                #[inline(always)]
-                fn check(view: &AccountView) -> Result<(), ProgramError> {
-                    let __data = unsafe { view.borrow_unchecked() };
-                    if __data.len() < #disc_len + core::mem::size_of::<#zc_path>() {
-                        return Err(ProgramError::AccountDataTooSmall);
-                    }
-                    #(
-                        if unsafe { *__data.get_unchecked(#disc_indices) } != #disc_bytes {
-                            return Err(ProgramError::InvalidAccountData);
-                        }
-                    )*
-                    <#zc_mod::__Schema as quasar_lang::ZeroPodFixed>::validate(
-                        &__data[#disc_len..#disc_len + core::mem::size_of::<#zc_path>()]
-                    ).map_err(|_| ProgramError::InvalidAccountData)?;
-                    Ok(())
+            let __data = unsafe { view.borrow_unchecked() };
+            if __data.len() < #disc_len + core::mem::size_of::<#zc_path>() {
+                return Err(ProgramError::AccountDataTooSmall);
+            }
+            #(
+                if unsafe { *__data.get_unchecked(#disc_indices) } != #disc_bytes {
+                    return Err(ProgramError::InvalidAccountData);
                 }
+            )*
+            <#zc_mod::__Schema as quasar_lang::ZeroPodFixed>::validate(
+                &__data[#disc_len..#disc_len + core::mem::size_of::<#zc_path>()]
+            ).map_err(|_| ProgramError::InvalidAccountData)?;
+            Ok(())
+        }
+    };
+
+    quote! {
+        impl quasar_lang::account_load::AccountLoad for #name {
+            #[inline(always)]
+            fn check(
+                view: &quasar_lang::__internal::AccountView,
+                _field_name: &str,
+            ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
+                #body
             }
         }
     }

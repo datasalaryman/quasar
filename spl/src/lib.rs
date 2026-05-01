@@ -45,21 +45,10 @@
 
 #![no_std]
 
-/// Implements `AccountCheck`, `TokenClose`, and `TokenSweep` for a token
-/// account type (Token / Token2022). All token account types share the same
-/// validation logic and close/sweep dispatch.
+/// Implements `TokenClose` and `TokenSweep` for a token account type
+/// (Token / Token2022).
 macro_rules! impl_token_account_traits {
     ($ty:ty) => {
-        impl AccountCheck for $ty {
-            #[inline(always)]
-            fn check(view: &AccountView) -> Result<(), ProgramError> {
-                if quasar_lang::utils::hint::unlikely(view.data_len() < 165) {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                Ok(())
-            }
-        }
-
         impl crate::ops::close::TokenClose for $ty {
             #[inline(always)]
             fn close(
@@ -87,21 +76,6 @@ macro_rules! impl_token_account_traits {
                 token_program: &AccountView,
             ) -> Result<(), ProgramError> {
                 crate::exit::sweep_token_account(token_program, view, mint, receiver, authority)
-            }
-        }
-    };
-}
-
-/// Implements `AccountCheck` for a mint account type (Mint / Mint2022).
-macro_rules! impl_mint_account_check {
-    ($ty:ty) => {
-        impl AccountCheck for $ty {
-            #[inline(always)]
-            fn check(view: &AccountView) -> Result<(), ProgramError> {
-                if quasar_lang::utils::hint::unlikely(view.data_len() < 82) {
-                    return Err(ProgramError::AccountDataTooSmall);
-                }
-                Ok(())
             }
         }
     };

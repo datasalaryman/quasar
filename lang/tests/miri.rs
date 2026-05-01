@@ -364,8 +364,8 @@ impl Owner for TestAccountType {
     const OWNER: Address = TEST_OWNER;
 }
 
-impl AccountCheck for TestAccountType {
-    fn check(_view: &AccountView) -> Result<(), ProgramError> {
+impl quasar_lang::account_load::AccountLoad for TestAccountType {
+    fn check(_view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
         Ok(())
     }
 }
@@ -417,8 +417,8 @@ impl Owner for TestCloseableType {
     const OWNER: Address = TEST_OWNER;
 }
 
-impl AccountCheck for TestCloseableType {
-    fn check(_view: &AccountView) -> Result<(), ProgramError> {
+impl quasar_lang::account_load::AccountLoad for TestCloseableType {
+    fn check(_view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
         Ok(())
     }
 }
@@ -546,7 +546,7 @@ fn aliasing_shared_to_mut_cast_read_lamports() {
     buf.init([1u8; 32], TEST_OWNER.to_bytes(), 500_000, 64, true, true);
     let mut view = unsafe { buf.view() };
     <TestAccountType as CheckOwner>::check_owner(&view).unwrap();
-    <TestAccountType as AccountCheck>::check(&view).unwrap();
+    <TestAccountType as quasar_lang::account_load::AccountLoad>::check(&view, "").unwrap();
     let account = unsafe { Account::<TestAccountType>::from_account_view_unchecked_mut(&mut view) };
     assert_eq!(account.to_account_view().lamports(), 500_000);
 }

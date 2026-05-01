@@ -11,7 +11,6 @@
 //! **Parsing and validation** — drive the account deserialization pipeline:
 //! - `ParseAccounts` — parse and validate a set of accounts from raw
 //!   `AccountView` slices
-//! - `AccountCheck` — runtime validation hook called during parsing
 //! - `CheckOwner` — verify an account's on-chain owner matches expectations
 //! - `Owners` — declare valid on-chain owners for interface account types
 //! - `AccountCount` — declare how many accounts a struct consumes
@@ -90,17 +89,6 @@ pub trait Discriminator {
 /// Used by: `create_account` CPI to allocate the correct account size.
 pub trait Space {
     const SPACE: usize;
-}
-
-/// Runtime validation hook called during account parsing.
-///
-/// `check()` runs after owner/header validation and before pointer casts.
-/// The default implementation is a no-op.
-pub trait AccountCheck {
-    #[inline(always)]
-    fn check(_view: &AccountView) -> Result<(), ProgramError> {
-        Ok(())
-    }
 }
 
 /// Declares the number of accounts consumed by a struct during parsing.

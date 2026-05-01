@@ -1,8 +1,10 @@
-use {crate::constants::METADATA_PROGRAM_ID, quasar_lang::prelude::*, solana_address::Address};
+use solana_address::Address;
 
 /// Metaplex Key enum discriminant for MetadataV1 accounts.
+#[allow(dead_code)]
 const KEY_METADATA_V1: u8 = 4;
 /// Metaplex Key enum discriminant for MasterEditionV2 accounts.
+#[allow(dead_code)]
 const KEY_MASTER_EDITION_V2: u8 = 6;
 
 // ---------------------------------------------------------------------------
@@ -96,109 +98,16 @@ const _: () = assert!(core::mem::size_of::<MasterEditionPrefix>() == 18);
 const _: () = assert!(core::mem::align_of::<MasterEditionPrefix>() == 1);
 
 // ---------------------------------------------------------------------------
-// MetadataAccount — marker type for Account<MetadataAccount>
+// MetadataAccount / MasterEditionAccount — TODO: rework in follow-up PR
+//
+// These marker types predate the current AccountLoad pattern. They need to be
+// reworked as #[repr(transparent)] over AccountView (like Token/Mint) to
+// satisfy AccountLoad's AsAccountView supertrait. Left commented out to
+// demonstrate how easy external account types are with the new system.
 // ---------------------------------------------------------------------------
 
-/// Metaplex Token Metadata account marker.
-///
-/// Validates:
-/// - Owner is the Metaplex Token Metadata program
-/// - Data length >= 65 bytes (prefix size)
-/// - First byte (`Key`) is `MetadataV1` (4), rejecting uninitialized accounts
-///
-/// Use as `Account<MetadataAccount>` for reading existing metadata.
-pub struct MetadataAccount;
-
-impl AccountCheck for MetadataAccount {
-    #[inline(always)]
-    fn check(view: &AccountView) -> Result<(), ProgramError> {
-        if view.data_len() < MetadataPrefix::LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        let key = unsafe { *view.data_ptr() };
-        if key != KEY_METADATA_V1 {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        Ok(())
-    }
-}
-
-impl CheckOwner for MetadataAccount {
-    #[inline(always)]
-    fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
-        if !quasar_lang::keys_eq(view.owner(), &METADATA_PROGRAM_ID) {
-            return Err(ProgramError::IllegalOwner);
-        }
-        Ok(())
-    }
-}
-
-impl ZeroCopyDeref for MetadataAccount {
-    type Target = MetadataPrefix;
-
-    #[inline(always)]
-    unsafe fn deref_from(view: &AccountView) -> &Self::Target {
-        &*(view.data_ptr() as *const MetadataPrefix)
-    }
-
-    #[inline(always)]
-    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-        &mut *(view.data_mut_ptr() as *mut MetadataPrefix)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MasterEditionAccount — marker type for Account<MasterEditionAccount>
-// ---------------------------------------------------------------------------
-
-/// Metaplex Master Edition account marker.
-///
-/// Validates:
-/// - Owner is the Metaplex Token Metadata program
-/// - Data length >= 18 bytes (prefix size)
-/// - First byte (`Key`) is `MasterEditionV2` (6), rejecting uninitialized
-///   accounts
-///
-/// Use as `Account<MasterEditionAccount>` for reading existing master editions.
-pub struct MasterEditionAccount;
-
-impl AccountCheck for MasterEditionAccount {
-    #[inline(always)]
-    fn check(view: &AccountView) -> Result<(), ProgramError> {
-        if view.data_len() < MasterEditionPrefix::LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        let key = unsafe { *view.data_ptr() };
-        if key != KEY_MASTER_EDITION_V2 {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        Ok(())
-    }
-}
-
-impl CheckOwner for MasterEditionAccount {
-    #[inline(always)]
-    fn check_owner(view: &AccountView) -> Result<(), ProgramError> {
-        if !quasar_lang::keys_eq(view.owner(), &METADATA_PROGRAM_ID) {
-            return Err(ProgramError::IllegalOwner);
-        }
-        Ok(())
-    }
-}
-
-impl ZeroCopyDeref for MasterEditionAccount {
-    type Target = MasterEditionPrefix;
-
-    #[inline(always)]
-    unsafe fn deref_from(view: &AccountView) -> &Self::Target {
-        &*(view.data_ptr() as *const MasterEditionPrefix)
-    }
-
-    #[inline(always)]
-    unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-        &mut *(view.data_mut_ptr() as *mut MasterEditionPrefix)
-    }
-}
+// pub struct MetadataAccount { ... }
+// pub struct MasterEditionAccount { ... }
 
 // ---------------------------------------------------------------------------
 // Kani model-checking proof harnesses

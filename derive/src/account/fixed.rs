@@ -66,7 +66,7 @@ pub(super) fn generate_account(
                 account_load,
             )
         } else if has_dynamic {
-            // Dynamic/compact accounts: keep old AccountCheck path.
+            // Dynamic/compact accounts: inline validation into AccountLoad::check.
             let disc = super::traits::emit_discriminator_impl(name, disc_bytes, &bump_offset_impl);
             let owner = super::traits::emit_owner_impl(name);
             let space = super::traits::emit_space_impl(
@@ -76,28 +76,17 @@ pub(super) fn generate_account(
                 disc_len,
                 &zc.zc_mod,
             );
-            let check = super::traits::emit_account_check_impl(super::traits::AccountCheckSpec {
-                name,
-                has_dynamic,
-                disc_len,
-                disc_indices,
-                disc_bytes,
-                zc_path: &zc.zc_path,
-                zc_mod: &zc.zc_mod,
-            });
-            let account_load = quote::quote! {
-                impl quasar_lang::account_load::AccountLoad for #name {
-                    #[inline(always)]
-                    fn check(
-                        view: &quasar_lang::__internal::AccountView,
-                        _field_name: &str,
-                    ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
-                        <#name as quasar_lang::traits::AccountCheck>::check(view)
-                    }
-                }
-
-            };
-            (disc, owner, space, check, account_load)
+            let account_load =
+                super::traits::emit_dynamic_account_load(super::traits::AccountCheckSpec {
+                    name,
+                    has_dynamic,
+                    disc_len,
+                    disc_indices,
+                    disc_bytes,
+                    zc_path: &zc.zc_path,
+                    zc_mod: &zc.zc_mod,
+                });
+            (disc, owner, space, quote::quote! {}, account_load)
         } else {
             // Fixed accounts: emit AccountLayout + composed checks.
             // AccountCheck is NOT generated — AccountLoad::check is the

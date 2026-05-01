@@ -180,7 +180,6 @@ impl TokenCpi for Program<TokenProgram> {}
 // ---------------------------------------------------------------------------
 
 impl_token_account_traits!(Token);
-impl_mint_account_check!(Mint);
 impl_token_account_init!(Token);
 impl_mint_account_init!(Mint);
 

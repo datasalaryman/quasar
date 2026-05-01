@@ -19,5 +19,5 @@ pub use {
     init::{InitMasterEdition, InitMetadata},
     instructions::MetadataCpi,
     program::MetadataProgram,
-    state::{MasterEditionAccount, MasterEditionPrefix, MetadataAccount, MetadataPrefix},
+    state::{MasterEditionPrefix, MetadataPrefix},
 };
