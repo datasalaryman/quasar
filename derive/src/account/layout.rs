@@ -30,7 +30,12 @@ pub(super) fn build_zc_spec(
                 match &fi.pod_dyn {
                     None => {
                         let ty = &field.ty;
-                        quote! { #vis #fname: #ty }
+                        let zeropod_attrs: Vec<_> = field
+                            .attrs
+                            .iter()
+                            .filter(|a| a.path().is_ident("zeropod"))
+                            .collect();
+                        quote! { #(#zeropod_attrs)* #vis #fname: #ty }
                     }
                     Some(crate::helpers::PodDynField::Str { max, prefix_bytes }) => {
                         quote! { #vis #fname: zeropod::pod::PodString<#max, #prefix_bytes> }
@@ -58,7 +63,13 @@ pub(super) fn build_zc_spec(
                 let vis = &field.vis;
                 let name = field.ident.as_ref().expect("field must be named");
                 let ty = &field.ty;
-                quote! { #vis #name: #ty }
+                // Pass through #[zeropod(...)] attributes (e.g. skip_accessor).
+                let zeropod_attrs: Vec<_> = field
+                    .attrs
+                    .iter()
+                    .filter(|a| a.path().is_ident("zeropod"))
+                    .collect();
+                quote! { #(#zeropod_attrs)* #vis #name: #ty }
             })
             .collect()
     };

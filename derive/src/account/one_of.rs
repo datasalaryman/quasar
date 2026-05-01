@@ -83,28 +83,32 @@ pub(crate) fn generate_one_of_account(
         }
     };
 
-    // 3. AccountCheck — delegates to each variant's full check(), not just disc
+    // 3. AccountLoad — delegates to each variant's AccountLoad::check
     let variant_checks: Vec<proc_macro2::TokenStream> = variant_paths
         .iter()
         .map(|v| {
             quote! {
-                <#v as quasar_lang::traits::AccountCheck>::check(view).is_ok()
+                <#v as quasar_lang::account_load::AccountLoad>::check(view, "").is_ok()
             }
         })
         .collect();
 
     let account_check = quote! {
-        impl quasar_lang::traits::AccountCheck for #name {
-
+        impl quasar_lang::account_load::AccountLoad for #name {
             #[inline(always)]
-            fn check(view: &quasar_lang::__internal::AccountView) -> Result<(), quasar_lang::prelude::ProgramError> {
+            fn check(
+                view: &quasar_lang::__internal::AccountView,
+                _field_name: &str,
+            ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
                 if #(#variant_checks)||* {
                     Ok(())
                 } else {
-                    Err(quasar_lang::prelude::ProgramError::InvalidAccountData)
+                    Err(quasar_lang::__solana_program_error::ProgramError::InvalidAccountData)
                 }
             }
         }
+
+        impl quasar_lang::traits::FieldLifecycle for #name {}
     };
 
     // 4. Owner — const assertion all variants share same owner

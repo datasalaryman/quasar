@@ -18,19 +18,22 @@ pub struct ExternalConfigData {
     pub bump: u8,
 }
 
-pub struct ExternalConfig;
+// External account wrapper — base form + manual AccountLoad.
+// Real users would typically use define_account! with a ZeroPod schema.
+quasar_lang::define_account!(pub struct ExternalConfig => []);
+
+impl quasar_lang::account_load::AccountLoad for ExternalConfig {
+    fn check(_view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+        Ok(())
+    }
+}
+
+impl FieldLifecycle for ExternalConfig {}
 
 impl Owners for ExternalConfig {
     fn owners() -> &'static [Address] {
         static OWNERS: [Address; 1] = [ID];
         &OWNERS
-    }
-}
-
-impl AccountCheck for ExternalConfig {
-
-    fn check(_view: &AccountView) -> Result<(), ProgramError> {
-        Ok(())
     }
 }
 

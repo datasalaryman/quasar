@@ -16,16 +16,13 @@ pub struct Op<'a> {
     pub payer: &'a AccountView,
 }
 
-impl<'a, F: AccountLoad> AccountOp<F> for Op<'a>
-where
-    <F as AccountLoad>::BehaviorTarget: SupportsRealloc + quasar_lang::traits::Space,
-{
+impl<'a, F: AccountLoad + SupportsRealloc + quasar_lang::traits::Space> AccountOp<F> for Op<'a> {
     const REQUIRES_MUT: bool = true;
     const HAS_AFTER_LOAD_MUT: bool = true;
 
     #[inline(always)]
     fn after_load_mut(&self, field: &mut F, ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
-        let min_space = <<F as AccountLoad>::BehaviorTarget as quasar_lang::traits::Space>::SPACE;
+        let min_space = <F as quasar_lang::traits::Space>::SPACE;
         if self.space < min_space {
             return Err(ProgramError::AccountDataTooSmall);
         }

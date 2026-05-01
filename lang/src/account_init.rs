@@ -25,8 +25,7 @@ pub struct InitCtx<'a> {
 ///
 /// The `derive(Accounts)` macro calls this via:
 /// ```text
-/// type __Target = <FieldTy as AccountLoad>::BehaviorTarget;
-/// <__Target as AccountInit>::init(ctx, &params)?;
+/// <FieldTy as AccountInit>::init(ctx, &params)?;
 /// ```
 pub trait AccountInit {
     type InitParams<'a>: Default;

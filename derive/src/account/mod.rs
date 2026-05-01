@@ -187,7 +187,6 @@ fn generate_custom_account(name: &syn::Ident) -> proc_macro2::TokenStream {
         }
 
         impl quasar_lang::account_load::AccountLoad for #name {
-            type BehaviorTarget = Self;
 
             #[inline(always)]
             fn check(

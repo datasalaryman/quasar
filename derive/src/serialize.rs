@@ -2,7 +2,7 @@
 //!
 //! **Fixed structs** (all fields `Copy`, no lifetimes):
 //! 1. A hidden ZeroPod companion struct.
-//! 2. `InstructionValue` impl for native↔pod conversion.
+//! 2. `InstructionArg` impl for native↔ZC conversion.
 //! 3. Off-chain `SchemaWrite` / `SchemaRead` impls.
 //!
 //! **Borrowed structs** (has lifetime params):
@@ -169,22 +169,47 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
             }
         }
 
-        impl #schema_impl_generics quasar_lang::instruction_arg::InstructionValue
+        impl #schema_impl_generics quasar_lang::instruction_arg::InstructionArg
             for #name #schema_ty_generics #schema_where_clause
         {
-            type Pod = #zc_name #schema_ty_generics;
+            type Zc = #zc_name #schema_ty_generics;
 
             #[inline(always)]
-            fn from_pod(pod: &#zc_name #schema_ty_generics) -> Self {
+            fn from_zc(zc: &Self::Zc) -> Self {
+                let pod = zc;
                 Self {
                     #(#from_zc_fields,)*
                 }
             }
             #[inline(always)]
-            fn to_pod(&self) -> #zc_name #schema_ty_generics {
+            fn to_zc(&self) -> Self::Zc {
                 #zc_name {
                     #(#to_zc_fields,)*
                 }
+            }
+            #[inline(always)]
+            fn validate_zc(zc: &Self::Zc) -> Result<(), solana_program_error::ProgramError> {
+                <Self::Zc as quasar_lang::__zeropod::ZcValidate>::validate_ref(zc)
+                    .map_err(|_| solana_program_error::ProgramError::InvalidInstructionData)
+            }
+        }
+
+        // From impls for native ↔ ZC conversion.
+        impl #schema_impl_generics From<#name #schema_ty_generics>
+            for #zc_name #schema_ty_generics #schema_where_clause
+        {
+            #[inline(always)]
+            fn from(v: #name #schema_ty_generics) -> Self {
+                <#name #schema_ty_generics as quasar_lang::instruction_arg::InstructionArg>::to_zc(&v)
+            }
+        }
+
+        impl #schema_impl_generics From<#zc_name #schema_ty_generics>
+            for #name #schema_ty_generics #schema_where_clause
+        {
+            #[inline(always)]
+            fn from(v: #zc_name #schema_ty_generics) -> Self {
+                <#name #schema_ty_generics as quasar_lang::instruction_arg::InstructionArg>::from_zc(&v)
             }
         }
 
@@ -214,7 +239,7 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
             }
 
             fn write(mut __writer: impl wincode::io::Writer, src: &Self) -> wincode::error::WriteResult<()> {
-                let __zc = <Self as quasar_lang::instruction_arg::InstructionValue>::to_pod(src);
+                let __zc = <Self as quasar_lang::instruction_arg::InstructionArg>::to_zc(src);
                 let __bytes = unsafe {
                     core::slice::from_raw_parts(
                         &__zc as *const #zc_name #schema_ty_generics as *const u8,
@@ -240,7 +265,7 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
                 let __zc = unsafe { &*(__bytes.as_ptr() as *const #zc_name #schema_ty_generics) };
                 <#zc_name #schema_ty_generics as quasar_lang::__zeropod::ZcValidate>::validate_ref(__zc)
                     .map_err(|_| wincode::error::ReadError::InvalidValue("pod validation failed"))?;
-                __dst.write(<Self as quasar_lang::instruction_arg::InstructionValue>::from_pod(__zc));
+                __dst.write(<Self as quasar_lang::instruction_arg::InstructionArg>::from_zc(__zc));
                 Ok(())
             }
         }

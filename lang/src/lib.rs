@@ -350,6 +350,8 @@ pub mod macros;
 pub mod sysvars;
 /// Runtime init functions for program-owned accounts.
 pub mod account_init;
+/// Layout descriptor for zero-copy account wrappers (`AccountLayout`).
+pub mod account_layout;
 /// Trait-based account loading and validation (`AccountLoad`).
 pub mod account_load;
 /// Zero-copy account wrapper types for instruction handlers.
@@ -402,6 +404,8 @@ pub use crate::pod::{PodString as String, PodVec as Vec};
 /// downstream crates adding a direct dependency.
 #[doc(hidden)]
 pub use zeropod as __zeropod;
+#[doc(hidden)]
+pub use solana_program_error as __solana_program_error;
 // Re-export zeropod traits for framework integration.
 pub use zeropod::{
     ZcElem, ZcField, ZcValidate, ZeroPodCompact, ZeroPodError, ZeroPodFixed, ZeroPodSchema,

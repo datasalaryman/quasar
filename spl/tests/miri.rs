@@ -32,9 +32,9 @@
 //!
 //! | Pattern | Result |
 //! |---------|--------|
-//! | `&AccountView -> &TokenAccountState` via Deref | Sound |
-//! | `&AccountView -> &mut TokenAccountState` via DerefMut | Sound under Tree Borrows |
-//! | `&AccountView -> &MintAccountState` via Deref | Sound |
+//! | `&AccountView -> &TokenDataZc` via Deref | Sound |
+//! | `&AccountView -> &mut TokenDataZc` via DerefMut | Sound under Tree Borrows |
+//! | `&AccountView -> &MintDataZc` via Deref | Sound |
 //! | `&AccountView -> &InterfaceAccount<T>` cast | Sound |
 //! | `&AccountView -> &mut InterfaceAccount<T>` cast | Sound under Tree Borrows |
 //! | `view.owner()` read for CheckOwner | Sound |
@@ -57,7 +57,7 @@ use {
         traits::*,
     },
     quasar_spl::{
-        InterfaceAccount, Mint, MintAccountState, Token, TokenAccountState, SPL_TOKEN_ID,
+        InterfaceAccount, Mint, MintDataZc, Token, TokenDataZc, SPL_TOKEN_ID,
         TOKEN_2022_ID,
     },
     solana_address::Address,
@@ -266,7 +266,7 @@ fn mint_account_buffer(supply: u64, decimals: u8) -> (AccountBuffer, [u8; 82]) {
 }
 
 // ===========================================================================
-// Section 1: TokenAccountState Deref
+// Section 1: TokenDataZc Deref
 // ===========================================================================
 
 #[test]
@@ -274,11 +274,11 @@ fn token_deref_reads_all_fields() {
     let (mut buf, _data) = token_account_buffer(1_000_000);
     let view = unsafe { buf.view() };
 
-    // Use Account<Token> to exercise Deref → TokenAccountState
+    // Use Account<Token> to exercise Deref → TokenDataZc
     <Token as CheckOwner>::check_owner(&view).unwrap();
     <Token as AccountCheck>::check(&view).unwrap();
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
 
     assert_eq!(state.mint(), &Address::new_from_array([0xAA; 32]));
     assert_eq!(state.owner(), &Address::new_from_array([0xBB; 32]));
@@ -304,7 +304,7 @@ fn token_deref_exact_size_buffer() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
     assert_eq!(state.amount(), 42);
 }
 
@@ -319,11 +319,11 @@ fn token_deref_mut_writes_amount() {
     assert_eq!(account.amount(), 100);
 
     // Write new amount through DerefMut
-    let state: &mut TokenAccountState = &mut *account;
-    // TokenAccountState fields are private, so we write through raw pointer
+    let state: &mut TokenDataZc = &mut *account;
+    // TokenDataZc fields are private, so we write through raw pointer
     // to the amount field at offset 64 (mint=32, owner=32)
     unsafe {
-        let amount_ptr = (state as *mut TokenAccountState as *mut u8).add(64);
+        let amount_ptr = (state as *mut TokenDataZc as *mut u8).add(64);
         let new_amount: u64 = 999;
         core::ptr::copy_nonoverlapping(new_amount.to_le_bytes().as_ptr(), amount_ptr, 8);
     }
@@ -386,7 +386,7 @@ fn token_deref_various_flag_patterns() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
 
     assert!(state.has_delegate());
     assert_eq!(
@@ -430,7 +430,7 @@ fn token_deref_no_flags_set() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
 
     assert!(!state.has_delegate());
     assert!(state.delegate().is_none());
@@ -443,7 +443,7 @@ fn token_deref_no_flags_set() {
 }
 
 // ===========================================================================
-// Section 2: MintAccountState Deref
+// Section 2: MintDataZc Deref
 // ===========================================================================
 
 #[test]
@@ -454,7 +454,7 @@ fn mint_deref_reads_all_fields() {
     <Mint as CheckOwner>::check_owner(&view).unwrap();
     <Mint as AccountCheck>::check(&view).unwrap();
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
-    let state: &MintAccountState = &*account;
+    let state: &MintDataZc = &*account;
 
     assert!(state.has_mint_authority());
     assert_eq!(
@@ -495,9 +495,9 @@ fn mint_deref_mut_write() {
 
     // Write supply through raw pointer. Supply is at offset 36 (flag=4,
     // authority=32)
-    let state: &mut MintAccountState = &mut *account;
+    let state: &mut MintDataZc = &mut *account;
     unsafe {
-        let supply_ptr = (state as *mut MintAccountState as *mut u8).add(36);
+        let supply_ptr = (state as *mut MintDataZc as *mut u8).add(36);
         let new_supply: u64 = 999_999;
         core::ptr::copy_nonoverlapping(new_supply.to_le_bytes().as_ptr(), supply_ptr, 8);
     }
@@ -513,7 +513,7 @@ fn mint_all_flags_set() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
-    let state: &MintAccountState = &*account;
+    let state: &MintDataZc = &*account;
 
     assert!(state.has_mint_authority());
     assert_eq!(state.supply(), u64::MAX);
@@ -539,7 +539,7 @@ fn mint_no_authorities() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
-    let state: &MintAccountState = &*account;
+    let state: &MintDataZc = &*account;
 
     assert!(!state.has_mint_authority());
     assert!(state.mint_authority().is_none());
@@ -562,7 +562,7 @@ fn interface_account_cast_spl_token_owner() {
     let view = unsafe { buf.view() };
     let iface = InterfaceAccount::<Token>::from_account_view(&view).unwrap();
 
-    // Deref through InterfaceAccount -> TokenAccountState
+    // Deref through InterfaceAccount -> TokenDataZc
     assert_eq!(iface.amount(), 42);
     assert_eq!(iface.mint(), &Address::new_from_array([0xAA; 32]));
 }
@@ -593,10 +593,10 @@ fn interface_account_mut_cast() {
     // Read through &mut InterfaceAccount
     assert_eq!(iface.amount(), 100);
 
-    // Write through DerefMut -> &mut TokenAccountState
-    let state: &mut TokenAccountState = &mut *iface;
+    // Write through DerefMut -> &mut TokenDataZc
+    let state: &mut TokenDataZc = &mut *iface;
     unsafe {
-        let amount_ptr = (state as *mut TokenAccountState as *mut u8).add(64);
+        let amount_ptr = (state as *mut TokenDataZc as *mut u8).add(64);
         let new_amount: u64 = 200;
         core::ptr::copy_nonoverlapping(new_amount.to_le_bytes().as_ptr(), amount_ptr, 8);
     }
@@ -665,7 +665,7 @@ fn interface_account_immutable_rejected() {
 
 #[test]
 fn interface_account_data_too_small() {
-    // Only 100 bytes of data, but TokenAccountState needs 165
+    // Only 100 bytes of data, but TokenDataZc needs 165
     let mut buf = AccountBuffer::new(100);
     buf.init([1u8; 32], SPL_TOKEN_OWNER, 1_000_000, 100, false, true);
 
@@ -754,7 +754,7 @@ fn zero_copy_deref_from_mut_token() {
 
     // Write through mut reference
     unsafe {
-        let amount_ptr = (state as *mut TokenAccountState as *mut u8).add(64);
+        let amount_ptr = (state as *mut TokenDataZc as *mut u8).add(64);
         let new_amount: u64 = 777;
         core::ptr::copy_nonoverlapping(new_amount.to_le_bytes().as_ptr(), amount_ptr, 8);
     }
@@ -781,7 +781,7 @@ fn zero_copy_deref_from_mut_mint() {
 
     // Write supply
     unsafe {
-        let supply_ptr = (state as *mut MintAccountState as *mut u8).add(36);
+        let supply_ptr = (state as *mut MintDataZc as *mut u8).add(36);
         let new_supply: u64 = 42;
         core::ptr::copy_nonoverlapping(new_supply.to_le_bytes().as_ptr(), supply_ptr, 8);
     }
@@ -813,7 +813,7 @@ fn zero_copy_deref_aliased_read_after_mut() {
 
         // Write through mut
         unsafe {
-            let amount_ptr = (state_mut as *mut TokenAccountState as *mut u8).add(64);
+            let amount_ptr = (state_mut as *mut TokenDataZc as *mut u8).add(64);
             let new_amount: u64 = 600;
             core::ptr::copy_nonoverlapping(new_amount.to_le_bytes().as_ptr(), amount_ptr, 8);
         }
@@ -1087,7 +1087,7 @@ fn all_zero_token_data() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
 
     // All fields should be zero/default
     assert_eq!(state.amount(), 0);
@@ -1108,7 +1108,7 @@ fn all_zero_mint_data() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
-    let state: &MintAccountState = &*account;
+    let state: &MintDataZc = &*account;
 
     assert_eq!(state.supply(), 0);
     assert_eq!(state.decimals(), 0);
@@ -1128,7 +1128,7 @@ fn all_ff_token_data() {
 
     let view = unsafe { buf.view() };
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
-    let state: &TokenAccountState = &*account;
+    let state: &TokenDataZc = &*account;
 
     assert_eq!(state.amount(), u64::MAX);
     // 0xFF != 1, so flags are NOT set despite all bytes being 0xFF
@@ -1186,7 +1186,7 @@ fn rapid_deref_mut_cycling() {
         {
             let state_mut = unsafe { <Token as ZeroCopyDeref>::deref_from_mut(&mut view) };
             unsafe {
-                let amount_ptr = (state_mut as *mut TokenAccountState as *mut u8).add(64);
+                let amount_ptr = (state_mut as *mut TokenDataZc as *mut u8).add(64);
                 core::ptr::copy_nonoverlapping(i.to_le_bytes().as_ptr(), amount_ptr, 8);
             }
         }
@@ -1219,14 +1219,14 @@ fn rapid_interface_account_cycling() {
 #[test]
 fn token_account_size_assertion() {
     // Compile-time assertion is in the source, but let's verify at runtime too
-    assert_eq!(TokenAccountState::LEN, 165);
-    assert_eq!(core::mem::align_of::<TokenAccountState>(), 1);
+    assert_eq!(core::mem::size_of::<TokenDataZc>(), 165);
+    assert_eq!(core::mem::align_of::<TokenDataZc>(), 1);
 }
 
 #[test]
 fn mint_account_size_assertion() {
-    assert_eq!(MintAccountState::LEN, 82);
-    assert_eq!(core::mem::align_of::<MintAccountState>(), 1);
+    assert_eq!(core::mem::size_of::<MintDataZc>(), 82);
+    assert_eq!(core::mem::align_of::<MintDataZc>(), 1);
 }
 
 #[test]

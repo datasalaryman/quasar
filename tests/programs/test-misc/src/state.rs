@@ -202,3 +202,11 @@ impl quasar_lang::traits::AccountCheck for VaultInterface {
         }
     }
 }
+
+impl quasar_lang::account_load::AccountLoad for VaultInterface {
+    fn check(view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+        <Self as quasar_lang::traits::AccountCheck>::check(view)
+    }
+}
+
+impl quasar_lang::traits::FieldLifecycle for VaultInterface {}

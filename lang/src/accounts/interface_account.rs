@@ -61,13 +61,13 @@ impl<T: Owners + AccountCheck> InterfaceAccount<T> {
     }
 }
 
-impl<T: Owners + AccountCheck> crate::account_load::AccountLoad for InterfaceAccount<T> {
-    type BehaviorTarget = T;
-
+impl<T: Owners + crate::account_load::AccountLoad> crate::account_load::AccountLoad
+    for InterfaceAccount<T>
+{
     #[inline(always)]
-    fn check(view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> {
         check_owners(view, T::owners())?;
-        T::check(view)
+        T::check(view, field_name)
     }
 }
 
@@ -88,3 +88,37 @@ impl<T: ZeroCopyDeref> core::ops::DerefMut for InterfaceAccount<T> {
 }
 
 impl<T> crate::traits::FieldLifecycle for InterfaceAccount<T> {}
+
+// --- Forwarding impls: InterfaceAccount<T> delegates behavior to T ---
+
+impl<T: crate::account_init::AccountInit> crate::account_init::AccountInit
+    for InterfaceAccount<T>
+{
+    type InitParams<'a> = T::InitParams<'a>;
+
+    #[inline(always)]
+    fn init<'a>(
+        ctx: crate::account_init::InitCtx<'a>,
+        params: &Self::InitParams<'a>,
+    ) -> solana_program_error::ProgramResult {
+        T::init(ctx, params)
+    }
+}
+
+impl<T: crate::ops::close_program::AccountClose> crate::ops::close_program::AccountClose
+    for InterfaceAccount<T>
+{
+    #[inline(always)]
+    fn close(
+        view: &mut solana_account_view::AccountView,
+        dest: &solana_account_view::AccountView,
+    ) -> solana_program_error::ProgramResult {
+        T::close(view, dest)
+    }
+}
+
+impl<T: crate::traits::Space> crate::traits::Space for InterfaceAccount<T> {
+    const SPACE: usize = T::SPACE;
+}
+
+impl<T: crate::ops::SupportsRealloc> crate::ops::SupportsRealloc for InterfaceAccount<T> {}

@@ -176,17 +176,17 @@ impl<T: Owner + AsAccountView + crate::traits::Discriminator> Account<T> {
     }
 }
 
-impl<T: CheckOwner + AccountCheck + StaticView> Account<T> {
-    /// Validate owner + discriminator, then pointer-cast.
+impl<T: crate::account_load::AccountLoad + CheckOwner + StaticView> Account<T> {
+    /// Validate owner + data checks, then pointer-cast.
     #[inline(always)]
     pub fn from_account_view(view: &AccountView) -> Result<&Self, ProgramError> {
         T::check_owner(view)?;
-        T::check(view)?;
+        T::check(view, "")?;
         Ok(unsafe { &*(view as *const AccountView as *const Self) })
     }
 }
 
-impl<T: CheckOwner + AccountCheck> Account<T> {
+impl<T> Account<T> {
     /// # Safety
     /// Caller must ensure owner, discriminator, and borrow state are valid.
     #[inline(always)]
@@ -319,17 +319,22 @@ mod kani_proofs {
     }
 }
 
-impl<T: AsAccountView + CheckOwner + AccountCheck + StaticView> crate::account_load::AccountLoad
-    for Account<T>
+impl<T: AsAccountView + crate::account_load::AccountLoad + CheckOwner + StaticView>
+    crate::account_load::AccountLoad for Account<T>
 {
-    type BehaviorTarget = T;
-
     #[inline(always)]
     fn check(
         view: &AccountView,
         field_name: &str,
     ) -> Result<(), solana_program_error::ProgramError> {
-        crate::validation::check_account::<T>(view, field_name)
+        T::check_owner(view).inspect_err(|_| {
+            #[cfg(feature = "debug")]
+            crate::prelude::log(
+                &::alloc::format!("Owner check failed for account '{}'", field_name),
+            );
+        })?;
+        T::check(view, field_name)?;
+        Ok(())
     }
 }
 
@@ -350,3 +355,32 @@ impl<T> core::ops::DerefMut for Account<T> {
 }
 
 impl<T> crate::traits::FieldLifecycle for Account<T> {}
+
+// --- Forwarding impls: Account<T> delegates behavior to T ---
+
+impl<T: crate::account_init::AccountInit> crate::account_init::AccountInit for Account<T> {
+    type InitParams<'a> = T::InitParams<'a>;
+
+    #[inline(always)]
+    fn init<'a>(
+        ctx: crate::account_init::InitCtx<'a>,
+        params: &Self::InitParams<'a>,
+    ) -> solana_program_error::ProgramResult {
+        T::init(ctx, params)
+    }
+}
+
+impl<T: crate::ops::close_program::AccountClose> crate::ops::close_program::AccountClose
+    for Account<T>
+{
+    #[inline(always)]
+    fn close(view: &mut AccountView, dest: &AccountView) -> solana_program_error::ProgramResult {
+        T::close(view, dest)
+    }
+}
+
+impl<T: crate::traits::Space> crate::traits::Space for Account<T> {
+    const SPACE: usize = T::SPACE;
+}
+
+impl<T: crate::ops::SupportsRealloc> crate::ops::SupportsRealloc for Account<T> {}

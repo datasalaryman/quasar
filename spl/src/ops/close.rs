@@ -33,17 +33,13 @@ pub struct Op<'a> {
     pub token_program: &'a AccountView,
 }
 
-impl<'a, F: AccountLoad + HasTokenLayout> AccountOp<F> for Op<'a>
-where
-    <F as AccountLoad>::BehaviorTarget: TokenClose,
-{
+impl<'a, F: AccountLoad + HasTokenLayout + TokenClose> AccountOp<F> for Op<'a> {
     const REQUIRES_MUT: bool = true;
     const HAS_EXIT: bool = true;
 
     #[inline(always)]
     fn exit(&self, field: &mut F, _ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
-        type Target<F2> = <F2 as AccountLoad>::BehaviorTarget;
         let view = unsafe { <F as AccountLoad>::to_account_view_mut(field) };
-        <Target<F> as TokenClose>::close(view, self.dest, self.authority, self.token_program)
+        <F as TokenClose>::close(view, self.dest, self.authority, self.token_program)
     }
 }

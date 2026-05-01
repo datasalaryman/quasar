@@ -1987,41 +1987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinocchio"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06810dac15a4ef83d3dabdb4f2f22fb39c9adff669cd2781da4f716510a647c"
-dependencies = [
- "solana-account-view 1.0.0",
- "solana-address 2.2.0",
- "solana-define-syscall 4.0.1",
- "solana-instruction-view 1.0.0",
- "solana-program-error",
-]
-
-[[package]]
-name = "pinocchio-system"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24044a0815753862b558e179e78f03f7344cb755de48617a09d7d23b50883b6c"
-dependencies = [
- "pinocchio",
- "solana-address 2.2.0",
-]
-
-[[package]]
-name = "pinocchio-vault"
-version = "0.1.0"
-dependencies = [
- "mollusk-svm",
- "pinocchio",
- "pinocchio-system",
- "solana-account",
- "solana-address 2.2.0",
- "solana-instruction",
-]
-
-[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2187,11 +2152,11 @@ version = "0.0.0"
 dependencies = [
  "const-crypto",
  "quasar-derive",
- "solana-account-view 2.0.0",
+ "solana-account-view",
  "solana-address 2.2.0",
  "solana-define-syscall 5.0.0",
  "solana-instruction",
- "solana-instruction-view 2.0.0",
+ "solana-instruction-view",
  "solana-program-error",
  "solana-program-log",
  "trybuild",
@@ -2886,16 +2851,6 @@ dependencies = [
 
 [[package]]
 name = "solana-account-view"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f37ca34c37f92ee341b73d5ce7c8ef5bb38e9a87955b4bd343c63fa18b149215"
-dependencies = [
- "solana-address 2.2.0",
- "solana-program-error",
-]
-
-[[package]]
-name = "solana-account-view"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc141b940560430425ebaadb7645496c45f6a10fad9911d719bd03eab7f4d422"
@@ -3189,23 +3144,11 @@ dependencies = [
 
 [[package]]
 name = "solana-instruction-view"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60147e4d0a4620013df40bf30a86dd299203ff12fcb8b593cd51014fce0875d8"
-dependencies = [
- "solana-account-view 1.0.0",
- "solana-address 2.2.0",
- "solana-define-syscall 4.0.1",
- "solana-program-error",
-]
-
-[[package]]
-name = "solana-instruction-view"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c35d02cd27575b1fd05938d3624e476b0173208139053b51aa48dd9bec149f1"
 dependencies = [
- "solana-account-view 2.0.0",
+ "solana-account-view",
  "solana-address 2.2.0",
  "solana-define-syscall 5.0.0",
  "solana-program-error",
@@ -4716,9 +4659,9 @@ dependencies = [
 
 [[package]]
 name = "zeropod"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a3bf073396a7d0821f071de24c92627e38f6c2805373cc0afa85e9e5358c274"
+checksum = "347560ea42254b19900a39f5e7a96dc247e841b3867ac88c729a2d25e5ec498e"
 dependencies = [
  "solana-address 2.2.0",
  "solana-program-error",
@@ -4728,9 +4671,9 @@ dependencies = [
 
 [[package]]
 name = "zeropod-derive"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "637cf615077fd256810487d431215048927bf253a7bb945b04a653820a93b14d"
+checksum = "4b8369005ce19ec7a48b139c6535983521a9e721949ea0c9a1b56c53131749fa"
 dependencies = [
  "proc-macro2",
  "quote",

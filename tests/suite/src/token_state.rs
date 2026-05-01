@@ -1,5 +1,5 @@
 use {
-    quasar_spl::{MintAccountState, TokenAccountState},
+    quasar_spl::{MintDataZc, TokenDataZc},
     solana_address::Address,
 };
 
@@ -61,16 +61,16 @@ fn build_mint_account_bytes(
     data
 }
 
-fn cast_token(data: &[u8; 165]) -> &TokenAccountState {
-    unsafe { &*(data.as_ptr() as *const TokenAccountState) }
+fn cast_token(data: &[u8; 165]) -> &TokenDataZc {
+    unsafe { &*(data.as_ptr() as *const TokenDataZc) }
 }
 
-fn cast_mint(data: &[u8; 82]) -> &MintAccountState {
-    unsafe { &*(data.as_ptr() as *const MintAccountState) }
+fn cast_mint(data: &[u8; 82]) -> &MintDataZc {
+    unsafe { &*(data.as_ptr() as *const MintDataZc) }
 }
 
 // ---------------------------------------------------------------------------
-// TokenAccountState tests
+// TokenDataZc tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -222,7 +222,7 @@ fn test_token_state_close_authority_absent() {
 }
 
 // ---------------------------------------------------------------------------
-// MintAccountState tests
+// MintDataZc tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -322,10 +322,10 @@ fn test_mint_state_max_decimals() {
 
 #[test]
 fn test_token_account_state_len() {
-    assert_eq!(TokenAccountState::LEN, 165);
+    assert_eq!(core::mem::size_of::<TokenDataZc>(), 165);
 }
 
 #[test]
 fn test_mint_account_state_len() {
-    assert_eq!(MintAccountState::LEN, 82);
+    assert_eq!(core::mem::size_of::<MintDataZc>(), 82);
 }

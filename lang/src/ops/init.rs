@@ -30,8 +30,7 @@ pub struct Op<'a, Params = ()> {
 
 impl<'a, F, P> AccountOp<F> for Op<'a, P>
 where
-    F: AccountLoad,
-    <F as AccountLoad>::BehaviorTarget: AccountInit<InitParams<'a> = P>,
+    F: AccountLoad + AccountInit<InitParams<'a> = P>,
 {
     const HAS_BEFORE_LOAD: bool = true;
     const REQUIRES_MUT: bool = true;
@@ -39,17 +38,11 @@ where
     #[inline(always)]
     fn before_load(&self, slot: &mut AccountView, ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
         if crate::is_system_program(slot.owner()) {
-            type Target<F2> = <F2 as AccountLoad>::BehaviorTarget;
-            // SAFETY: All references (payer, slot, program_id, signers, rent)
-            // are live for the duration of this #[inline(always)] call.
-            // InitCtx<'a> requires a single lifetime but our references come
-            // from different sources — the pointer casts unify them. Sound
-            // because init() completes before any reference is dropped.
             let target = unsafe { &mut *(slot as *mut AccountView) };
             let program_id = unsafe { &*(ctx.program_id as *const solana_address::Address) };
             let rent = ctx.rent()?;
             let rent = unsafe { &*(rent as *const crate::sysvars::rent::Rent) };
-            <Target<F> as AccountInit>::init(
+            <F as AccountInit>::init(
                 InitCtx {
                     payer: self.payer,
                     target,

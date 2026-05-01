@@ -13,12 +13,8 @@ use quasar_lang::{
 /// Bounds `token::Op` to only accept types that actually have token data.
 pub trait HasTokenLayout {}
 
-impl HasTokenLayout for quasar_lang::accounts::account::Account<crate::token::Token> {}
-impl HasTokenLayout for quasar_lang::accounts::account::Account<crate::token_2022::Token2022> {}
-impl HasTokenLayout
-    for quasar_lang::accounts::interface_account::InterfaceAccount<crate::token::Token>
-{
-}
+impl HasTokenLayout for crate::token::Token {}
+impl HasTokenLayout for crate::token_2022::Token2022 {}
 
 /// Token validation op. Constructed by the derive from `token(...)` syntax.
 pub struct Op<'a> {
@@ -43,7 +39,7 @@ impl<'a, F: AsAccountView + HasTokenLayout> AccountOp<F> for Op<'a> {
 
     #[inline(always)]
     fn apply_init_params(&self, params: *mut u8) -> Result<(), ProgramError> {
-        // SAFETY: For all F: HasTokenLayout, BehaviorTarget: AccountInit
+        // SAFETY: For all F: HasTokenLayout + AccountInit
         // with InitParams = TokenInitParams. The derive passes a properly-typed
         // &mut TokenInitParams cast to *mut u8.
         let params: &mut crate::token::TokenInitParams<'_> =

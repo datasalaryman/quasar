@@ -150,7 +150,6 @@ pub trait AccountOp<Field> {
 
 /// Marker trait for account types that support realloc.
 ///
-/// The `realloc::Op` in `quasar-spl` requires `F::BehaviorTarget:
-/// SupportsRealloc` to ensure only realloc-capable accounts are used with
-/// `realloc(...)`.
+/// The `realloc::Op` in `quasar-spl` requires `F: SupportsRealloc`
+/// to ensure only realloc-capable accounts are used with `realloc(...)`.
 pub trait SupportsRealloc {}

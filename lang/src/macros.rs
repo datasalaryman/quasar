@@ -9,24 +9,37 @@
 
 #[macro_export]
 macro_rules! define_account {
-    // With deref target: `pub struct Token => [checks::Owner]: TokenAccountState`
-    // Generates everything from the base form plus Deref/DerefMut/ZeroCopyDeref/StaticView.
+    // Schema form: `pub struct Token => [checks::DataLen, checks::ZeroPod]: TokenData`
+    //
+    // Generates everything from the base form plus:
+    // - AccountLayout (DATA_OFFSET = 0, Schema = $schema, Target = <$schema as ZeroPodFixed>::Zc)
+    // - Deref/DerefMut at DATA_OFFSET (always 0 for define_account!)
+    // - ZeroCopyDeref
+    // - StaticView
+    // - AccountLoad::check() composing listed checks
+    // - FieldLifecycle default no-op
     (
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident => [$($check:path),* $(,)?] : $target:ty
+        $vis:vis struct $name:ident => [$($check:path),* $(,)?] : $schema:ty
     ) => {
         $crate::define_account!($(#[$meta])* $vis struct $name => [$($check),*]);
+
+        impl $crate::account_layout::AccountLayout for $name {
+            type Schema = $schema;
+            type Target = <$schema as $crate::__zeropod::ZeroPodFixed>::Zc;
+            const DATA_OFFSET: usize = 0;
+        }
 
         unsafe impl $crate::traits::StaticView for $name {}
 
         impl core::ops::Deref for $name {
-            type Target = $target;
+            type Target = <$schema as $crate::__zeropod::ZeroPodFixed>::Zc;
 
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                // SAFETY: AccountCheck validated data_len >= size_of::<$target>.
-                // $target is #[repr(C)] with alignment 1.
-                unsafe { &*(self.view.data_ptr() as *const $target) }
+                // SAFETY: Checks validated data_len >= SIZE.
+                // Zc companion is #[repr(C)] with alignment 1.
+                unsafe { &*(self.view.data_ptr() as *const Self::Target) }
             }
         }
 
@@ -34,23 +47,36 @@ macro_rules! define_account {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
                 // SAFETY: Same as Deref — length validated, alignment 1.
-                unsafe { &mut *(self.view.data_mut_ptr() as *mut $target) }
+                unsafe { &mut *(self.view.data_mut_ptr() as *mut Self::Target) }
             }
         }
 
         impl $crate::traits::ZeroCopyDeref for $name {
-            type Target = $target;
+            type Target = <$schema as $crate::__zeropod::ZeroPodFixed>::Zc;
 
             #[inline(always)]
             unsafe fn deref_from(view: &AccountView) -> &Self::Target {
-                &*(view.data_ptr() as *const $target)
+                &*(view.data_ptr() as *const Self::Target)
             }
 
             #[inline(always)]
             unsafe fn deref_from_mut(view: &mut AccountView) -> &mut Self::Target {
-                &mut *(view.data_mut_ptr() as *mut $target)
+                &mut *(view.data_mut_ptr() as *mut Self::Target)
             }
         }
+
+        impl $crate::account_load::AccountLoad for $name {
+            #[inline(always)]
+            fn check(
+                view: &AccountView,
+                _field_name: &str,
+            ) -> Result<(), $crate::__solana_program_error::ProgramError> {
+                $(<$name as $check>::check(view)?;)*
+                Ok(())
+            }
+        }
+
+        impl $crate::traits::FieldLifecycle for $name {}
     };
 
     // Base form: `pub struct Signer => [checks::Signer]`

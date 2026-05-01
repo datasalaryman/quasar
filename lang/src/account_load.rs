@@ -11,19 +11,6 @@ pub trait AccountLoad: AsAccountView + Sized {
     const IS_SIGNER: bool = false;
     const IS_EXECUTABLE: bool = false;
 
-    /// The type that owns lifecycle behavior (init, close, sweep).
-    ///
-    /// For `Account<T>` and `InterfaceAccount<T>` this is `T` — the inner
-    /// data type that implements `AccountInit` / `AccountExit` in its own
-    /// crate. For all other wrappers (Signer, Program, etc.) this is `Self`.
-    ///
-    /// The `derive(Accounts)` macro emits trait calls on `BehaviorTarget`:
-    /// ```text
-    /// type __Target = <FieldTy as AccountLoad>::BehaviorTarget;
-    /// <__Target as AccountInit>::init(ctx, &params)?;
-    /// ```
-    type BehaviorTarget;
-
     /// Validate this account after header flag checks pass.
     ///
     /// Header flags (signer, writable, executable) are already validated by

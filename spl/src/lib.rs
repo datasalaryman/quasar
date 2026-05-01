@@ -7,10 +7,10 @@
 //!
 //! | Type | Owner check | Deref target | Use when |
 //! |------|-------------|--------------|----------|
-//! | `Account<Token>` | SPL Token only | [`TokenAccountState`] | Token accounts (incl. ATAs) for SPL Token |
-//! | `Account<Mint>` | SPL Token only | [`MintAccountState`] | Mint owned by Token |
-//! | `InterfaceAccount<Token>` | SPL Token **or** Token-2022 | [`TokenAccountState`] | Token accounts (incl. ATAs) for either program |
-//! | `InterfaceAccount<Mint>` | SPL Token **or** Token-2022 | [`MintAccountState`] | Mint from either program |
+//! | `Account<Token>` | SPL Token only | [`TokenDataZc`] | Token accounts (incl. ATAs) for SPL Token |
+//! | `Account<Mint>` | SPL Token only | [`MintDataZc`] | Mint owned by Token |
+//! | `InterfaceAccount<Token>` | SPL Token **or** Token-2022 | [`TokenDataZc`] | Token accounts (incl. ATAs) for either program |
+//! | `InterfaceAccount<Mint>` | SPL Token **or** Token-2022 | [`MintDataZc`] | Mint from either program |
 //!
 //! # Program types
 //!
@@ -53,9 +53,7 @@ macro_rules! impl_token_account_traits {
         impl AccountCheck for $ty {
             #[inline(always)]
             fn check(view: &AccountView) -> Result<(), ProgramError> {
-                if quasar_lang::utils::hint::unlikely(
-                    view.data_len() < crate::state::TokenAccountState::LEN,
-                ) {
+                if quasar_lang::utils::hint::unlikely(view.data_len() < 165) {
                     return Err(ProgramError::AccountDataTooSmall);
                 }
                 Ok(())
@@ -100,9 +98,7 @@ macro_rules! impl_mint_account_check {
         impl AccountCheck for $ty {
             #[inline(always)]
             fn check(view: &AccountView) -> Result<(), ProgramError> {
-                if quasar_lang::utils::hint::unlikely(
-                    view.data_len() < crate::state::MintAccountState::LEN,
-                ) {
+                if quasar_lang::utils::hint::unlikely(view.data_len() < 82) {
                     return Err(ProgramError::AccountDataTooSmall);
                 }
                 Ok(())
@@ -206,7 +202,6 @@ mod instructions;
 mod interface;
 /// Op-dispatch implementations for SPL token operations.
 pub mod ops;
-mod state;
 mod token;
 mod token_2022;
 mod validate;
@@ -223,11 +218,53 @@ pub use {
     instructions::{initialize_account3, initialize_mint2, TokenCpi},
     interface::TokenInterface,
     quasar_lang::prelude::InterfaceAccount,
-    state::{COption, MintAccountState, TokenAccountState},
-    token::{Mint, Token, TokenProgram},
+    token::{Mint, MintData, MintDataZc, Token, TokenData, TokenDataZc, TokenProgram},
     token_2022::{Mint2022, Token2022, Token2022Program},
     validate::{
         validate_ata, validate_ata_program_id, validate_mint, validate_system_program_id,
         validate_token_account, validate_token_program_id,
     },
 };
+
+// ---------------------------------------------------------------------------
+// Forwarding impls: Account<T>/InterfaceAccount<T> → T for SPL behavior traits
+// ---------------------------------------------------------------------------
+
+use quasar_lang::{
+    accounts::Account,
+    prelude::{AccountView, ProgramError},
+};
+
+impl<T: ops::close::TokenClose> ops::close::TokenClose for Account<T> {
+    #[inline(always)]
+    fn close(view: &mut AccountView, dest: &AccountView, authority: &AccountView, token_program: &AccountView) -> Result<(), ProgramError> {
+        T::close(view, dest, authority, token_program)
+    }
+}
+
+impl<T: ops::sweep::TokenSweep> ops::sweep::TokenSweep for Account<T> {
+    #[inline(always)]
+    fn sweep(view: &AccountView, receiver: &AccountView, mint: &AccountView, authority: &AccountView, tp: &AccountView) -> Result<(), ProgramError> {
+        T::sweep(view, receiver, mint, authority, tp)
+    }
+}
+
+impl<T: ops::token::HasTokenLayout> ops::token::HasTokenLayout for Account<T> {}
+impl<T: ops::mint::HasMintLayout> ops::mint::HasMintLayout for Account<T> {}
+
+impl<T: ops::close::TokenClose> ops::close::TokenClose for InterfaceAccount<T> {
+    #[inline(always)]
+    fn close(view: &mut AccountView, dest: &AccountView, authority: &AccountView, token_program: &AccountView) -> Result<(), ProgramError> {
+        T::close(view, dest, authority, token_program)
+    }
+}
+
+impl<T: ops::sweep::TokenSweep> ops::sweep::TokenSweep for InterfaceAccount<T> {
+    #[inline(always)]
+    fn sweep(view: &AccountView, receiver: &AccountView, mint: &AccountView, authority: &AccountView, tp: &AccountView) -> Result<(), ProgramError> {
+        T::sweep(view, receiver, mint, authority, tp)
+    }
+}
+
+impl<T: ops::token::HasTokenLayout> ops::token::HasTokenLayout for InterfaceAccount<T> {}
+impl<T: ops::mint::HasMintLayout> ops::mint::HasMintLayout for InterfaceAccount<T> {}

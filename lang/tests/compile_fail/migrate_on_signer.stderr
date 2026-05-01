@@ -59,15 +59,6 @@ error[E0277]: the trait bound `quasar_lang::accounts::Signer: quasar_lang::prelu
    = note: required for `quasar_lang::accounts::Migration<quasar_lang::accounts::Signer, ConfigV2>` to implement `FieldLifecycle`
    = note: this error originates in the derive macro `Accounts` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `quasar_lang::accounts::Signer: quasar_lang::prelude::AccountCheck` is not satisfied
-  --> tests/compile_fail/migrate_on_signer.rs:19:17
-   |
-19 |     pub target: Migration<Signer, ConfigV2>,
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `quasar_lang::prelude::AccountCheck` is not implemented for `quasar_lang::accounts::Signer`
-   |
-   = help: the trait `quasar_lang::prelude::AccountCheck` is implemented for `ConfigV2`
-   = note: required for `quasar_lang::accounts::Migration<quasar_lang::accounts::Signer, ConfigV2>` to implement `AccountLoad`
-
 error[E0277]: the trait bound `quasar_lang::accounts::Signer: quasar_lang::prelude::StaticView` is not satisfied
   --> tests/compile_fail/migrate_on_signer.rs:19:17
    |

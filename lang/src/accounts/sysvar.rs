@@ -22,7 +22,6 @@ impl<T: crate::sysvars::Sysvar> Sysvar<T> {
 }
 
 impl<T: crate::sysvars::Sysvar> crate::account_load::AccountLoad for Sysvar<T> {
-    type BehaviorTarget = Self;
 
     #[inline(always)]
     fn check(

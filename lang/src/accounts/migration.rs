@@ -66,14 +66,13 @@ impl<From, To: crate::traits::Space> crate::traits::Space for Migration<From, To
 
 impl<From, To> crate::account_load::AccountLoad for Migration<From, To>
 where
-    From: AsAccountView + CheckOwner + AccountCheck + crate::traits::StaticView,
+    From: AsAccountView + CheckOwner + crate::account_load::AccountLoad + crate::traits::StaticView,
 {
-    type BehaviorTarget = Self;
-
     #[inline(always)]
     fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> {
-        // Validate against source type (owner + discriminator).
-        crate::validation::check_account::<From>(view, field_name)
+        // Validate against source type (owner + data checks).
+        From::check_owner(view)?;
+        From::check(view, field_name)
     }
 }
 

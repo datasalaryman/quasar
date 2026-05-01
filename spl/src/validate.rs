@@ -5,7 +5,7 @@
 //! `#[cfg(feature = "debug")]` for on-chain diagnostics.
 
 use {
-    crate::state::{MintAccountState, TokenAccountState},
+    crate::token::{MintDataZc, TokenDataZc},
     quasar_lang::{prelude::*, utils::hint::unlikely},
 };
 
@@ -35,10 +35,10 @@ fn validate_token_program(token_program: &Address) -> Result<(), ProgramError> {
 ///
 /// # Safety
 ///
-/// Performs an unchecked pointer cast to [`TokenAccountState`]. This is safe
+/// Performs an unchecked pointer cast to [`TokenDataZc`]. This is safe
 /// because the owner and data-length checks above guarantee the account data
-/// is at least `TokenAccountState::LEN` bytes and belongs to a token program.
-/// `TokenAccountState` is `#[repr(C)]` with alignment 1.
+/// is at least `165` bytes and belongs to a token program.
+/// `TokenDataZc` is `#[repr(C)]` with alignment 1.
 #[inline(always)]
 pub fn validate_token_account(
     view: &AccountView,
@@ -65,14 +65,14 @@ fn validate_token_account_inner(
         quasar_lang::prelude::log("validate_token_account: wrong program owner");
         return Err(ProgramError::IllegalOwner);
     }
-    if unlikely(view.data_len() < TokenAccountState::LEN) {
+    if unlikely(view.data_len() < 165) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_token_account: data too small");
         return Err(ProgramError::InvalidAccountData);
     }
     // SAFETY: Owner is a token program and `data_len >= LEN` checked
-    // above. `TokenAccountState` is `#[repr(C)]` with alignment 1.
-    let state = unsafe { &*(view.data_ptr() as *const TokenAccountState) };
+    // above. `TokenDataZc` is `#[repr(C)]` with alignment 1.
+    let state = unsafe { &*(view.data_ptr() as *const TokenDataZc) };
     if unlikely(!state.is_initialized()) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_token_account: not initialized");
@@ -103,10 +103,10 @@ fn validate_token_account_inner(
 ///
 /// # Safety
 ///
-/// Performs an unchecked pointer cast to [`MintAccountState`]. This is safe
+/// Performs an unchecked pointer cast to [`MintDataZc`]. This is safe
 /// because the owner and data-length checks above guarantee the account data
-/// is at least `MintAccountState::LEN` bytes and belongs to a token program.
-/// `MintAccountState` is `#[repr(C)]` with alignment 1.
+/// is at least `82` bytes and belongs to a token program.
+/// `MintDataZc` is `#[repr(C)]` with alignment 1.
 ///
 /// When `freeze_authority` is `None`, the function asserts that no freeze
 /// authority is set on-chain (matching Anchor's behavior).
@@ -125,14 +125,14 @@ pub fn validate_mint(
         quasar_lang::prelude::log("validate_mint: wrong program owner");
         return Err(ProgramError::IllegalOwner);
     }
-    if unlikely(view.data_len() < MintAccountState::LEN) {
+    if unlikely(view.data_len() < 82) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: data too small");
         return Err(ProgramError::InvalidAccountData);
     }
     // SAFETY: Owner is a token program and `data_len >= LEN` checked
-    // above. `MintAccountState` is `#[repr(C)]` with alignment 1.
-    let state = unsafe { &*(view.data_ptr() as *const MintAccountState) };
+    // above. `MintDataZc` is `#[repr(C)]` with alignment 1.
+    let state = unsafe { &*(view.data_ptr() as *const MintDataZc) };
     if unlikely(!state.is_initialized()) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: not initialized");
@@ -256,41 +256,41 @@ pub fn validate_system_program_id(view: &AccountView) -> Result<(), ProgramError
 mod kani_proofs {
     use super::*;
 
-    /// Prove TokenAccountState::LEN equals the actual struct size.
+    /// Prove 165 equals the actual struct size.
     /// This is the constant used in the `data_len < LEN` guard (line 68)
     /// before the pointer cast at line 75.
     #[kani::proof]
     fn token_account_len_matches_sizeof() {
-        assert!(TokenAccountState::LEN == core::mem::size_of::<TokenAccountState>());
+        assert!(165 == core::mem::size_of::<TokenDataZc>());
     }
 
-    /// Prove MintAccountState::LEN equals the actual struct size.
+    /// Prove 82 equals the actual struct size.
     /// This is the constant used in the `data_len < LEN` guard (line 128)
     /// before the pointer cast at line 135.
     #[kani::proof]
     fn mint_account_len_matches_sizeof() {
-        assert!(MintAccountState::LEN == core::mem::size_of::<MintAccountState>());
+        assert!(82 == core::mem::size_of::<MintDataZc>());
     }
 
-    /// Prove: for any `data_len >= TokenAccountState::LEN`, the data
+    /// Prove: for any `data_len >= 165`, the data
     /// covers the full struct — i.e. `data_len >=
-    /// size_of::<TokenAccountState>()`. This verifies the runtime guard is
+    /// size_of::<TokenDataZc>()`. This verifies the runtime guard is
     /// sufficient for a safe pointer cast.
     #[kani::proof]
     fn token_account_data_len_guard_sufficient() {
         let data_len: usize = kani::any();
-        kani::assume(data_len >= TokenAccountState::LEN);
-        assert!(data_len >= core::mem::size_of::<TokenAccountState>());
+        kani::assume(data_len >= 165);
+        assert!(data_len >= core::mem::size_of::<TokenDataZc>());
     }
 
-    /// Prove: for any `data_len >= MintAccountState::LEN`, the data
+    /// Prove: for any `data_len >= 82`, the data
     /// covers the full struct — i.e. `data_len >=
-    /// size_of::<MintAccountState>()`. This verifies the runtime guard is
+    /// size_of::<MintDataZc>()`. This verifies the runtime guard is
     /// sufficient for a safe pointer cast.
     #[kani::proof]
     fn mint_account_data_len_guard_sufficient() {
         let data_len: usize = kani::any();
-        kani::assume(data_len >= MintAccountState::LEN);
-        assert!(data_len >= core::mem::size_of::<MintAccountState>());
+        kani::assume(data_len >= 82);
+        assert!(data_len >= core::mem::size_of::<MintDataZc>());
     }
 }

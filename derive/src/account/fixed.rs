@@ -45,7 +45,6 @@ pub(super) fn generate_account(
             );
             let account_load = quote::quote! {
                 impl quasar_lang::account_load::AccountLoad for #name {
-                    type BehaviorTarget = Self;
 
                     #[inline(always)]
                     fn check(
@@ -67,7 +66,8 @@ pub(super) fn generate_account(
                 quote::quote! {},
                 account_load,
             )
-        } else {
+        } else if has_dynamic {
+            // Dynamic/compact accounts: keep old AccountCheck path.
             let disc = super::traits::emit_discriminator_impl(name, disc_bytes, &bump_offset_impl);
             let owner = super::traits::emit_owner_impl(name);
             let space = super::traits::emit_space_impl(
@@ -86,7 +86,63 @@ pub(super) fn generate_account(
                 zc_path: &zc.zc_path,
                 zc_mod: &zc.zc_mod,
             });
-            (disc, owner, space, check, quote::quote! {})
+            let account_load = quote::quote! {
+                impl quasar_lang::account_load::AccountLoad for #name {
+                    #[inline(always)]
+                    fn check(
+                        view: &quasar_lang::__internal::AccountView,
+                        _field_name: &str,
+                    ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
+                        <#name as quasar_lang::traits::AccountCheck>::check(view)
+                    }
+                }
+
+                impl quasar_lang::traits::FieldLifecycle for #name {}
+            };
+            (disc, owner, space, check, account_load)
+        } else {
+            // Fixed accounts: emit AccountLayout + composed checks.
+            // AccountCheck is NOT generated — AccountLoad::check is the
+            // single source of truth, composing Discriminator + DataLen + ZeroPod.
+            let disc = super::traits::emit_discriminator_impl(name, disc_bytes, &bump_offset_impl);
+            let owner = super::traits::emit_owner_impl(name);
+            let space = super::traits::emit_space_impl(
+                name,
+                field_infos,
+                has_dynamic,
+                disc_len,
+                &zc.zc_mod,
+            );
+            let disc_len_lit = disc_len;
+            let zc_mod_ident = &zc.zc_mod;
+            let account_load = quote::quote! {
+                impl quasar_lang::account_layout::AccountLayout for #name {
+                    type Schema = #zc_mod_ident::__Schema;
+                    type Target = <#zc_mod_ident::__Schema as quasar_lang::__zeropod::ZeroPodFixed>::Zc;
+                    const DATA_OFFSET: usize = #disc_len_lit;
+                }
+
+                impl quasar_lang::checks::Discriminator for #name {}
+                impl quasar_lang::checks::DataLen for #name {}
+                impl quasar_lang::checks::ZeroPod for #name {}
+
+                impl quasar_lang::account_load::AccountLoad for #name {
+                    #[inline(always)]
+                    fn check(
+                        view: &quasar_lang::__internal::AccountView,
+                        _field_name: &str,
+                    ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
+                        <#name as quasar_lang::checks::Discriminator>::check(view)?;
+                        <#name as quasar_lang::checks::DataLen>::check(view)?;
+                        <#name as quasar_lang::checks::ZeroPod>::check(view)?;
+                        Ok(())
+                    }
+                }
+
+                impl quasar_lang::traits::FieldLifecycle for #name {}
+            };
+            // No AccountCheck generated — composed checks replace it.
+            (disc, owner, space, quote::quote! {}, account_load)
         };
     let dynamic_impl_block =
         super::dynamic::emit_dynamic_impl_block(name, has_dynamic, disc_len, &zc.zc_mod, &dynamic);

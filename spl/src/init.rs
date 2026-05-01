@@ -1,5 +1,5 @@
 use {
-    crate::{instructions, state},
+    crate::instructions,
     quasar_lang::{cpi::Signer, prelude::*, sysvars::rent::Rent},
 };
 
@@ -17,7 +17,7 @@ pub fn init_token_account(
     quasar_lang::cpi::system::init_account_with_rent(
         payer,
         account,
-        state::TokenAccountState::LEN as u64,
+        165u64,
         token_program.address(),
         signers,
         rent,
@@ -41,7 +41,7 @@ pub fn init_mint_account(
     quasar_lang::cpi::system::init_account_with_rent(
         payer,
         account,
-        state::MintAccountState::LEN as u64,
+        82u64,
         token_program.address(),
         signers,
         rent,

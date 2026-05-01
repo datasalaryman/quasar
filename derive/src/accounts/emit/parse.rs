@@ -237,7 +237,7 @@ fn emit_init_before_load(
     } else {
         quote! {
             <
-                <#ty as quasar_lang::account_load::AccountLoad>::BehaviorTarget
+                #ty
                 as quasar_lang::traits::Space
             >::SPACE as u64
         }
@@ -251,7 +251,7 @@ fn emit_init_before_load(
     let params_block = if has_groups {
         quote! {
             let mut __init_params = <
-                <#ty as quasar_lang::account_load::AccountLoad>::BehaviorTarget
+                #ty
                 as quasar_lang::account_init::AccountInit
             >::InitParams::default();
         }
@@ -259,7 +259,7 @@ fn emit_init_before_load(
         // No groups → default params (typically () for plain accounts)
         quote! {
             let __init_params = <
-                <#ty as quasar_lang::account_load::AccountLoad>::BehaviorTarget
+                #ty
                 as quasar_lang::account_init::AccountInit
             >::InitParams::default();
         }

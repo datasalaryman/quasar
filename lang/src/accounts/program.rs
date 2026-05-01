@@ -21,7 +21,6 @@ impl<T: crate::traits::Id> crate::traits::Id for Program<T> {
 impl<T: crate::traits::Id> crate::account_load::AccountLoad for Program<T> {
     const IS_EXECUTABLE: bool = true;
 
-    type BehaviorTarget = Self;
 
     #[inline(always)]
     fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> {

@@ -12,12 +12,8 @@ use quasar_lang::{
 /// Marker trait for account types with mint account layout.
 pub trait HasMintLayout {}
 
-impl HasMintLayout for quasar_lang::accounts::account::Account<crate::token::Mint> {}
-impl HasMintLayout for quasar_lang::accounts::account::Account<crate::token_2022::Mint2022> {}
-impl HasMintLayout
-    for quasar_lang::accounts::interface_account::InterfaceAccount<crate::token::Mint>
-{
-}
+impl HasMintLayout for crate::token::Mint {}
+impl HasMintLayout for crate::token_2022::Mint2022 {}
 
 /// Mint validation op. Constructed by the derive from `mint(...)` syntax.
 pub struct Op<'a> {
@@ -44,7 +40,7 @@ impl<'a, F: AsAccountView + HasMintLayout> AccountOp<F> for Op<'a> {
 
     #[inline(always)]
     fn apply_init_params(&self, params: *mut u8) -> Result<(), ProgramError> {
-        // SAFETY: For all F: HasMintLayout, BehaviorTarget: AccountInit
+        // SAFETY: For all F: HasMintLayout + AccountInit
         // with InitParams = MintInitParams. The derive passes a properly-typed
         // &mut MintInitParams cast to *mut u8.
         let params: &mut crate::token::MintInitParams<'_> =

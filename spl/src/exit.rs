@@ -22,7 +22,7 @@ pub fn sweep_token_account(
 ) -> Result<(), ProgramError> {
     // SAFETY: source validated as token account during parse.
     let amount = {
-        let state = unsafe { &*(source.data_ptr() as *const crate::state::TokenAccountState) };
+        let state = unsafe { &*(source.data_ptr() as *const crate::token::TokenDataZc) };
         state.amount()
     };
 
@@ -31,7 +31,7 @@ pub fn sweep_token_account(
     }
 
     let decimals = {
-        let mint_state = unsafe { &*(mint.data_ptr() as *const crate::state::MintAccountState) };
+        let mint_state = unsafe { &*(mint.data_ptr() as *const crate::token::MintDataZc) };
         mint_state.decimals()
     };
 

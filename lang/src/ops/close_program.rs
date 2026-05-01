@@ -49,17 +49,13 @@ pub struct Op<'a> {
     pub dest: &'a AccountView,
 }
 
-impl<'a, F: AccountLoad> AccountOp<F> for Op<'a>
-where
-    <F as AccountLoad>::BehaviorTarget: AccountClose,
-{
+impl<'a, F: AccountLoad + AccountClose> AccountOp<F> for Op<'a> {
     const REQUIRES_MUT: bool = true;
     const HAS_EXIT: bool = true;
 
     #[inline(always)]
     fn exit(&self, field: &mut F, _ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
-        type Target<F2> = <F2 as AccountLoad>::BehaviorTarget;
         let view = unsafe { <F as AccountLoad>::to_account_view_mut(field) };
-        <Target<F> as AccountClose>::close(view, self.dest)
+        <F as AccountClose>::close(view, self.dest)
     }
 }
