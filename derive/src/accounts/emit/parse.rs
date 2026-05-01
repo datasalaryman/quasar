@@ -27,7 +27,7 @@ use {
     super::{
         super::resolve::{FieldKind, FieldSemantics, UserCheck},
         ops::{
-            emit_op_type_static, exit_arg, typed_arg,
+            exit_arg, typed_arg,
             OpEmitCtx,
         },
     },
@@ -134,7 +134,6 @@ fn emit_init_phase(
 
     for sem in semantics {
         let ident = &sem.core.ident;
-        let ty = &sem.core.effective_ty;
 
         // Address verification for init fields.
         // Runs after non-init fields are loaded, so expressions like
@@ -228,7 +227,7 @@ fn emit_init_before_load(
             params: __init_params,
             idempotent: #idempotent,
         };
-        quasar_lang::ops::AccountOp::<#ty>::before_load(&__init_op, #ident, &__ctx)?;
+        __init_op.apply::<#ty>(#ident, &__ctx)?;
     };
 
     let inner_body = quote! {
@@ -359,17 +358,13 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
             // Realloc op (Phase 3b) — emitted when field has `realloc = expr`
             if let Some(realloc_expr) = &sem.realloc {
                 let payer = sem.payer.as_ref().expect("realloc requires payer");
-                // Build crate path via ident to keep domain strings out of derive source.
-                let spl_crate = format_ident!("quasar_{}", "spl");
                 let call = quote! {
                     {
-                        let __realloc_op = #spl_crate::ops::realloc::Op {
+                        let __realloc_op = quasar_lang::ops::realloc::Op {
                             space: (#realloc_expr) as usize,
                             payer: #payer.to_account_view(),
                         };
-                        <#spl_crate::ops::realloc::Op<'_> as quasar_lang::ops::AccountOp<
-                            #ty,
-                        >>::after_load_mut(&__realloc_op, &mut #ident, &__ctx)?;
+                        __realloc_op.apply::<#ty>(&mut #ident, &__ctx)?;
                     }
                 };
                 stmts.push(wrap_optional(is_optional, ident, &call, true));
@@ -430,22 +425,6 @@ fn emit_phase3(semantics: &[FieldSemantics], op_ctx: &OpEmitCtx) -> Vec<proc_mac
             stmts.push(wrap_optional(is_optional, ident, &combined, false));
         }
 
-        // REQUIRES_MUT compile-time assertions for exit ops.
-        for group in &sem.exit_actions {
-            let op_static = emit_op_type_static(group);
-            let path = &group.path;
-            let is_mut = sem.core.is_mut;
-            stmts.push(quote! {
-                const _: () = assert!(
-                    !<#op_static as quasar_lang::ops::AccountOp<#ty>>::REQUIRES_MUT
-                    || #is_mut,
-                    concat!(
-                        "op `", stringify!(#path), "` requires `mut` on field `",
-                        stringify!(#ty), "`"
-                    ),
-                );
-            });
-        }
     }
 
     stmts

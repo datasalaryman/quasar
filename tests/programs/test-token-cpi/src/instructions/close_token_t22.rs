@@ -2,7 +2,6 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
     quasar_spl::{
-        ops::close,
         Mint2022, Token2022, Token2022Program,
     },
 };

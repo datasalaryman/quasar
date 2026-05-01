@@ -1,7 +1,7 @@
 use {
     crate::state::SimpleAccount,
     quasar_derive::Accounts,
-    quasar_lang::{ops::close_program, prelude::*},
+    quasar_lang::prelude::*,
 };
 
 #[derive(Accounts)]

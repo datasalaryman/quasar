@@ -71,7 +71,7 @@ pub(crate) struct FieldSemantics {
     pub address: Option<Expr>,
     /// `realloc = expr` — realloc size expression.
     pub realloc: Option<Expr>,
-    /// All op groups (used for legacy AccountOp dispatch until fully migrated).
+    /// All op groups (raw, before classification into buckets).
     pub groups: Vec<GroupDirective>,
     /// Constraint ops (Constraint + ConstraintAndInit): run after load.
     pub constraints: Vec<GroupDirective>,

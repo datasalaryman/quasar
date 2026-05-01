@@ -1,52 +1,14 @@
-//! Token account validation op (Phase 3).
+//! Token account validation op.
 //!
-//! Validates that a token account has the expected mint, authority, and
-//! token program. Contributes init params via `apply_init_params`.
+//! The `Op` struct is retained for reference but dispatch now goes through
+//! capability traits (`TokenCheck`, `TokenInitContributor`).
 
-use quasar_lang::{
-    account_layout::AccountLayout,
-    ops::{AccountOp, OpCtx},
-    prelude::*,
-};
+use quasar_lang::prelude::*;
 
-/// Token validation op. Constructed by the derive from `token(...)` syntax.
+/// Token validation op struct. The derive no longer dispatches through this
+/// directly — it uses capability traits. Retained for backward compatibility.
 pub struct Op<'a> {
     pub mint: &'a AccountView,
     pub authority: &'a AccountView,
     pub token_program: &'a AccountView,
-}
-
-impl<'a, F: AsAccountView + AccountLayout<Schema = crate::token::TokenData>> AccountOp<F>
-    for Op<'a>
-{
-    const HAS_AFTER_LOAD: bool = true;
-    const HAS_INIT_PARAMS: bool = true;
-
-    #[inline(always)]
-    fn after_load(&self, field: &F, _ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
-        crate::validate::validate_token_account(
-            field.to_account_view(),
-            self.mint.address(),
-            self.authority.address(),
-            self.token_program.address(),
-        )
-    }
-
-    #[inline(always)]
-    fn apply_init_params(&self, params: *mut u8) -> Result<(), ProgramError> {
-        // SAFETY: For all F with AccountLayout<Schema = TokenData> + AccountInit,
-        // InitParams = TokenInitParams. The derive passes a properly-typed
-        // &mut TokenInitParams cast to *mut u8.
-        let params: &mut crate::token::TokenInitParams<'_> =
-            unsafe { &mut *(params as *mut crate::token::TokenInitParams<'_>) };
-        if params.kind.is_some() {
-            return Err(ProgramError::InvalidArgument);
-        }
-        params.kind = Some(crate::token::TokenInitKind::Token {
-            mint: self.mint,
-            authority: self.authority.address(),
-            token_program: self.token_program,
-        });
-        Ok(())
-    }
 }

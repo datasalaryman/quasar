@@ -1,108 +1,16 @@
-//! Op struct construction from group directive args.
+//! Arg transforms for capability trait context struct construction.
 //!
-//! The derive emits UFCS calls like:
-//! ```text
-//! <token::Op<'_> as AccountOp<Account<Token>>>::after_load(
-//!     &token::Op { mint: ..., authority: ..., token_program: ... },
-//!     &field, &__ctx,
-//! )?;
-//! ```
-//!
-//! This module generates the `token::Op { ... }` struct literal.
-//!
-//! ## `target` arg
-//!
-//! When a group has `target = Type`, the value is a type parameter, not a
-//! field value. `emit_op_type` puts it in the turbofish, `emit_op_struct`
-//! excludes it from fields and adds `_target: PhantomData`.
-//!
-//! ## Field name awareness
-//!
-//! The arg transforms (`typed_arg`, `exit_arg`) only apply `.to_account_view()`
-//! to idents that are account fields. Non-field idents (constants, scalars)
-//! pass through unchanged. Field names are threaded via `OpEmitCtx`.
+//! The derive emits direct capability trait calls. These helpers transform
+//! group directive args into the correct expressions for each phase.
 
 use {
-    super::super::resolve::{GroupArg, GroupDirective},
+    super::super::resolve::GroupArg,
     quote::quote,
 };
 
 /// Context for op emission — carries field names for transform disambiguation.
 pub(crate) struct OpEmitCtx {
     pub field_names: Vec<String>,
-}
-
-/// Return the fully-qualified op type for a group, including generic params.
-///
-/// Without `target`: `#path::Op<'_>`
-/// With `target = ConfigV2`: `#path::Op<'_, ConfigV2>`
-pub(crate) fn emit_op_type(group: &GroupDirective) -> proc_macro2::TokenStream {
-    let path = &group.path;
-    let target = group.args.iter().find(|a| a.key == "target");
-    match target {
-        Some(arg) => {
-            let ty = &arg.value;
-            quote! { #path::Op<'_, #ty> }
-        }
-        None => quote! { #path::Op<'_> },
-    }
-}
-
-/// Like `emit_op_type` but uses `'static` for const-assert contexts.
-pub(crate) fn emit_op_type_static(group: &GroupDirective) -> proc_macro2::TokenStream {
-    let path = &group.path;
-    let target = group.args.iter().find(|a| a.key == "target");
-    match target {
-        Some(arg) => {
-            let ty = &arg.value;
-            quote! { #path::Op<'static, #ty> }
-        }
-        None => quote! { #path::Op<'static> },
-    }
-}
-
-/// Emit an op struct literal from a group directive's args.
-///
-/// `arg_transform` converts each arg value to the correct expression
-/// for the phase (raw slot refs for Phase 1, typed refs for Phase 3).
-///
-/// The `target` arg is excluded from struct fields (it's a type param).
-/// When present, a `_target: core::marker::PhantomData` field is added.
-pub(crate) fn emit_op_struct(
-    group: &GroupDirective,
-    arg_transform: impl Fn(&GroupArg, &OpEmitCtx) -> proc_macro2::TokenStream,
-    ctx: &OpEmitCtx,
-) -> proc_macro2::TokenStream {
-    let path = &group.path;
-    let has_target = group.args.iter().any(|a| a.key == "target");
-    let target_arg = group.args.iter().find(|a| a.key == "target");
-
-    let fields: Vec<proc_macro2::TokenStream> = group
-        .args
-        .iter()
-        .filter(|arg| arg.key != "target")
-        .map(|arg| {
-            let key = &arg.key;
-            let value = arg_transform(arg, ctx);
-            quote! { #key: #value }
-        })
-        .collect();
-
-    if has_target {
-        let ty = &target_arg.unwrap().value;
-        quote! {
-            #path::Op::<'_, #ty> {
-                #(#fields,)*
-                _target: core::marker::PhantomData,
-            }
-        }
-    } else {
-        quote! {
-            #path::Op {
-                #(#fields,)*
-            }
-        }
-    }
 }
 
 fn is_field_ident(expr: &syn::Expr, ctx: &OpEmitCtx) -> bool {
@@ -114,7 +22,6 @@ fn is_field_ident(expr: &syn::Expr, ctx: &OpEmitCtx) -> bool {
     }
     false
 }
-
 
 /// Transform arg value for Phase 3 (post-load): field idents get
 /// `.to_account_view()`, `Some(field)` becomes `Some(field.to_account_view())`,

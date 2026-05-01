@@ -2,7 +2,6 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
     quasar_spl::{
-        ops::sweep,
         Mint, Token, TokenProgram,
     },
 };

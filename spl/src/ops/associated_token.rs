@@ -1,34 +1,12 @@
 //! Associated Token Account op — validate-only.
 //!
-//! Validates the ATA address matches the expected authority + mint + program.
-//! For ATA initialization, use `ata_init::Op` instead.
+//! Dispatch now goes through `AtaCheck` capability trait.
 
-use quasar_lang::{
-    account_layout::AccountLayout,
-    ops::{AccountOp, OpCtx},
-    prelude::*,
-};
+use quasar_lang::prelude::*;
 
-/// ATA validate-only op. Constructed by the derive from
-/// `associated_token(...)`.
+/// ATA validate-only op struct. Retained for backward compatibility.
 pub struct Op<'a> {
     pub authority: &'a AccountView,
     pub mint: &'a AccountView,
     pub token_program: &'a AccountView,
-}
-
-impl<'a, F: AsAccountView + AccountLayout<Schema = crate::token::TokenData>> AccountOp<F>
-    for Op<'a>
-{
-    const HAS_AFTER_LOAD: bool = true;
-
-    #[inline(always)]
-    fn after_load(&self, field: &F, _ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
-        crate::validate::validate_ata(
-            field.to_account_view(),
-            self.authority.address(),
-            self.mint.address(),
-            self.token_program.address(),
-        )
-    }
 }

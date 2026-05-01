@@ -53,6 +53,19 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
         }
     }
 
+    // Exit ops require mut
+    if !sem.core.is_mut {
+        for group in &sem.groups {
+            let name = group_last_segment(&group.path);
+            if matches!(name.as_str(), "close" | "close_program" | "sweep") {
+                return Err(syn::Error::new_spanned(
+                    span,
+                    format!("`{}(...)` requires `mut`", name),
+                ));
+            }
+        }
+    }
+
     // sweep-before-close hard error: close/close_program must come AFTER sweep
     validate_exit_ordering(sem)?;
 

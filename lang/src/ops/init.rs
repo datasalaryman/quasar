@@ -5,7 +5,7 @@
 //! `idempotent = true`, already-initialized accounts are silently accepted.
 
 use {
-    super::{AccountOp, OpCtx},
+    super::OpCtx,
     crate::{
         account_init::{AccountInit, InitCtx},
         account_load::AccountLoad,
@@ -17,9 +17,9 @@ use {
 
 /// Init operation. Constructed by the derive macro from `init(...)` syntax.
 ///
-/// Generic `Params` defaults to `()` for plain `#[account]` types. SPL ops
-/// override `AccountOp::apply_init_params` to contribute their own init
-/// params (e.g., `token(mint = ..., authority = ...)` → `TokenInitParams`).
+/// Generic `Params` defaults to `()` for plain `#[account]` types.
+/// Init contributors (token, mint, ata_init) populate params via capability
+/// traits before this op runs.
 pub struct Op<'a, Params = ()> {
     pub payer: &'a AccountView,
     pub space: u64,
@@ -28,15 +28,14 @@ pub struct Op<'a, Params = ()> {
     pub idempotent: bool,
 }
 
-impl<'a, F, P> AccountOp<F> for Op<'a, P>
-where
-    F: AccountLoad + AccountInit<InitParams<'a> = P>,
-{
-    const HAS_BEFORE_LOAD: bool = true;
-    const REQUIRES_MUT: bool = true;
-
+impl<'a, P> Op<'a, P> {
+    /// Execute the init operation on a raw account slot.
     #[inline(always)]
-    fn before_load(&self, slot: &mut AccountView, ctx: &OpCtx<'_>) -> Result<(), ProgramError> {
+    pub fn apply<F: AccountLoad + AccountInit<InitParams<'a> = P>>(
+        &self,
+        slot: &mut AccountView,
+        ctx: &OpCtx<'_>,
+    ) -> Result<(), ProgramError> {
         if crate::is_system_program(slot.owner()) {
             let target = unsafe { &mut *(slot as *mut AccountView) };
             let program_id = unsafe { &*(ctx.program_id as *const solana_address::Address) };

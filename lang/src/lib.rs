@@ -379,7 +379,7 @@ pub mod event;
 pub mod instruction_arg;
 /// Low-level `sol_log_data` syscall wrapper.
 pub mod log;
-/// Op-dispatch traits for account lifecycle operations (`AccountOp`, `OpCtx`).
+/// Op-dispatch: `OpCtx`, `SupportsRealloc`, structural ops (init, realloc, PDA, close_program).
 pub mod ops;
 /// Program Derived Address creation and lookup.
 pub mod pda;
