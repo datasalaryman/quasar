@@ -87,6 +87,7 @@ macro_rules! impl_token_account_init {
     ($ty:ty) => {
         impl quasar_lang::account_init::AccountInit for $ty {
             type InitParams<'a> = crate::token::TokenInitKind<'a>;
+            const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
             #[inline(always)]
             fn init<'a>(
@@ -94,6 +95,7 @@ macro_rules! impl_token_account_init {
                 params: &Self::InitParams<'a>,
             ) -> Result<(), ProgramError> {
                 match params {
+                    crate::token::TokenInitKind::Unset => Err(ProgramError::InvalidArgument),
                     crate::token::TokenInitKind::Token {
                         mint,
                         authority,
@@ -141,27 +143,38 @@ macro_rules! impl_mint_account_init {
     ($ty:ty) => {
         impl quasar_lang::account_init::AccountInit for $ty {
             type InitParams<'a> = crate::token::MintInitParams<'a>;
+            const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
             #[inline(always)]
             fn init<'a>(
                 ctx: quasar_lang::account_init::InitCtx<'a>,
                 params: &Self::InitParams<'a>,
             ) -> Result<(), ProgramError> {
-                crate::init::init_mint_account(
-                    ctx.payer,
-                    ctx.target,
-                    params.token_program,
-                    params.decimals,
-                    params.authority,
-                    params.freeze_authority,
-                    ctx.signers,
-                    ctx.rent,
-                )
+                match params {
+                    crate::token::MintInitParams::Unset => Err(ProgramError::InvalidArgument),
+                    crate::token::MintInitParams::Mint {
+                        decimals,
+                        authority,
+                        freeze_authority,
+                        token_program,
+                    } => crate::init::init_mint_account(
+                        ctx.payer,
+                        ctx.target,
+                        token_program,
+                        *decimals,
+                        authority,
+                        *freeze_authority,
+                        ctx.signers,
+                        ctx.rent,
+                    ),
+                }
             }
         }
     };
 }
 
+/// Behavior modules for `#[derive(Accounts)]` integration.
+pub mod accounts;
 mod associated_token;
 mod constants;
 mod exit;
@@ -170,6 +183,8 @@ mod instructions;
 mod interface;
 /// Op-dispatch implementations for SPL token operations.
 pub mod ops;
+/// Convenience re-exports for SPL programs.
+pub mod prelude;
 mod token;
 mod token_2022;
 mod validate;
