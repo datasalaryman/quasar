@@ -48,7 +48,7 @@ where
             view,
             ctx.mint.address(),
             ctx.authority.address(),
-            ctx.token_program.address(),
+            ctx.token_program.map(|tp| tp.address()),
         )
     }
 }
@@ -64,7 +64,7 @@ where
             ctx.authority.address(),
             ctx.decimals,
             ctx.freeze_authority.map(|fa| fa.address()),
-            ctx.token_program.address(),
+            ctx.token_program.map(|tp| tp.address()),
         )
     }
 }
@@ -79,12 +79,13 @@ where
         view: &AccountView,
         ctx: AssociatedTokenCheckCtx<'_>,
     ) -> Result<(), ProgramError> {
-        crate::validate::validate_ata(
-            view,
-            ctx.authority.address(),
-            ctx.mint.address(),
-            ctx.token_program.address(),
-        )
+        // When token_program is None (concrete Account<Token>), use the
+        // account's on-chain owner for derivation — AccountLoad validated it.
+        let tp = ctx
+            .token_program
+            .map(|p| p.address())
+            .unwrap_or_else(|| view.owner());
+        crate::validate::validate_ata(view, ctx.authority.address(), ctx.mint.address(), tp)
     }
 }
 

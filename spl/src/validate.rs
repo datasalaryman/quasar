@@ -44,9 +44,14 @@ pub fn validate_token_account(
     view: &AccountView,
     mint: &Address,
     authority: &Address,
-    token_program: &Address,
+    token_program: Option<&Address>,
 ) -> Result<(), ProgramError> {
-    validate_token_account_inner(view, mint, authority, token_program, true)
+    match token_program {
+        Some(tp) => validate_token_account_inner(view, mint, authority, tp, true),
+        // No token_program means AccountLoad already verified the owner.
+        // Use the on-chain owner directly — skip the program check.
+        None => validate_token_account_inner(view, mint, authority, view.owner(), false),
+    }
 }
 
 #[inline(always)]
@@ -114,17 +119,20 @@ fn validate_token_account_inner(
 pub fn validate_mint(
     view: &AccountView,
     mint_authority: &Address,
-    decimals: u8,
+    decimals: Option<u8>,
     freeze_authority: Option<&Address>,
-    token_program: &Address,
+    token_program: Option<&Address>,
 ) -> Result<(), ProgramError> {
-    // Verify the token program is a known SPL token program.
-    validate_token_program(token_program)?;
-    if unlikely(!quasar_lang::keys_eq(view.owner(), token_program)) {
-        #[cfg(feature = "debug")]
-        quasar_lang::prelude::log("validate_mint: wrong program owner");
-        return Err(ProgramError::IllegalOwner);
+    if let Some(tp) = token_program {
+        // Verify the token program is a known SPL token program.
+        validate_token_program(tp)?;
+        if unlikely(!quasar_lang::keys_eq(view.owner(), tp)) {
+            #[cfg(feature = "debug")]
+            quasar_lang::prelude::log("validate_mint: wrong program owner");
+            return Err(ProgramError::IllegalOwner);
+        }
     }
+    // When token_program is None, AccountLoad already validated the owner.
     if unlikely(view.data_len() < 82) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: data too small");
@@ -146,10 +154,12 @@ pub fn validate_mint(
         quasar_lang::prelude::log("validate_mint: authority mismatch");
         return Err(ProgramError::InvalidAccountData);
     }
-    if unlikely(state.decimals() != decimals) {
-        #[cfg(feature = "debug")]
-        quasar_lang::prelude::log("validate_mint: decimals mismatch");
-        return Err(ProgramError::InvalidAccountData);
+    if let Some(expected_decimals) = decimals {
+        if unlikely(state.decimals() != expected_decimals) {
+            #[cfg(feature = "debug")]
+            quasar_lang::prelude::log("validate_mint: decimals mismatch");
+            return Err(ProgramError::InvalidAccountData);
+        }
     }
     match freeze_authority {
         Some(expected) => {

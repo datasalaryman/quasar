@@ -271,9 +271,18 @@ fn emit_init_params_direct(
             }
         }
         GroupKind::Mint => {
-            let decimals = typed_arg(find_arg(&group.args, "decimals"), op_ctx);
+            let decimals = group
+                .args
+                .iter()
+                .find(|a| a.key == "decimals")
+                .map(|a| typed_arg(a, op_ctx))
+                .unwrap_or_else(|| quote! { 6u8 });
             let authority = typed_arg(find_arg(&group.args, "authority"), op_ctx);
-            let token_program = typed_arg(find_arg(&group.args, "token_program"), op_ctx);
+            let token_program = group
+                .args
+                .iter()
+                .find(|a| a.key == "token_program")
+                .map(|a| typed_arg(a, op_ctx));
             // freeze_authority is legitimately optional.
             // None → None, Some(field) → Some(field.to_account_view().address()).
             let freeze_authority = group
@@ -283,12 +292,19 @@ fn emit_init_params_direct(
                 .map(|a| emit_optional_address_arg(a, op_ctx))
                 .unwrap_or_else(|| quote! { None });
             let params_ty = format_ident!("Mint{}Params", "Init");
+            let tp_expr = match token_program {
+                Some(tp) => quote! { #tp },
+                None => quote! {
+                    compile_error!("mint init requires token_program — add a Program<TokenProgram> \
+                                    field or specify `token_program = ...`")
+                },
+            };
             quote! {
                 let __init_params = #spl_crate::#params_ty {
                     decimals: #decimals,
                     authority: #authority.address(),
                     freeze_authority: #freeze_authority,
-                    token_program: #token_program,
+                    token_program: #tp_expr,
                 };
             }
         }
@@ -512,6 +528,15 @@ const TOKEN_CHECK_FIELDS: &[&str] = &["mint", "authority", "token_program"];
 const MINT_CHECK_FIELDS: &[&str] = &["decimals", "authority", "freeze_authority", "token_program"];
 const ATA_CHECK_FIELDS: &[&str] = &["mint", "authority", "token_program"];
 
+/// Fields that are wrapped in Some() when present, None when absent.
+/// These are fields the derive infers as optional — the user doesn't write
+/// Some/None, the derive wraps them.
+///
+/// Note: `freeze_authority` is NOT here — it uses explicit `None`/`Some(field)`
+/// syntax because validation distinguishes "assert no freeze authority" from
+/// "don't check."
+const INFERRED_OPTIONAL_CHECK_FIELDS: &[&str] = &["token_program", "decimals"];
+
 /// Emit a direct capability trait call for a constraint group.
 fn emit_constraint_call(
     ty: &syn::Type,
@@ -529,16 +554,29 @@ fn emit_constraint_call(
         _ => &[],
     };
 
-    let args: Vec<proc_macro2::TokenStream> = group
+    // Build present args, wrapping optional fields in Some(...).
+    let mut args: Vec<proc_macro2::TokenStream> = group
         .args
         .iter()
         .filter(|a| a.key != "target" && check_fields.iter().any(|field| a.key == *field))
         .map(|arg| {
             let key = &arg.key;
             let value = typed_arg(arg, op_ctx);
-            quote! { #key: #value }
+            if INFERRED_OPTIONAL_CHECK_FIELDS.contains(&key.to_string().as_str()) {
+                quote! { #key: Some(#value) }
+            } else {
+                quote! { #key: #value }
+            }
         })
         .collect();
+
+    // Emit None for optional fields not present in args.
+    for &field in INFERRED_OPTIONAL_CHECK_FIELDS {
+        if check_fields.contains(&field) && !group.args.iter().any(|a| a.key == field) {
+            let key = format_ident!("{}", field);
+            args.push(quote! { #key: None });
+        }
+    }
 
     match group.kind {
         GroupKind::Token => quote! {
