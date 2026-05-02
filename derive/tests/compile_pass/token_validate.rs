@@ -5,7 +5,7 @@ extern crate alloc;
 use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
-    quasar_spl::{TokenProgram, *},
+    quasar_spl::{accounts::token, TokenProgram, *},
 };
 
 solana_address::declare_id!("11111111111111111111111111111112");

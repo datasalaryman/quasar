@@ -1,6 +1,0 @@
-error: no compatible token program field found. Add a `Program<TokenProgram>`, `Program<Token2022Program>`, or `Interface<TokenInterface>` field, or specify `token_program = ...` explicitly. Program fields inside composite accounts are not considered
-  --> tests/compile_fail/close_ambiguous_args.rs:16:5
-   |
-16 | /     #[account(mut, close(dest = dest, authority = dest))]
-17 | |     pub data: Account<Data>,
-   | |___________________________^

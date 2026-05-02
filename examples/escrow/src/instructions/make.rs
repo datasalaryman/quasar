@@ -4,7 +4,7 @@ use {
         state::{Escrow, EscrowInner},
     },
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenCpi, TokenProgram},
+    quasar_spl::prelude::*,
 };
 
 #[derive(Accounts)]
@@ -17,9 +17,9 @@ pub struct Make {
     pub mint_b: Account<Mint>,
     #[account(mut)]
     pub maker_ta_a: Account<Token>,
-    #[account(init(idempotent), payer = maker, token(mint = mint_b, authority = maker))]
+    #[account(init(idempotent), payer = maker, token(mint = mint_b, authority = maker, token_program = token_program))]
     pub maker_ta_b: Account<Token>,
-    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = escrow))]
+    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = escrow, token_program = token_program))]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
     pub token_program: Program<TokenProgram>,

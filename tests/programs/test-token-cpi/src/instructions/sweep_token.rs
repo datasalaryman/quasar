@@ -1,8 +1,4 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenProgram},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 /// Tests sweep without close -- transfers all remaining tokens at end of
 /// instruction.
@@ -11,8 +7,8 @@ pub struct SweepToken {
     pub authority: Signer,
     #[account(
         mut,
-        token(mint = mint, authority = authority),
-        sweep(receiver = receiver, mint = mint, authority = authority)
+        token(mint = mint, authority = authority, token_program = token_program),
+        token_sweep(receiver = receiver, mint = mint, authority = authority, token_program = token_program)
     )]
     pub source: Account<Token>,
     #[account(mut)]

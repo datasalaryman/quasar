@@ -1,16 +1,12 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::{InterfaceAccount, *},
-    quasar_spl::{Mint, Token, TokenInterface},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 #[derive(Accounts)]
 pub struct CloseTokenInterface {
     pub authority: Signer,
     #[account(
         mut,
-        token(mint = mint, authority = authority),
-        close(dest = destination, authority = authority)
+        token(mint = mint, authority = authority, token_program = token_program),
+        token_close(dest = destination, authority = authority, token_program = token_program)
     )]
     pub token_account: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,

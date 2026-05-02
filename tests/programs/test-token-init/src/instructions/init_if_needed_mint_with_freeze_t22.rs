@@ -1,15 +1,11 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::*,
-    quasar_spl::{Mint2022, Token2022Program},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 #[derive(Accounts)]
 pub struct InitIfNeededMintWithFreezeT22 {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
         init(idempotent),
-        mint(decimals = 6, authority = mint_authority, freeze_authority = Some(freeze_authority)),
+        mint(decimals = 6, authority = mint_authority, freeze_authority = Some(freeze_authority), token_program = token_program),
     )]
     pub mint: Account<Mint2022>,
     pub mint_authority: Signer,

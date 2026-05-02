@@ -1,12 +1,8 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::{InterfaceAccount, *},
-    quasar_spl::{Mint, Token, TokenInterface},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 #[derive(Accounts)]
 pub struct ValidateTokenInterfaceCheck {
-    #[account(token(mint = mint, authority = authority))]
+    #[account(token(mint = mint, authority = authority, token_program = token_program))]
     pub token_account: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
     pub authority: Signer,

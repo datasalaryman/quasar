@@ -7,86 +7,6 @@ pub(crate) enum FieldKind {
     Composite,
 }
 
-/// Op classification for direct capability dispatch.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum OpKind {
-    /// Validation after typed load; also contributes init params on init
-    /// fields.
-    Check,
-    /// Epilogue action (exit phase).
-    Exit,
-}
-
-/// Known op group names after directive classification.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum GroupKind {
-    Token,
-    Mint,
-    AssociatedToken,
-    Close,
-    Sweep,
-}
-
-impl GroupKind {
-    pub(crate) fn from_path(path: &syn::Path) -> syn::Result<Self> {
-        if let Some(segment) = path.segments.last() {
-            let ident = &segment.ident;
-            if ident == "token" {
-                return Ok(Self::Token);
-            }
-            if ident == "mint" {
-                return Ok(Self::Mint);
-            }
-            if ident == "associated_token" {
-                return Ok(Self::AssociatedToken);
-            }
-            if ident == "close" {
-                return Ok(Self::Close);
-            }
-            if ident == "sweep" {
-                return Ok(Self::Sweep);
-            }
-        }
-
-        let name = path
-            .segments
-            .last()
-            .map(|segment| segment.ident.to_string())
-            .unwrap_or_default();
-        Err(syn::Error::new_spanned(
-            path,
-            format!(
-                "unknown op group `{name}`. Valid: token, mint, associated_token, close, sweep"
-            ),
-        ))
-    }
-
-    pub(crate) const fn op_kind(self) -> OpKind {
-        match self {
-            Self::Token | Self::Mint | Self::AssociatedToken => OpKind::Check,
-            Self::Close | Self::Sweep => OpKind::Exit,
-        }
-    }
-
-    pub(crate) const fn exit_order(self) -> u8 {
-        match self {
-            Self::Sweep => 0,
-            Self::Close => 1,
-            _ => 2,
-        }
-    }
-
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Token => "token",
-            Self::Mint => "mint",
-            Self::AssociatedToken => "associated_token",
-            Self::Close => "close",
-            Self::Sweep => "sweep",
-        }
-    }
-}
-
 pub(crate) struct FieldCore {
     pub ident: Ident,
     pub field: syn::Field,
@@ -100,19 +20,54 @@ pub(crate) struct FieldCore {
     pub dup: bool,
 }
 
-/// A group directive: `path(key = value, ...)`.
+/// A behavior group directive: `path(key = value, ...)`.
+///
+/// The derive treats every non-core group as an open behavior group. The path
+/// resolves to a Rust module exporting `Args::builder()` and `Behavior`.
+/// No protocol-specific knowledge lives here.
 #[derive(Clone)]
-pub(crate) struct GroupDirective {
+pub(crate) struct BehaviorGroup {
     pub path: syn::Path,
-    pub kind: GroupKind,
-    pub args: Vec<GroupArg>,
+    pub args: Vec<BehaviorArg>,
 }
 
-/// A single `key = value` arg in a group directive.
+impl BehaviorGroup {
+    /// The last segment of the path, used for variable naming.
+    pub(crate) fn name(&self) -> String {
+        self.path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("_")
+    }
+}
+
+/// A single `key = value` arg in a behavior group directive.
 #[derive(Clone)]
-pub(crate) struct GroupArg {
+pub(crate) struct BehaviorArg {
     pub key: Ident,
     pub value: Expr,
+}
+
+/// Classification of a behavior arg value for lowering.
+/// Computed by the planner from the field name table.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueKind {
+    /// Bare identifier matching an account field → `field.to_account_view()`.
+    BareFieldRef,
+    /// Bare identifier matching an optional account field →
+    /// `field.as_ref().map(|v| v.to_account_view())`.
+    OptionalFieldRef,
+    /// Any expression (literal, path, const) → pass through directly.
+    Expr,
+    /// `None` literal → `None`.
+    NoneLiteral,
+    /// `Some(field)` where field is an account field →
+    /// `Some(field.to_account_view())`.
+    SomeFieldRef,
+    /// `Some(expr)` where expr is not a field → `Some(expr)`.
+    SomeExpr,
 }
 
 /// User-specified structural assertion.
@@ -141,8 +96,10 @@ pub(crate) struct FieldSemantics {
     pub address: Option<Expr>,
     /// `realloc = expr` — realloc size expression.
     pub realloc: Option<Expr>,
-    /// All op groups (raw directives — classification happens in the planner).
-    pub groups: Vec<GroupDirective>,
+    /// `close(dest = field)` — core structural close.
+    pub close_dest: Option<Ident>,
+    /// All behavior groups (open directives — the derive is protocol-neutral).
+    pub groups: Vec<BehaviorGroup>,
     /// Structural assertions: has_one, address, constraints.
     pub user_checks: Vec<UserCheck>,
     /// True when the field type is `Migration<From, To>` (syntactic detection

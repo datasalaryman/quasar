@@ -1,7 +1,7 @@
 use {
     crate::{events::TakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenCpi, TokenProgram},
+    quasar_spl::prelude::*,
 };
 
 #[derive(Accounts)]
@@ -21,11 +21,11 @@ pub struct Take {
     pub maker: UncheckedAccount,
     pub mint_a: Account<Mint>,
     pub mint_b: Account<Mint>,
-    #[account(init(idempotent), payer = taker, token(mint = mint_a, authority = taker))]
+    #[account(init(idempotent), payer = taker, token(mint = mint_a, authority = taker, token_program = token_program))]
     pub taker_ta_a: Account<Token>,
     #[account(mut)]
     pub taker_ta_b: Account<Token>,
-    #[account(init(idempotent), payer = taker, token(mint = mint_b, authority = maker))]
+    #[account(init(idempotent), payer = taker, token(mint = mint_b, authority = maker, token_program = token_program))]
     pub maker_ta_b: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,

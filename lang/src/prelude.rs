@@ -5,6 +5,7 @@
 
 pub use {
     crate::{
+        account_behavior::AccountBehavior,
         account_init::{AccountInit, InitCtx},
         account_load::AccountLoad,
         accounts::*,

@@ -1,41 +1,47 @@
-//! V3 directive parser for `#[account(...)]` attributes.
+//! Directive parser — grammar only, no semantic decisions.
 //!
-//! Grammar:
-//!   directive ::= bare_flag | init | key_value | group | check | allow
-//!   bare_flag ::= 'mut' | 'dup'
-//!   init      ::= 'init' | 'init' '(' 'idempotent' ')'
-//!   key_value ::= 'payer' '=' ident | 'address' '=' expr | 'realloc' '=' expr
-//!   group     ::= path '(' args ')'
-//!   check     ::= 'has_one' '(' ident_list ')' | 'constraints' '(' expr_list
-//! ')'   allow     ::= 'allow' '(' ident_list ')'
-//!   args      ::= (ident '=' expr),*
+//! Grammar summary:
+//! - core: `mut`, `dup`, `init`, `init(idempotent)`, `payer = ident`, `address
+//!   = expr`, `realloc = expr`, `close(dest = ident)`
+//! - behavior: `path(arg = value, ...)`
+//! - check: `has_one(...)`, `constraints(...)`
+//! - allow: `allow(...)`
 //!
 //! Phase placement is NOT part of the user syntax. No `pre(...)` or
-//! `exit(...)`. The lowering layer decides which phases each op participates
-//! in.
+//! `exit(...)`. The lowering layer decides which phases each behavior
+//! participates in.
+//!
+//! All groups are open behavior groups. The derive is protocol-neutral — it
+//! does not know what `token`, `mint`, or `metadata` mean.
 
 use {
-    super::super::resolve::{GroupArg, GroupDirective, GroupKind, UserCheck},
+    super::super::resolve::{BehaviorArg, BehaviorGroup, UserCheck},
     syn::{
         parse::{Parse, ParseStream},
         Expr, Ident, Token,
     },
 };
 
+/// Parsed directive from `#[account(...)]`. Core directives are structural
+/// (owned by the derive); behavior directives are protocol-owned (lowered to
+/// trait calls).
 pub(crate) enum Directive {
-    Bare(Ident),
-    Init {
-        idempotent: bool,
-    },
+    Core(CoreDirective),
+    Behavior(BehaviorGroup),
+    Check(UserCheck),
+    #[allow(dead_code)]
+    Allow(Vec<Ident>),
+}
+
+/// Core structural directives — owned by the derive, not by protocol crates.
+pub(crate) enum CoreDirective {
+    Mut,
+    Dup,
+    Init { idempotent: bool },
     Payer(Ident),
     Address(syn::Expr, Option<syn::Expr>),
     Realloc(syn::Expr),
-    /// `allow(unconstrained, ...)` — lint suppression, consumed by the linter
-    /// only. The derive macro ignores these during lowering.
-    #[allow(dead_code)]
-    Allow(Vec<Ident>),
-    Group(GroupDirective),
-    Check(UserCheck),
+    Close(Ident),
 }
 
 struct ParsedDirective {
@@ -46,9 +52,9 @@ impl Parse for ParsedDirective {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // `mut` is a keyword, needs special handling
         if input.peek(Token![mut]) {
-            let kw: Token![mut] = input.parse()?;
+            let _kw: Token![mut] = input.parse()?;
             return Ok(ParsedDirective {
-                inner: Directive::Bare(Ident::new("mut", kw.span)),
+                inner: Directive::Core(CoreDirective::Mut),
             });
         }
 
@@ -62,20 +68,20 @@ impl Parse for ParsedDirective {
                 "payer" => {
                     let ident: Ident = input.parse()?;
                     return Ok(ParsedDirective {
-                        inner: Directive::Payer(ident),
+                        inner: Directive::Core(CoreDirective::Payer(ident)),
                     });
                 }
                 "address" => {
                     let expr: Expr = input.parse()?;
                     let error = parse_trailing_error(input)?;
                     return Ok(ParsedDirective {
-                        inner: Directive::Address(expr, error),
+                        inner: Directive::Core(CoreDirective::Address(expr, error)),
                     });
                 }
                 "realloc" => {
                     let expr: Expr = input.parse()?;
                     return Ok(ParsedDirective {
-                        inner: Directive::Realloc(expr),
+                        inner: Directive::Core(CoreDirective::Realloc(expr)),
                     });
                 }
                 _ => {
@@ -118,7 +124,7 @@ impl Parse for ParsedDirective {
                         true
                     };
                     return Ok(ParsedDirective {
-                        inner: Directive::Init { idempotent },
+                        inner: Directive::Core(CoreDirective::Init { idempotent }),
                     });
                 }
 
@@ -146,12 +152,32 @@ impl Parse for ParsedDirective {
                     });
                 }
 
-                // All other groups: token, mint, close, sweep, etc.
+                // Core structural close: close(dest = field)
+                "close" => {
+                    let args = parse_group_args(&content)?;
+                    let dest = args.iter().find(|a| a.key == "dest").ok_or_else(|| {
+                        syn::Error::new_spanned(&path, "`close(...)` requires `dest = field`")
+                    })?;
+                    if let Expr::Path(ep) = &dest.value {
+                        if ep.qself.is_none() && ep.path.segments.len() == 1 {
+                            return Ok(ParsedDirective {
+                                inner: Directive::Core(CoreDirective::Close(
+                                    ep.path.segments[0].ident.clone(),
+                                )),
+                            });
+                        }
+                    }
+                    return Err(syn::Error::new_spanned(
+                        &dest.value,
+                        "`close(dest = ...)` must be a field name",
+                    ));
+                }
+
+                // All other groups: open behavior groups.
                 _ => {
-                    let kind = GroupKind::from_path(&path)?;
                     let args = parse_group_args(&content)?;
                     return Ok(ParsedDirective {
-                        inner: Directive::Group(GroupDirective { path, kind, args }),
+                        inner: Directive::Behavior(BehaviorGroup { path, args }),
                     });
                 }
             }
@@ -160,10 +186,10 @@ impl Parse for ParsedDirective {
         // Bare flags (no parens, no `=`)
         match name.as_str() {
             "init" => Ok(ParsedDirective {
-                inner: Directive::Init { idempotent: false },
+                inner: Directive::Core(CoreDirective::Init { idempotent: false }),
             }),
             "dup" => Ok(ParsedDirective {
-                inner: Directive::Bare(last_ident(&path)),
+                inner: Directive::Core(CoreDirective::Dup),
             }),
             _ => Err(syn::Error::new_spanned(
                 &path,
@@ -174,7 +200,7 @@ impl Parse for ParsedDirective {
 }
 
 /// Parse `key = value` pairs separated by commas.
-fn parse_group_args(input: ParseStream) -> syn::Result<Vec<GroupArg>> {
+fn parse_group_args(input: ParseStream) -> syn::Result<Vec<BehaviorArg>> {
     let mut args = Vec::new();
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -183,21 +209,21 @@ fn parse_group_args(input: ParseStream) -> syn::Result<Vec<GroupArg>> {
             return Err(syn::Error::new_spanned(
                 &key,
                 format!(
-                    "op arg `{key}` requires a value: `{key} = ...`. Bare flags are not supported \
-                     in op groups",
+                    "behavior arg `{key}` requires a value: `{key} = ...`. Bare flags are not \
+                     supported in behavior groups",
                 ),
             ));
         }
         input.parse::<Token![=]>()?;
         let value: Expr = input.parse()?;
 
-        if args.iter().any(|a: &GroupArg| a.key == key) {
+        if args.iter().any(|a: &BehaviorArg| a.key == key) {
             return Err(syn::Error::new_spanned(
                 &key,
                 format!("duplicate arg `{key}` — each arg may only appear once"),
             ));
         }
-        args.push(GroupArg { key, value });
+        args.push(BehaviorArg { key, value });
 
         if !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -206,7 +232,8 @@ fn parse_group_args(input: ParseStream) -> syn::Result<Vec<GroupArg>> {
     Ok(args)
 }
 
-/// Validate that an op-arg value conforms to the phase-polymorphic grammar.
+/// Validate that a behavior arg value conforms to the phase-polymorphic
+/// grammar.
 ///
 /// Allowed forms (valid in raw-slot, typed, and epilogue contexts):
 /// - Bare field ident: `authority`
@@ -217,24 +244,24 @@ fn parse_group_args(input: ParseStream) -> syn::Result<Vec<GroupArg>> {
 ///
 /// Banned: method calls, field paths, casts, arithmetic, instruction args.
 /// These belong in `constraints(...)` or handler code.
-pub(crate) fn validate_op_arg(key: &Ident, expr: &Expr) -> syn::Result<()> {
-    if is_valid_op_arg(expr) {
+pub(crate) fn validate_behavior_arg(key: &Ident, expr: &Expr) -> syn::Result<()> {
+    if is_valid_behavior_arg(expr) {
         Ok(())
     } else {
         Err(syn::Error::new_spanned(
             expr,
             format!(
-                "op arg `{}` has a value that is not valid in all lifecycle phases. Op args must \
-                 be bare field idents, literals, const paths, `Some(field)`, or `None`. Move \
-                 complex expressions to `constraints(...)` or handler code.",
+                "behavior arg `{}` has a value that is not valid in all lifecycle phases. \
+                 Behavior args must be bare field idents, literals, const paths, `Some(field)`, \
+                 or `None`. Move complex expressions to `constraints(...)` or handler code.",
                 key,
             ),
         ))
     }
 }
 
-/// Check if an expression conforms to the op-arg grammar.
-fn is_valid_op_arg(expr: &Expr) -> bool {
+/// Check if an expression conforms to the behavior arg grammar.
+fn is_valid_behavior_arg(expr: &Expr) -> bool {
     match expr {
         // Path: bare ident (field ref) or multi-segment (const/type path) — valid
         Expr::Path(ep) => ep.qself.is_none(),
@@ -247,7 +274,7 @@ fn is_valid_op_arg(expr: &Expr) -> bool {
                     && func.path.segments.len() == 1
                     && func.path.segments[0].ident == "Some"
                 {
-                    return call.args.len() == 1 && call.args.iter().all(is_valid_op_arg);
+                    return call.args.len() == 1 && call.args.iter().all(is_valid_behavior_arg);
                 }
             }
             false
@@ -308,8 +335,4 @@ fn path_to_string(path: &syn::Path) -> String {
         .map(|s| s.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
-}
-
-fn last_ident(path: &syn::Path) -> Ident {
-    path.segments.last().unwrap().ident.clone()
 }

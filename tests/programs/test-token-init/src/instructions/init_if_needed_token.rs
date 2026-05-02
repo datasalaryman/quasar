@@ -1,15 +1,11 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenProgram},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 #[derive(Accounts)]
 pub struct InitIfNeededToken {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
         init(idempotent),
-        token(mint = mint, authority = payer),
+        token(mint = mint, authority = payer, token_program = token_program),
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,

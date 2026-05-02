@@ -4,7 +4,7 @@ extern crate alloc;
 use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
-    quasar_spl::{TokenProgram, *},
+    quasar_spl::{accounts::associated_token, TokenProgram, *},
 };
 solana_address::declare_id!("11111111111111111111111111111112");
 #[derive(Accounts)]
@@ -14,7 +14,12 @@ pub struct InitAta {
     pub mint: Account<Mint>,
     #[account(mut,
         init,
-        associated_token(authority = payer, mint = mint),
+        associated_token(
+            authority = payer, mint = mint,
+            token_program = token_program,
+            system_program = system_program,
+            ata_program = ata_program,
+        ),
     )]
     pub ata_vault: Account<Token>,
     pub token_program: Program<TokenProgram>,

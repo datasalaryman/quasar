@@ -1,7 +1,7 @@
 use {
     crate::{events::RefundEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenCpi, TokenProgram},
+    quasar_spl::prelude::*,
 };
 
 #[derive(Accounts)]
@@ -16,7 +16,7 @@ pub struct Refund {
     )]
     pub escrow: Account<Escrow>,
     pub mint_a: Account<Mint>,
-    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = maker))]
+    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = maker, token_program = token_program))]
     pub maker_ta_a: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,

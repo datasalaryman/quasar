@@ -28,7 +28,14 @@ pub struct InitCtx<'a> {
 /// <FieldTy as AccountInit>::init(ctx, &params)?;
 /// ```
 pub trait AccountInit {
-    type InitParams<'a>;
+    type InitParams<'a>: Default;
+
+    /// Whether `Default` init params are valid (i.e., the account can be
+    /// created without any behavior filling the params). Program-owned
+    /// accounts with `InitParams = ()` set this to `true`. Protocol accounts
+    /// like Token/Mint set this to `false` — their `Unset` default is a
+    /// runtime error if no behavior fills the params.
+    const DEFAULT_INIT_PARAMS_VALID: bool = true;
 
     fn init<'a>(ctx: InitCtx<'a>, params: &Self::InitParams<'a>) -> ProgramResult;
 }

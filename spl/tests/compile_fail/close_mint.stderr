@@ -1,5 +1,13 @@
 error: unknown key-value directive `close = ...`
-  --> tests/compile_fail/close_mint.rs:11:20
+  --> tests/compile_fail/close_mint.rs:12:20
    |
-11 |     #[account(mut, close = destination)]
+12 |     #[account(mut, close = destination)]
    |                    ^^^^^
+
+warning: unused import: `quasar_spl::accounts::mint`
+ --> tests/compile_fail/close_mint.rs:3:5
+  |
+3 | use quasar_spl::accounts::mint;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

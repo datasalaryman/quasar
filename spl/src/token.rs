@@ -214,9 +214,14 @@ impl_mint_account_init!(Mint);
 
 /// Init params for token account creation via CPI.
 ///
-/// The derive constructs this directly from validated account attributes —
-/// no Option wrapping, no Default. Re-exported at `quasar_spl::TokenInitKind`.
+/// The derive constructs `Default` (Unset) and behavior modules fill the
+/// variant via `AccountBehavior::set_init_param`. Calling `AccountInit::init`
+/// with `Unset` is a program error.
+#[derive(Default)]
 pub enum TokenInitKind<'a> {
+    /// No behavior has filled init params yet.
+    #[default]
+    Unset,
     /// Direct token account init via system program + initialize_account3.
     Token {
         mint: &'a AccountView,
@@ -236,12 +241,19 @@ pub enum TokenInitKind<'a> {
 
 /// Init params for mint account creation via CPI.
 ///
-/// The derive constructs this directly from validated account attributes.
-/// All fields are non-optional except `freeze_authority` which is legitimately
-/// optional. Re-exported at `quasar_spl::MintInitParams`.
-pub struct MintInitParams<'a> {
-    pub decimals: u8,
-    pub authority: &'a Address,
-    pub freeze_authority: Option<&'a Address>,
-    pub token_program: &'a AccountView,
+/// The derive constructs `Default` (Unset) and behavior modules fill params
+/// via `AccountBehavior::set_init_param`. Calling `AccountInit::init` with
+/// `Unset` is a program error.
+#[derive(Default)]
+pub enum MintInitParams<'a> {
+    /// No behavior has filled init params yet.
+    #[default]
+    Unset,
+    /// Mint init parameters filled by a behavior module.
+    Mint {
+        decimals: u8,
+        authority: &'a Address,
+        freeze_authority: Option<&'a Address>,
+        token_program: &'a AccountView,
+    },
 }

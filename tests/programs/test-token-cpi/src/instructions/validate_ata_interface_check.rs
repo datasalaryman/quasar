@@ -1,12 +1,8 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::{InterfaceAccount, *},
-    quasar_spl::{Mint, Token, TokenInterface},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 #[derive(Accounts)]
 pub struct ValidateAtaInterfaceCheck {
-    #[account(associated_token(mint = mint, authority = wallet))]
+    #[account(associated_token(mint = mint, authority = wallet, token_program = token_program))]
     pub ata: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
     pub wallet: Signer,

@@ -348,6 +348,8 @@ pub mod macros;
 /// Sysvar access and the `impl_sysvar_get!` helper macro.
 #[macro_use]
 pub mod sysvars;
+/// Protocol-owned account behavior trait (`AccountBehavior`).
+pub mod account_behavior;
 /// Runtime init functions for program-owned accounts.
 pub mod account_init;
 /// Layout descriptor for zero-copy account wrappers (`AccountLayout`).

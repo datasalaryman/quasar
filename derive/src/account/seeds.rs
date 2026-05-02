@@ -58,23 +58,18 @@ impl SeedType {
     /// Address: `.as_ref()` on the `&Address`.
     /// Scalars: `&self._field` on the owned `[u8; N]`.
     fn slice_expr(&self, field_name: &Ident, prefix: &str) -> proc_macro2::TokenStream {
+        let prefix_ident: Option<Ident> = if prefix.is_empty() {
+            None
+        } else {
+            Some(Ident::new(prefix, field_name.span()))
+        };
+        let access = match prefix_ident {
+            None => quote! { self.#field_name },
+            Some(p) => quote! { self.#p.#field_name },
+        };
         match self {
-            SeedType::Address => {
-                let access = match prefix {
-                    "" => quote! { self.#field_name },
-                    "inner" => quote! { self.inner.#field_name },
-                    _ => unreachable!(),
-                };
-                quote! { #access.as_ref() }
-            }
-            _ => {
-                let access = match prefix {
-                    "" => quote! { self.#field_name },
-                    "inner" => quote! { self.inner.#field_name },
-                    _ => unreachable!(),
-                };
-                quote! { &#access }
-            }
+            SeedType::Address => quote! { #access.as_ref() },
+            _ => quote! { &#access },
         }
     }
 }

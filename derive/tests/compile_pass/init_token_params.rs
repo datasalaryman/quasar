@@ -4,7 +4,7 @@ extern crate alloc;
 use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
-    quasar_spl::{TokenProgram, *},
+    quasar_spl::{accounts::token, TokenProgram, *},
 };
 solana_address::declare_id!("11111111111111111111111111111112");
 #[account(discriminator = 10)]
@@ -21,7 +21,7 @@ pub struct InitTokenVault {
     #[account(mut,
         init,
         address = Vault::seeds(payer.address()),
-        token(mint = mint, authority = payer),
+        token(mint = mint, authority = payer, token_program = token_program),
     )]
     pub vault: Account<Token>,
     pub token_program: Program<TokenProgram>,

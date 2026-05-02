@@ -1,8 +1,4 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::{InterfaceAccount, *},
-    quasar_spl::{Mint, Token, TokenCpi, TokenInterface},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 #[derive(Accounts)]
 pub struct TransferCheckedInterface {

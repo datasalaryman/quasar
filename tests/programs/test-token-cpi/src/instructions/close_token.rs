@@ -1,8 +1,4 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenProgram},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 
 /// Tests closing a token account via the `close =` attribute.
 /// The macro's epilogue routes through `AccountExit::close()` which issues
@@ -12,8 +8,8 @@ pub struct CloseToken {
     pub authority: Signer,
     #[account(
         mut,
-        token(mint = mint, authority = authority),
-        close(dest = destination, authority = authority)
+        token(mint = mint, authority = authority, token_program = token_program),
+        token_close(dest = destination, authority = authority, token_program = token_program)
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,

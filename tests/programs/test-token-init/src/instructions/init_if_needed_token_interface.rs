@@ -1,15 +1,11 @@
-use {
-    quasar_derive::Accounts,
-    quasar_lang::prelude::{InterfaceAccount, *},
-    quasar_spl::{Mint, Token, TokenInterface},
-};
+use {quasar_derive::Accounts, quasar_lang::prelude::*, quasar_spl::prelude::*};
 #[derive(Accounts)]
 pub struct InitIfNeededTokenInterface {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
         init(idempotent),
-        token(mint = mint, authority = payer),
+        token(mint = mint, authority = payer, token_program = token_program),
     )]
     pub token_account: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,

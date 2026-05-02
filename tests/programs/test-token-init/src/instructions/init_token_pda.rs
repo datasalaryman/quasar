@@ -1,7 +1,7 @@
 use {
     quasar_derive::{Accounts, Seeds},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenProgram},
+    quasar_spl::prelude::*,
 };
 #[derive(Seeds)]
 #[seeds(b"token", payer: Address)]
@@ -13,7 +13,7 @@ pub struct InitTokenPda {
     #[account(mut,
         init,
         address = TokenPda::seeds(payer.address()),
-        token(mint = mint, authority = payer),
+        token(mint = mint, authority = payer, token_program = token_program),
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,
