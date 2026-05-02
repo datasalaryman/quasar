@@ -10,10 +10,7 @@ pub struct InitAtaT22 {
     pub payer: Signer,
     #[account(mut,
         init, payer = payer,
-        associated_token(
-            authority = wallet, mint = mint, token_program = token_program,
-            system_program = system_program, ata_program = ata_program,
-        ),
+        associated_token(authority = wallet, mint = mint),
     )]
     pub ata: Account<Token2022>,
     pub wallet: Signer,

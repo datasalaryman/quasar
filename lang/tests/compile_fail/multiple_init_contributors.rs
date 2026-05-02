@@ -13,9 +13,8 @@ pub struct Bad {
     pub payer: Signer,
     #[account(mut,
         init, payer = payer,
-        token(mint = mint, authority = payer, token_program = token_program),
-        associated_token(mint = mint, authority = payer, token_program = token_program,
-            system_program = system_program, ata_program = ata_program),
+        token(mint = mint, authority = payer),
+        associated_token(mint = mint, authority = payer),
     )]
     pub vault: Account<Token>,
     pub mint: Account<quasar_spl::Mint>,

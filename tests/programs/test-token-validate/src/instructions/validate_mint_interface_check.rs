@@ -6,7 +6,7 @@ use {
 
 #[derive(Accounts)]
 pub struct ValidateMintInterfaceCheck {
-    #[account(mint(authority = mint_authority, decimals = 6, freeze_authority = None, token_program = token_program))]
+    #[account(mint(authority = mint_authority, decimals = 6, freeze_authority = None))]
     pub mint: InterfaceAccount<Mint>,
     pub mint_authority: Signer,
     pub token_program: Interface<TokenInterface>,

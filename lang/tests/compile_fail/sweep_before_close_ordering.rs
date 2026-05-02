@@ -13,8 +13,8 @@ pub struct Bad {
     pub token_program: Program<TokenProgram>,
 
     #[account(mut,
-        close(dest = receiver, authority = receiver, token_program = token_program),
-        sweep(receiver = receiver, mint = mint, authority = receiver, token_program = token_program)
+        close(dest = receiver, authority = receiver),
+        sweep(receiver = receiver, mint = mint, authority = receiver)
     )]
     pub vault: Account<Token>,
 }

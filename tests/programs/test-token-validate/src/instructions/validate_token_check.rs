@@ -6,7 +6,7 @@ use {
 
 #[derive(Accounts)]
 pub struct ValidateTokenCheck {
-    #[account(token(mint = mint, authority = authority, token_program = token_program))]
+    #[account(token(mint = mint, authority = authority))]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,
     pub authority: Signer,

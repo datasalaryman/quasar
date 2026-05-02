@@ -15,7 +15,7 @@ pub struct InitTokenPda {
     #[account(mut,
         init, payer = payer,
         address = TokenPda::seeds(payer.address()),
-        token(mint = mint, authority = payer, token_program = token_program),
+        token(mint = mint, authority = payer),
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,

@@ -19,10 +19,7 @@ pub struct InitAta {
 
     #[account(mut,
         init, payer = payer,
-        associated_token(
-            authority = payer, mint = mint, token_program = token_program,
-            system_program = system_program, ata_program = ata_program,
-        ),
+        associated_token(authority = payer, mint = mint),
     )]
     pub ata_vault: Account<Token>,
 

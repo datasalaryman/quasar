@@ -2,7 +2,7 @@ error: `dup` cannot be used with `close` — mutation on aliased accounts is uns
   --> tests/compile_fail/dup_close_unsound.rs:14:5
    |
 14 | /     /// CHECK: testing dup + close
-15 | |     #[account(mut, dup, close(dest = payer, authority = payer, token_program = token_program))]
+15 | |     #[account(mut, dup, close(dest = payer, authority = payer))]
 16 | |     pub vault: Account<Token>,
    | |_____________________________^
 

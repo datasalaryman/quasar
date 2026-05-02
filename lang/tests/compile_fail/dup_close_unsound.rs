@@ -12,7 +12,7 @@ pub struct Bad {
     pub token_program: Program<TokenProgram>,
 
     /// CHECK: testing dup + close
-    #[account(mut, dup, close(dest = payer, authority = payer, token_program = token_program))]
+    #[account(mut, dup, close(dest = payer, authority = payer))]
     pub vault: Account<Token>,
 }
 

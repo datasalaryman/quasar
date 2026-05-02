@@ -2,8 +2,8 @@ error: `sweep(...)` must appear before `close(...)` — wrong ordering is always
   --> tests/compile_fail/sweep_before_close_ordering.rs:15:5
    |
 15 | /     #[account(mut,
-16 | |         close(dest = receiver, authority = receiver, token_program = token_program),
-17 | |         sweep(receiver = receiver, mint = mint, authority = receiver, token_program = token_program)
+16 | |         close(dest = receiver, authority = receiver),
+17 | |         sweep(receiver = receiver, mint = mint, authority = receiver)
 18 | |     )]
 19 | |     pub vault: Account<Token>,
    | |_____________________________^

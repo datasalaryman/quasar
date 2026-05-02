@@ -6,7 +6,7 @@ use {
 
 #[derive(Accounts)]
 pub struct ValidateAtaCheck {
-    #[account(associated_token(mint = mint, authority = wallet, token_program = token_program))]
+    #[account(associated_token(mint = mint, authority = wallet))]
     pub ata: Account<Token>,
     pub mint: Account<Mint>,
     pub wallet: Signer,

@@ -10,7 +10,7 @@ pub struct InitTokenAccount {
     pub payer: Signer,
     #[account(mut,
         init, payer = payer,
-        token(mint = mint, authority = payer, token_program = token_program),
+        token(mint = mint, authority = payer),
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,

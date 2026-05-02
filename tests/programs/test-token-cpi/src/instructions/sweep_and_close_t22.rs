@@ -11,9 +11,9 @@ pub struct SweepAndCloseT22 {
     pub authority: Signer,
     #[account(
         mut,
-        token(mint = mint, authority = authority, token_program = token_program),
-        sweep(receiver = receiver, mint = mint, authority = authority, token_program = token_program),
-        close(dest = destination, authority = authority, token_program = token_program)
+        token(mint = mint, authority = authority),
+        sweep(receiver = receiver, mint = mint, authority = authority),
+        close(dest = destination, authority = authority)
     )]
     pub source: Account<Token2022>,
     #[account(mut)]

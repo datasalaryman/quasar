@@ -14,8 +14,8 @@ pub struct CloseToken {
     pub authority: Signer,
     #[account(
         mut,
-        token(mint = mint, authority = authority, token_program = token_program),
-        close(dest = destination, authority = authority, token_program = token_program)
+        token(mint = mint, authority = authority),
+        close(dest = destination, authority = authority)
     )]
     pub token_account: Account<Token>,
     pub mint: Account<Mint>,

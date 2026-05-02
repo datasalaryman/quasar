@@ -17,7 +17,7 @@ pub struct ValidateToken {
     pub mint: Account<Mint>,
 
     #[account(
-        token(mint = mint, authority = authority, token_program = token_program),
+        token(mint = mint, authority = authority),
     )]
     pub vault: Account<Token>,
 

@@ -27,7 +27,7 @@ pub struct InitTokenVault {
     #[account(mut,
         init, payer = payer,
         address = Vault::seeds(payer.address()),
-        token(mint = mint, authority = payer, token_program = token_program),
+        token(mint = mint, authority = payer),
     )]
     pub vault: Account<Token>,
 

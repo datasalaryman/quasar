@@ -15,7 +15,7 @@ pub struct InitMintPdaT22 {
     #[account(mut,
         init, payer = payer,
         address = MintPdaT22::seeds(payer.address()),
-        mint(decimals = 6, authority = payer, freeze_authority = None, token_program = token_program),
+        mint(decimals = 6, authority = payer, freeze_authority = None),
     )]
     pub mint: Account<Mint2022>,
     pub token_program: Program<Token2022Program>,

@@ -10,7 +10,7 @@ pub struct InitIfNeededMintT22 {
     pub payer: Signer,
     #[account(mut,
         init(idempotent), payer = payer,
-        mint(decimals = 6, authority = mint_authority, freeze_authority = None, token_program = token_program),
+        mint(decimals = 6, authority = mint_authority, freeze_authority = None),
     )]
     pub mint: Account<Mint2022>,
     pub mint_authority: Signer,

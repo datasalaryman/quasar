@@ -15,7 +15,7 @@ pub struct InitTokenPdaT22 {
     #[account(mut,
         init, payer = payer,
         address = TokenPdaT22::seeds(payer.address()),
-        token(mint = mint, authority = payer, token_program = token_program),
+        token(mint = mint, authority = payer),
     )]
     pub token_account: Account<Token2022>,
     pub mint: Account<Mint2022>,

@@ -16,7 +16,7 @@ pub struct Refund {
     )]
     pub escrow: Account<Escrow>,
     pub mint_a: Account<Mint>,
-    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = maker, token_program = token_program))]
+    #[account(init(idempotent), payer = maker, token(mint = mint_a, authority = maker))]
     pub maker_ta_a: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
