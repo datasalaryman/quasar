@@ -1,6 +1,6 @@
 error: `Migration<From, To>` requires `payer = ...`
-  --> tests/compile_fail/migration_requires_payer.rs:24:5
+  --> tests/compile_fail/migration_requires_payer.rs:25:5
    |
-24 | /     #[account(mut)]
-25 | |     pub config: Migration<ConfigV1, ConfigV2>,
+25 | /     #[account(mut)]
+26 | |     pub config: Migration<ConfigV1, ConfigV2>,
    | |_____________________________________________^

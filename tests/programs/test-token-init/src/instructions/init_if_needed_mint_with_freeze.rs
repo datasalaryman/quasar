@@ -3,13 +3,12 @@ use {
     quasar_lang::prelude::*,
     quasar_spl::{Mint, TokenProgram},
 };
-
 #[derive(Accounts)]
 pub struct InitIfNeededMintWithFreeze {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
-        init(idempotent), payer = payer,
+        init(idempotent),
         mint(decimals = 6, authority = mint_authority, freeze_authority = Some(freeze_authority)),
     )]
     pub mint: Account<Mint>,
@@ -18,7 +17,6 @@ pub struct InitIfNeededMintWithFreeze {
     pub token_program: Program<TokenProgram>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitIfNeededMintWithFreeze {
     #[inline(always)]
     pub fn handler(&self) -> Result<(), ProgramError> {

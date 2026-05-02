@@ -3,18 +3,16 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
 };
-
 #[derive(Accounts)]
 #[instruction(index: u64)]
 pub struct InitIxDataSeed {
     #[account(mut)]
     pub payer: Signer,
     pub authority: Signer,
-    #[account(mut, init, payer = payer, address = IndexedAccount::seeds(authority.address(), index))]
+    #[account(mut, init, address = IndexedAccount::seeds(authority.address(), index))]
     pub item: Account<IndexedAccount>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitIxDataSeed {
     #[inline(always)]
     pub fn handler(&mut self, index: u64, bumps: &InitIxDataSeedBumps) -> Result<(), ProgramError> {

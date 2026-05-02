@@ -351,13 +351,15 @@ fn emit_optional_address_arg(
     }
 }
 
+/// Find a required arg by key. Validation in `rules.rs` guarantees the arg
+/// exists — this `expect` is a safety net, not a user-facing error.
 fn find_arg<'a>(
     args: &'a [super::super::resolve::GroupArg],
     key: &str,
 ) -> &'a super::super::resolve::GroupArg {
     args.iter()
         .find(|a| a.key == key)
-        .unwrap_or_else(|| panic!("missing required arg `{key}` in init contributor group"))
+        .expect("validate_required_group_args should have caught this")
 }
 
 // ==== Phase 2: load (split into non-init first, then init) ====

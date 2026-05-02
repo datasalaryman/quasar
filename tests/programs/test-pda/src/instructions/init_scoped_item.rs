@@ -3,17 +3,15 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
 };
-
 #[derive(Accounts)]
 #[instruction(namespace: u32)]
 pub struct InitScopedItem {
     #[account(mut)]
     pub payer: Signer,
-    #[account(mut, init, payer = payer, address = ScopedItem::seeds(namespace))]
+    #[account(mut, init, address = ScopedItem::seeds(namespace))]
     pub item: Account<ScopedItem>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitScopedItem {
     pub fn handler(
         &mut self,

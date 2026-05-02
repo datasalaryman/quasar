@@ -2,23 +2,19 @@
 extern crate alloc;
 use quasar_derive::Accounts;
 use quasar_lang::prelude::*;
-
 solana_address::declare_id!("11111111111111111111111111111112");
-
 #[account(discriminator = 1)]
 #[seeds(b"config")]
 pub struct Config {
     pub namespace: u32,
     pub bump: u8,
 }
-
 #[account(discriminator = 2)]
 #[seeds(b"item", namespace: u32)]
 pub struct Item {
     pub namespace: u32,
     pub bump: u8,
 }
-
 #[derive(Accounts)]
 #[instruction(namespace: u32)]
 pub struct Good {
@@ -27,11 +23,10 @@ pub struct Good {
     pub config: Account<Config>,
     #[account(
         mut,
-        init(idempotent), payer = payer,
+        init(idempotent),
         address = Item::seeds(namespace)
     )]
     pub item: Account<Item>,
     pub system_program: Program<SystemProgram>,
 }
-
 fn main() {}

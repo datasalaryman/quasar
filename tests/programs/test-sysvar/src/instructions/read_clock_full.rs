@@ -6,16 +6,14 @@ use {
         sysvars::{clock::Clock, Sysvar as _},
     },
 };
-
 #[derive(Accounts)]
 pub struct ReadClockFull {
     #[account(mut)]
     pub payer: Signer,
-    #[account(mut, init, payer = payer, address = ClockFullSnapshot::seeds())]
+    #[account(mut, init, address = ClockFullSnapshot::seeds())]
     pub snapshot: Account<ClockFullSnapshot>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl ReadClockFull {
     #[inline(always)]
     pub fn handler(&mut self) -> Result<(), ProgramError> {

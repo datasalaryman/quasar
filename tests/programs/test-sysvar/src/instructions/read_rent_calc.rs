@@ -6,16 +6,14 @@ use {
         sysvars::{rent::Rent, Sysvar as _},
     },
 };
-
 #[derive(Accounts)]
 pub struct ReadRentCalc {
     #[account(mut)]
     pub payer: Signer,
-    #[account(mut, init, payer = payer, address = RentCalcSnapshot::seeds())]
+    #[account(mut, init, address = RentCalcSnapshot::seeds())]
     pub snapshot: Account<RentCalcSnapshot>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl ReadRentCalc {
     #[inline(always)]
     pub fn handler(&mut self, data_len: u64) -> Result<(), ProgramError> {

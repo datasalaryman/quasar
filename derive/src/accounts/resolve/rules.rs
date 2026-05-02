@@ -207,6 +207,9 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
         }
     }
 
+    // Validate required args per group kind.
+    validate_required_group_args(sem)?;
+
     Ok(())
 }
 
@@ -292,6 +295,36 @@ fn validate_exit_ordering(sem: &FieldSemantics) -> syn::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Validate that each group has its required args.
+/// Runs after program inference, so inferred args are already present.
+fn validate_required_group_args(sem: &FieldSemantics) -> syn::Result<()> {
+    for group in &sem.groups {
+        let kind = GroupKind::from_path(&group.path)?;
+        let required: &[&str] = match kind {
+            GroupKind::Token => &["mint", "authority", "token_program"],
+            GroupKind::Mint => &["decimals", "authority", "token_program"],
+            GroupKind::AssociatedToken => {
+                if sem.has_init() {
+                    &["mint", "authority", "token_program", "system_program", "ata_program"]
+                } else {
+                    &["mint", "authority", "token_program"]
+                }
+            }
+            GroupKind::Close => continue, // validated by validate_close_groups
+            GroupKind::Sweep => &["receiver", "mint", "authority", "token_program"],
+        };
+        for &key in required {
+            if !has_arg(&group.args, key) {
+                return Err(syn::Error::new_spanned(
+                    &group.path,
+                    format!("`{}(...)` requires `{key} = ...`", kind.name()),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

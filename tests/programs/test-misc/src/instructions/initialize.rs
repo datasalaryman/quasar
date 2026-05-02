@@ -3,16 +3,14 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
 };
-
 #[derive(Accounts)]
 pub struct InitializeSimple {
     #[account(mut)]
     pub payer: Signer,
-    #[account(mut, init, payer = payer, address = SimpleAccount::seeds(payer.address()))]
+    #[account(mut, init, address = SimpleAccount::seeds(payer.address()))]
     pub account: Account<SimpleAccount>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitializeSimple {
     #[inline(always)]
     pub fn handler(

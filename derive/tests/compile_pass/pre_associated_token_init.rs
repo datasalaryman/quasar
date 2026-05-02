@@ -1,31 +1,24 @@
 //! ATA init — clean syntax with init + associated_token.
 #![allow(unexpected_cfgs)]
 extern crate alloc;
-
 use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
     quasar_spl::{TokenProgram, *},
 };
-
 solana_address::declare_id!("11111111111111111111111111111112");
-
 #[derive(Accounts)]
 pub struct InitAta {
     #[account(mut)]
     pub payer: Signer,
-
     pub mint: Account<Mint>,
-
     #[account(mut,
-        init, payer = payer,
+        init,
         associated_token(authority = payer, mint = mint),
     )]
     pub ata_vault: Account<Token>,
-
     pub token_program: Program<TokenProgram>,
     pub system_program: Program<SystemProgram>,
     pub ata_program: Program<AssociatedTokenProgram>,
 }
-
 fn main() {}

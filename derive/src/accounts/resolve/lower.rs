@@ -51,11 +51,11 @@ pub(super) fn lower_semantics(
         })
         .collect::<syn::Result<_>>()?;
 
-    // Infer missing program args before validation. This must run before
-    // validate_semantics() because validate_close_groups enforces that
-    // `authority` and `token_program` are paired — inference injects
-    // `token_program` when `authority` is present.
+    // Infer missing args before validation. Order matters:
+    // 1. Payer (before validate_semantics checks init requires payer)
+    // 2. Program args (before validate_close_groups checks authority/token_program pairing)
     let mut semantics = semantics;
+    resolve_payer(&mut semantics);
     resolve_program_args(&mut semantics)?;
 
     validate_semantics(&semantics)?;
@@ -211,6 +211,31 @@ fn detect_migration(ty: &Type) -> bool {
             .last()
             .is_some_and(|segment| segment.ident == "Migration"),
         _ => false,
+    }
+}
+
+// --- Payer inference ---
+
+/// If a field has `init` but no `payer = ...`, and the struct has a field
+/// named `payer`, inject it. Convention-based: the name `payer` is the
+/// standard field name for the fee payer in Solana programs.
+fn resolve_payer(semantics: &mut [FieldSemantics]) {
+    let has_payer_field = semantics
+        .iter()
+        .any(|sem| sem.core.ident == "payer" && sem.core.kind == FieldKind::Single);
+
+    if !has_payer_field {
+        return;
+    }
+
+    for sem in semantics.iter_mut() {
+        if sem.payer.is_none() {
+            let needs_payer =
+                sem.init.is_some() || sem.is_migration || sem.realloc.is_some();
+            if needs_payer {
+                sem.payer = Some(format_ident!("payer"));
+            }
+        }
     }
 }
 

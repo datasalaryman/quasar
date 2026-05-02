@@ -15,10 +15,11 @@ pub struct ConfigV2 {
 }
 
 // ERROR: Migration requires `payer = ...`
+// Note: no field named `payer`, so inference can't help.
 #[derive(Accounts)]
 pub struct Bad {
     #[account(mut)]
-    pub payer: Signer,
+    pub funder: Signer,
     pub system_program: Program<SystemProgram>,
 
     #[account(mut)]

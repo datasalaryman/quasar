@@ -3,17 +3,15 @@ use {
     quasar_lang::prelude::*,
     quasar_spl::{Mint, Token, TokenProgram},
 };
-
 #[derive(Seeds)]
 #[seeds(b"token", payer: Address)]
 pub struct TokenPda;
-
 #[derive(Accounts)]
 pub struct InitTokenPda {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
-        init, payer = payer,
+        init,
         address = TokenPda::seeds(payer.address()),
         token(mint = mint, authority = payer),
     )]
@@ -22,7 +20,6 @@ pub struct InitTokenPda {
     pub token_program: Program<TokenProgram>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitTokenPda {
     #[inline(always)]
     pub fn handler(&self) -> Result<(), ProgramError> {

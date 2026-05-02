@@ -3,13 +3,12 @@ use {
     quasar_lang::prelude::*,
     quasar_spl::{AssociatedTokenProgram, Mint, Token, TokenProgram},
 };
-
 #[derive(Accounts)]
 pub struct InitIfNeededAta {
     #[account(mut)]
     pub payer: Signer,
     #[account(mut,
-        init(idempotent), payer = payer,
+        init(idempotent),
         associated_token(authority = wallet, mint = mint),
     )]
     pub ata: Account<Token>,
@@ -19,7 +18,6 @@ pub struct InitIfNeededAta {
     pub system_program: Program<SystemProgram>,
     pub ata_program: Program<AssociatedTokenProgram>,
 }
-
 impl InitIfNeededAta {
     #[inline(always)]
     pub fn handler(&self) -> Result<(), ProgramError> {

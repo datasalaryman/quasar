@@ -3,16 +3,14 @@ use {
     quasar_derive::Accounts,
     quasar_lang::prelude::*,
 };
-
 #[derive(Accounts)]
 pub struct InitMaxSeedLength {
     #[account(mut)]
     pub payer: Signer,
-    #[account(mut, init, payer = payer, address = MaxSeedAccount::seeds())]
+    #[account(mut, init, address = MaxSeedAccount::seeds())]
     pub max_seed: Account<MaxSeedAccount>,
     pub system_program: Program<SystemProgram>,
 }
-
 impl InitMaxSeedLength {
     #[inline(always)]
     pub fn handler(&mut self, bumps: &InitMaxSeedLengthBumps) -> Result<(), ProgramError> {
