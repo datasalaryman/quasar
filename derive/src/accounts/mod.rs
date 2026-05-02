@@ -1,6 +1,21 @@
-//! `#[derive(Accounts)]` — op-dispatch derive macro.
+//! `#[derive(Accounts)]` — protocol-neutral accounts derive macro.
 //!
-//! Clean-room implementation. No imports from `derive/src/accounts/`.
+//! Pipeline:
+//!
+//! ```text
+//! syntax   → parse raw #[account(...)] directives
+//! lower    → turn parsed directives into FieldSemantics
+//! rules    → validate structural invariants (no protocol knowledge)
+//! planner  → schedule protocol-neutral phase candidates
+//! emit     → generate Rust code from the plan
+//! ```
+//!
+//! Protocol crates own behavior. The derive never knows what `token`, `mint`,
+//! `metadata`, etc. mean. Every behavior group is lowered to the same shape:
+//! `path::Args::builder()` + `<path::Behavior as AccountBehavior<T>>`.
+//!
+//! See `quasar_lang::account_behavior::AccountBehavior` for the plugin
+//! contract.
 
 pub(crate) mod emit;
 mod plan;
@@ -119,7 +134,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         Ok(ts) => ts,
         Err(e) => return e.to_compile_error().into(),
     };
-    let has_epilogue_expr = emit::emit_has_epilogue(&typed_plan);
+    let has_epilogue_expr = emit::emit_has_epilogue(&typed_plan, &semantics);
 
     let seeds_methods = quote::quote! {};
 

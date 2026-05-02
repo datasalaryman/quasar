@@ -1,12 +1,18 @@
-//! Structural validation rules — no domain knowledge.
-//! Arg presence/absence validation is now done by the planner during
-//! resolution.
+//! Structural validation — invariants only, no protocol knowledge.
+//!
+//! Protocol-specific validation (required args, arg types, exit ordering)
+//! is owned by behavior modules via builder errors and trait bounds.
 
-use super::{FieldSemantics, GroupKind};
+use {super::FieldSemantics, syn::Expr};
 
 pub(super) fn validate_semantics(semantics: &[FieldSemantics]) -> syn::Result<()> {
+    let field_names: Vec<String> = semantics
+        .iter()
+        .map(|sem| sem.core.ident.to_string())
+        .collect();
     for sem in semantics {
         validate_field(sem)?;
+        validate_behavior_field_refs(sem, &field_names)?;
     }
     Ok(())
 }
@@ -22,7 +28,6 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
                 "`Migration<From, To>` requires `mut`",
             ));
         }
-        // Payer presence is validated by the planner (cross-field resolution).
         if sem.core.optional {
             return Err(syn::Error::new_spanned(
                 span,
@@ -41,17 +46,12 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
                 "`realloc` cannot be used with `Migration<From, To>`",
             ));
         }
-        for group in &sem.groups {
-            if matches!(group.kind, GroupKind::Close | GroupKind::Sweep) {
-                return Err(syn::Error::new_spanned(
-                    span,
-                    format!(
-                        "`{}` cannot be used with `Migration<From, To>` — migrating and closing \
-                         the same account is ordering-sensitive",
-                        group.kind.name()
-                    ),
-                ));
-            }
+        if !sem.groups.is_empty() {
+            return Err(syn::Error::new_spanned(
+                span,
+                "behavior groups cannot be used with `Migration<From, To>` — migration and \
+                 behavior exit both mutate the account during epilogue",
+            ));
         }
     }
 
@@ -68,7 +68,7 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
         ));
     }
 
-    // dup + mutation ops blocked (init, realloc, exit ops)
+    // dup + mutation ops blocked (init, realloc, close, mut behavior groups)
     if sem.core.dup {
         if sem.has_init() {
             return Err(syn::Error::new_spanned(
@@ -82,34 +82,20 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
                 "`dup` cannot be used with `realloc` — mutation on aliased accounts is unsound",
             ));
         }
-        for group in &sem.groups {
-            if matches!(group.kind, GroupKind::Close | GroupKind::Sweep) {
-                return Err(syn::Error::new_spanned(
-                    span,
-                    format!(
-                        "`dup` cannot be used with `{}` — mutation on aliased accounts is unsound",
-                        group.kind.name()
-                    ),
-                ));
-            }
+        if sem.close_dest.is_some() {
+            return Err(syn::Error::new_spanned(
+                span,
+                "`dup` cannot be used with `close` — mutation on aliased accounts is unsound",
+            ));
+        }
+        if sem.core.is_mut && !sem.groups.is_empty() {
+            return Err(syn::Error::new_spanned(
+                span,
+                "`dup` with `mut` cannot have behavior groups — mutation on aliased accounts is \
+                 unsound",
+            ));
         }
     }
-
-    // Exit ops require mut
-    if !sem.core.is_mut {
-        for group in &sem.groups {
-            if matches!(group.kind, GroupKind::Close | GroupKind::Sweep) {
-                return Err(syn::Error::new_spanned(
-                    span,
-                    format!("`{}(...)` requires `mut`", group.kind.name()),
-                ));
-            }
-        }
-    }
-
-    // sweep-before-close hard error: close must come AFTER sweep.
-    validate_exit_ordering(sem)?;
-    validate_close_groups(sem)?;
 
     // dup requires /// CHECK: doc comment
     if sem.core.dup {
@@ -127,29 +113,23 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
         }
     }
 
-    // Optional accounts cannot have init or op groups
-    if sem.core.optional {
-        if sem.has_init() {
-            return Err(syn::Error::new_spanned(
-                span,
-                "init(...) cannot be used on Option<T> fields",
-            ));
-        }
-        if sem.realloc.is_some() {
-            return Err(syn::Error::new_spanned(
-                span,
-                "`realloc = ...` cannot be used on Option<T> fields",
-            ));
-        }
-        if !sem.groups.is_empty() {
-            return Err(syn::Error::new_spanned(
-                span,
-                "op groups cannot be used on Option<T> fields (only has_one/address/constraints)",
-            ));
-        }
+    // Optional init not supported in first implementation
+    if sem.core.optional && sem.has_init() {
+        return Err(syn::Error::new_spanned(
+            span,
+            "init(...) cannot be used on Option<T> fields",
+        ));
     }
 
-    // Payer presence is validated by the planner (cross-field resolution).
+    // Optional realloc not supported
+    if sem.core.optional && sem.realloc.is_some() {
+        return Err(syn::Error::new_spanned(
+            span,
+            "`realloc = ...` cannot be used on Option<T> fields",
+        ));
+    }
+
+    // realloc requires mut
     if sem.realloc.is_some() && !sem.core.is_mut {
         return Err(syn::Error::new_spanned(
             span,
@@ -157,36 +137,15 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
         ));
     }
 
-    // Zero or one init contributor per field.
-    if sem.has_init() {
-        let init_contributor_count = sem
-            .groups
-            .iter()
-            .filter(|group| {
-                matches!(
-                    group.kind,
-                    GroupKind::Token | GroupKind::Mint | GroupKind::AssociatedToken
-                )
-            })
-            .count();
-        if init_contributor_count > 1 {
-            return Err(syn::Error::new_spanned(
-                span,
-                "only one init contributor group is allowed per field (e.g., `token(...)` or \
-                 `associated_token(...)`, not both)",
-            ));
-        }
-    }
-
-    // init(idempotent) requires a validation group or address constraint
+    // init(idempotent) requires a behavior group or address constraint
     if let Some(init) = &sem.init {
         if init.idempotent {
-            let has_validation = !sem.groups.is_empty();
+            let has_behavior = !sem.groups.is_empty();
             let has_address = sem.address.is_some();
-            if !has_validation && !has_address {
+            if !has_behavior && !has_address {
                 return Err(syn::Error::new_spanned(
                     span,
-                    "`init(idempotent)` requires a validation group (e.g., token(...)) or address \
+                    "`init(idempotent)` requires a behavior group (e.g., token(...)) or address \
                      constraint",
                 ));
             }
@@ -196,58 +155,45 @@ fn validate_field(sem: &FieldSemantics) -> syn::Result<()> {
     Ok(())
 }
 
-/// Validate close args and reject ambiguous close forms.
-fn validate_close_groups(sem: &FieldSemantics) -> syn::Result<()> {
-    let has_sweep = sem
-        .groups
-        .iter()
-        .any(|group| group.kind == GroupKind::Sweep);
-
+/// Validate behavior arg values: reject single-segment lowercase identifiers
+/// that don't match any field name (likely typos or instruction args).
+fn validate_behavior_field_refs(sem: &FieldSemantics, field_names: &[String]) -> syn::Result<()> {
     for group in &sem.groups {
-        if group.kind != GroupKind::Close {
-            continue;
-        }
-
-        let has_authority = group.args.iter().any(|a| a.key == "authority");
-        let has_token_program = group.args.iter().any(|a| a.key == "token_program");
-        if has_token_program && !has_authority {
-            return Err(syn::Error::new_spanned(
-                &group.path,
-                "`close(...)` with `token_program = ...` also requires `authority = ...`",
-            ));
-        }
-
-        if has_sweep && !has_authority {
-            return Err(syn::Error::new_spanned(
-                &group.path,
-                "`sweep(...)` can only be paired with token close. Use `close(dest = ..., \
-                 authority = ...)`",
-            ));
+        for arg in &group.args {
+            validate_single_arg(&arg.value, &arg.key, field_names)?;
+            if let Expr::Call(call) = &arg.value {
+                if let Expr::Path(p) = &*call.func {
+                    if p.path.segments.len() == 1
+                        && p.path.segments[0].ident == "Some"
+                        && call.args.len() == 1
+                    {
+                        validate_single_arg(&call.args[0], &arg.key, field_names)?;
+                    }
+                }
+            }
         }
     }
-
     Ok(())
 }
 
-/// Validate exit action ordering: sweep must come before close.
-fn validate_exit_ordering(sem: &FieldSemantics) -> syn::Result<()> {
-    let span = &sem.core.field;
-    let mut seen_close = false;
-
-    for group in &sem.groups {
-        match group.kind {
-            GroupKind::Close => {
-                seen_close = true;
+/// Reject a bare lowercase single-segment identifier that isn't a field name.
+fn validate_single_arg(expr: &Expr, key: &syn::Ident, field_names: &[String]) -> syn::Result<()> {
+    if let Expr::Path(ep) = expr {
+        if ep.qself.is_none() && ep.path.segments.len() == 1 {
+            let name = ep.path.segments[0].ident.to_string();
+            if name == "None" || name == "true" || name == "false" {
+                return Ok(());
             }
-            GroupKind::Sweep if seen_close => {
+            if name.starts_with(|c: char| c.is_uppercase()) {
+                return Ok(());
+            }
+            if !field_names.contains(&name) {
                 return Err(syn::Error::new_spanned(
-                    span,
-                    "`sweep(...)` must appear before `close(...)` — wrong ordering is always a bug",
+                    expr,
+                    format!("`{key} = {name}` — no field `{name}` in this accounts struct"),
                 ));
             }
-            _ => {}
         }
     }
-
     Ok(())
 }

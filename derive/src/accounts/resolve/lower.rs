@@ -1,10 +1,10 @@
-//! Lower parsed directives into FieldSemantics.
-//! No inference or classification — that's the planner's job.
+//! Lowering — parsed directives → FieldSemantics.
+//! No inference, no classification, no validation — that's rules + planner.
 
 use {
     super::{
         super::syntax::{
-            attrs::{validate_op_arg, Directive},
+            attrs::{validate_behavior_arg, CoreDirective, Directive},
             parse_field_attrs,
         },
         rules::validate_semantics,
@@ -39,6 +39,7 @@ pub(super) fn lower_semantics(
                 payer: None,
                 address: None,
                 realloc: None,
+                close_dest: None,
                 groups: Vec::new(),
                 user_checks: Vec::new(),
                 is_migration,
@@ -83,10 +84,10 @@ fn lower_core(field: &syn::Field, directives: &[Directive]) -> FieldCore {
         dynamic,
         is_mut: directives
             .iter()
-            .any(|d| matches!(d, Directive::Bare(id) if id == "mut")),
+            .any(|d| matches!(d, Directive::Core(CoreDirective::Mut))),
         dup: directives
             .iter()
-            .any(|d| matches!(d, Directive::Bare(id) if id == "dup")),
+            .any(|d| matches!(d, Directive::Core(CoreDirective::Dup))),
     }
 }
 
@@ -103,39 +104,45 @@ fn lower_directives(sem: &mut FieldSemantics, directives: Vec<Directive>) -> syn
 
     for directive in directives {
         match directive {
-            Directive::Bare(_) => { /* mut/dup handled in lower_core */ }
-            Directive::Init { idempotent } => {
-                sem.init = Some(InitDirective { idempotent });
-                sem.core.is_mut = true;
-            }
-            Directive::Payer(ident) => {
-                sem.payer = Some(ident);
-            }
-            Directive::Address(expr, error) => {
-                if error.is_some() {
-                    sem.user_checks
-                        .push(super::UserCheck::Address { expr, error });
-                } else {
-                    sem.address = Some(expr);
+            Directive::Core(core) => match core {
+                CoreDirective::Mut | CoreDirective::Dup => { /* handled in lower_core */ }
+                CoreDirective::Init { idempotent } => {
+                    sem.init = Some(InitDirective { idempotent });
+                    sem.core.is_mut = true;
                 }
-            }
-            Directive::Realloc(expr) => {
-                sem.realloc = Some(expr);
-            }
-            Directive::Allow(_) => { /* lint-only, ignored by derive */ }
-            Directive::Group(group) => {
+                CoreDirective::Payer(ident) => {
+                    sem.payer = Some(ident);
+                }
+                CoreDirective::Address(expr, error) => {
+                    if error.is_some() {
+                        sem.user_checks
+                            .push(super::UserCheck::Address { expr, error });
+                    } else {
+                        sem.address = Some(expr);
+                    }
+                }
+                CoreDirective::Realloc(expr) => {
+                    sem.realloc = Some(expr);
+                }
+                CoreDirective::Close(dest) => {
+                    sem.close_dest = Some(dest);
+                    sem.core.is_mut = true;
+                }
+            },
+            Directive::Behavior(group) => {
                 groups.push(group);
             }
             Directive::Check(check) => {
                 sem.user_checks.push(check);
             }
+            Directive::Allow(_) => { /* lint-only, ignored by derive */ }
         }
     }
 
-    // Validate op-arg grammar on op groups.
+    // Validate behavior arg grammar on behavior groups.
     for group in &groups {
         for arg in &group.args {
-            validate_op_arg(&arg.key, &arg.value)?;
+            validate_behavior_arg(&arg.key, &arg.value)?;
         }
     }
 

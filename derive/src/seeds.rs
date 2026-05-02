@@ -73,10 +73,14 @@ impl SeedType {
 
     /// Expression for as_slices() — how to get a `&[u8]` from the field.
     fn slice_expr(&self, field_name: &Ident, prefix: &str) -> TokenStream {
-        let access = match prefix {
-            "" => quote! { self.#field_name },
-            "inner" => quote! { self.inner.#field_name },
-            _ => unreachable!(),
+        let prefix_ident: Option<Ident> = if prefix.is_empty() {
+            None
+        } else {
+            Some(Ident::new(prefix, field_name.span()))
+        };
+        let access = match prefix_ident {
+            None => quote! { self.#field_name },
+            Some(p) => quote! { self.#p.#field_name },
         };
         match self {
             SeedType::Address => quote! { #access.as_ref() },

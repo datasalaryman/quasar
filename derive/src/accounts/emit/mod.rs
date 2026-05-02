@@ -31,6 +31,9 @@ pub(crate) fn emit_epilogue(
     parse::emit_epilogue(semantics, plan)
 }
 
-pub(crate) fn emit_has_epilogue(plan: &AccountsPlanTyped) -> proc_macro2::TokenStream {
-    parse::emit_has_epilogue_typed(plan)
+pub(crate) fn emit_has_epilogue(
+    plan: &AccountsPlanTyped,
+    semantics: &[super::resolve::FieldSemantics],
+) -> proc_macro2::TokenStream {
+    parse::emit_has_epilogue_typed(plan, semantics)
 }

@@ -1,24 +1,20 @@
-//! Phased codegen — emitting from typed execution plan.
+//! Parse/epilogue body assembly — wires phase snippets into the output.
 //!
 //! Generated parse body shape:
 //!
 //! ```text
 //! // Rent (only when init/realloc/migration needs it)
-//! let __rent: Rent = Sysvar::get()?;  // or deserialized from Sysvar<Rent> field
+//! let __rent: Rent = Sysvar::get()?;
 //! let __rent_ctx = OpCtxWithRent::new(&program_id, &__rent);
 //!
 //! // Phase 1: load non-init fields
 //! let field_a = <Ty>::load(field_a, "field_a")?;
-//! let mut field_b = <Ty>::load_mut(field_b, "field_b")?;
 //!
-//! // Phase 2: address verify + init CPI for init fields
-//! init_op.apply::<Ty>(slot, &__rent_ctx)?;
+//! // Phase 2: address verify + init CPI for init fields (field-ordered)
+//! // Phase 3: load init fields (inlined into behavior init sequence)
 //!
-//! // Phase 3: load init fields
-//! let field_c = <Ty>::load(field_c, "field_c")?;
-//!
-//! // Phase 4: checks, realloc, migration grow, user checks
-//! <Ty as TokenCheck>::check_token_view(view, ctx)?;
+//! // Phase 4: behavior checks, user checks, realloc, migration grow
+//! <path::Behavior as AccountBehavior<Ty>>::check(&field, &args)?;
 //!
 //! Ok((Self { field_a, field_b, field_c }, bumps))
 //! ```
@@ -26,7 +22,9 @@
 use {
     super::{
         super::resolve::{
-            specs::{AccountsPlanTyped, EpilogueStep, PostLoadStep, PreLoadStep, RentPlan},
+            specs::{
+                AccountsPlanTyped, EpilogueStep, InitPlan, PostLoadStep, PreLoadStep, RentPlan,
+            },
             FieldKind, FieldSemantics, UserCheck,
         },
         typed_emit,
@@ -40,7 +38,6 @@ pub(crate) fn emit_parse_body(
     plan: &AccountsPlanTyped,
     cx: &super::EmitCx,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    // Rent context from typed plan.
     let ctx_init = emit_rent_context(&plan.rent, semantics);
     let bump_vars = emit_bump_vars(semantics);
 
@@ -48,12 +45,15 @@ pub(crate) fn emit_parse_body(
     let load_non_init = emit_load_filtered(semantics, false);
     // Phase 2: address verify + init CPI (from typed plan).
     let init_phase = emit_init_phase_typed(&plan.fields, semantics)?;
-    // Phase 3: load init fields.
+    // Phase 3: load init fields (all init fields — behavior init CPI already
+    // ran in phase 2, so the slot is initialized and ready to load).
     let load_init = emit_load_filtered(semantics, true);
-    // Phase 4: post-load steps (checks, realloc, migration grow, address verify,
-    // user checks).
+    // Phase 4: post-load steps.
     let phase4 = emit_post_load_typed(&plan.fields, semantics);
     let bump_init = emit_bump_init(semantics, &cx.bumps_name);
+
+    // Behavior const assertions: REQUIRES_MUT and SETS_INIT_PARAMS.
+    let behavior_asserts = emit_behavior_assertions(semantics);
 
     let construct_fields: Vec<proc_macro2::TokenStream> = semantics
         .iter()
@@ -64,6 +64,7 @@ pub(crate) fn emit_parse_body(
         .collect();
 
     Ok(quote! {
+        #behavior_asserts
         #bump_vars
         #ctx_init
         #(#load_non_init)*
@@ -137,7 +138,14 @@ fn emit_init_phase_typed(
                 }
                 PreLoadStep::Init(init_plan) => {
                     let has_address = sem.address.is_some();
-                    let ts = typed_emit::emit_init_plan(init_plan, ident, ty, has_address);
+                    let ts = match init_plan {
+                        InitPlan::Program(spec) => {
+                            typed_emit::emit_program_init(spec, ident, ty, has_address)
+                        }
+                        InitPlan::Behavior(spec) => {
+                            typed_emit::emit_behavior_init(spec, ident, ty, has_address)
+                        }
+                    };
                     stmts.push(ts);
                 }
             }
@@ -161,34 +169,43 @@ fn emit_post_load_typed(
         let is_optional = sem.core.optional;
 
         for step in &fp.post_load {
-            let call = match step {
-                PostLoadStep::TokenCheck(spec) => typed_emit::emit_token_check(spec, ident, ty),
-                PostLoadStep::MintCheck(spec) => typed_emit::emit_mint_check(spec, ident, ty),
-                PostLoadStep::AssociatedTokenCheck(spec) => {
-                    typed_emit::emit_associated_token_check(spec, ident, ty)
+            let (call, needs_mut) = match step {
+                PostLoadStep::Behavior(bhv) => {
+                    let needs = matches!(
+                        bhv.phase,
+                        super::super::resolve::specs::BehaviorPhase::AfterInit
+                            | super::super::resolve::specs::BehaviorPhase::Update
+                    );
+                    (typed_emit::emit_post_load_behavior(bhv, ident, ty), needs)
                 }
                 PostLoadStep::Realloc(spec) => {
                     let payer_ident = &spec.payer.ident;
                     let realloc_expr = &spec.new_space;
-                    quote! {
-                        {
-                            let __realloc_op = quasar_lang::ops::realloc::Op {
-                                space: (#realloc_expr) as usize,
-                                payer: #payer_ident.to_account_view(),
-                            };
-                            __realloc_op.apply::<#ty>(&mut #ident, &__rent_ctx)?;
-                        }
-                    }
+                    (
+                        quote! {
+                            {
+                                let __realloc_op = quasar_lang::ops::realloc::Op {
+                                    space: (#realloc_expr) as usize,
+                                    payer: #payer_ident.to_account_view(),
+                                };
+                                __realloc_op.apply::<#ty>(&mut #ident, &__rent_ctx)?;
+                            }
+                        },
+                        true,
+                    )
                 }
                 PostLoadStep::MigrationGrow(spec) => {
                     let payer_ident = &spec.payer.ident;
-                    quote! {
-                        quasar_lang::accounts::migration::Migration::grow_to_target(
-                            &mut #ident,
-                            #payer_ident.to_account_view(),
-                            &__rent_ctx,
-                        )?;
-                    }
+                    (
+                        quote! {
+                            quasar_lang::accounts::migration::Migration::grow_to_target(
+                                &mut #ident,
+                                #payer_ident.to_account_view(),
+                                &__rent_ctx,
+                            )?;
+                        },
+                        true,
+                    )
                 }
                 PostLoadStep::VerifyExistingAddress(addr_spec) => {
                     let bump_var = format_ident!("__bumps_{}", ident);
@@ -199,26 +216,24 @@ fn emit_post_load_typed(
                     } else {
                         quote! { verify }
                     };
-                    quote! {
-                        {
-                            let __addr = #addr_expr;
-                            #bump_var = quasar_lang::address::AddressVerify::#verify_method(
-                                &__addr, #ident.to_account_view().address(), __program_id,
-                            )?;
-                        }
-                    }
+                    (
+                        quote! {
+                            {
+                                let __addr = #addr_expr;
+                                #bump_var = quasar_lang::address::AddressVerify::#verify_method(
+                                    &__addr, #ident.to_account_view().address(), __program_id,
+                                )?;
+                            }
+                        },
+                        false,
+                    )
                 }
             };
 
-            let needs_mut = matches!(
-                step,
-                PostLoadStep::Realloc(_) | PostLoadStep::MigrationGrow(_)
-            );
             stmts.push(wrap_optional(is_optional, ident, &call, needs_mut));
         }
 
-        // User checks (still sourced from semantics — they're structural, not op-group
-        // based).
+        // User checks (structural — not behavior-group based).
         for check in &sem.user_checks {
             let check_stmts = emit_user_check(sem, check);
             let combined = quote! { #(#check_stmts)* };
@@ -248,8 +263,7 @@ pub(crate) fn emit_epilogue(
 
         for step in &fp.epilogue {
             let stmt = match step {
-                EpilogueStep::TokenSweep(spec) => typed_emit::emit_token_sweep(spec, ident, ty),
-                EpilogueStep::TokenClose(spec) => typed_emit::emit_token_close(spec, ident, ty),
+                EpilogueStep::Behavior(call) => typed_emit::emit_epilogue_behavior(call, ident, ty),
                 EpilogueStep::ProgramClose(spec) => typed_emit::emit_program_close(spec, ident, ty),
                 EpilogueStep::MigrationVerifyAndNormalize(spec) => {
                     let payer_ident = &spec.payer.ident;
@@ -309,13 +323,31 @@ pub(crate) fn emit_epilogue(
     })
 }
 
-pub(crate) fn emit_has_epilogue_typed(plan: &AccountsPlanTyped) -> proc_macro2::TokenStream {
-    let has_epilogue = plan.fields.iter().any(|fp| !fp.epilogue.is_empty());
-    if has_epilogue {
-        quote! { true }
-    } else {
-        quote! { false }
+pub(crate) fn emit_has_epilogue_typed(
+    plan: &AccountsPlanTyped,
+    semantics: &[FieldSemantics],
+) -> proc_macro2::TokenStream {
+    // Collect const-evaluable terms for HAS_EPILOGUE.
+    let mut terms: Vec<proc_macro2::TokenStream> = vec![quote! { false }];
+
+    for (fp, sem) in plan.fields.iter().zip(semantics.iter()) {
+        let ty = &sem.core.effective_ty;
+        for step in &fp.epilogue {
+            match step {
+                EpilogueStep::Behavior(call) => {
+                    let path = &call.path;
+                    terms.push(quote! {
+                        <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::RUN_EXIT
+                    });
+                }
+                EpilogueStep::ProgramClose(_) | EpilogueStep::MigrationVerifyAndNormalize(_) => {
+                    terms.push(quote! { true });
+                }
+            }
+        }
     }
+
+    quote! { #(#terms)||* }
 }
 
 // ==== Load phase ====
@@ -374,7 +406,7 @@ fn emit_one_load(sem: &FieldSemantics) -> proc_macro2::TokenStream {
     }
 }
 
-// ==== User checks (structural — not op-group based) ====
+// ==== User checks (structural — not behavior-group based) ====
 
 fn emit_user_check(sem: &FieldSemantics, check: &UserCheck) -> Vec<proc_macro2::TokenStream> {
     let field_ident = &sem.core.ident;
@@ -425,10 +457,86 @@ fn emit_user_check(sem: &FieldSemantics, check: &UserCheck) -> Vec<proc_macro2::
     stmts
 }
 
+// ==== Behavior assertions ====
+
+/// Emit compile-time assertions for behavior groups:
+/// - `REQUIRES_MUT`: if true, field must be `mut`
+/// - `SETS_INIT_PARAMS`: at most one per init field
+fn emit_behavior_assertions(semantics: &[FieldSemantics]) -> proc_macro2::TokenStream {
+    let mut asserts = Vec::new();
+
+    for sem in semantics {
+        let ty = &sem.core.effective_ty;
+        let field_name = sem.core.ident.to_string();
+
+        for group in &sem.groups {
+            let path = &group.path;
+
+            // REQUIRES_MUT assertion: if behavior requires mut but field is
+            // not mut, emit a compile error.
+            if !sem.core.is_mut {
+                let msg = format!(
+                    "behavior `{}` requires `#[account(mut)]` on field `{}`",
+                    group.name(),
+                    field_name,
+                );
+                asserts.push(quote! {
+                    const _: () = assert!(
+                        !<#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::REQUIRES_MUT,
+                        #msg,
+                    );
+                });
+            }
+        }
+
+        // Init field assertions.
+        if sem.has_init() {
+            let init_contributor_count: Vec<proc_macro2::TokenStream> = sem
+                .groups
+                .iter()
+                .map(|g| {
+                    let p = &g.path;
+                    quote! {
+                        <#p::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::SETS_INIT_PARAMS as usize
+                    }
+                })
+                .collect();
+
+            if !init_contributor_count.is_empty() {
+                // At most one behavior may set init params.
+                let at_most_one_msg = format!(
+                    "at most one behavior group on field `{}` may set `SETS_INIT_PARAMS = true`",
+                    field_name,
+                );
+                asserts.push(quote! {
+                    const _: () = assert!(
+                        #(#init_contributor_count)+* <= 1,
+                        #at_most_one_msg,
+                    );
+                });
+
+                // If the account type requires init params (DEFAULT_INIT_PARAMS_VALID
+                // = false), exactly one behavior must provide them.
+                let required_msg = format!(
+                    "field `{}` requires an init-param behavior (e.g., token(...) or mint(...))",
+                    field_name,
+                );
+                asserts.push(quote! {
+                    const _: () = assert!(
+                        <#ty as quasar_lang::account_init::AccountInit>::DEFAULT_INIT_PARAMS_VALID
+                            || #(#init_contributor_count)+* >= 1,
+                        #required_msg,
+                    );
+                });
+            }
+        }
+    }
+
+    quote! { #(#asserts)* }
+}
+
 // ==== Helpers ====
 
-/// Wrap a code block in `if let Some(ref field) = field { ... }` for optional
-/// accounts.
 fn wrap_optional(
     is_optional: bool,
     ident: &syn::Ident,

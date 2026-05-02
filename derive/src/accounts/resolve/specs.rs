@@ -1,139 +1,78 @@
-//! Typed execution plan — the semantic model that replaces GroupOp bags.
+//! Typed execution plan — protocol-neutral phase model.
 //!
 //! After planning, every field has a `FieldPlan` with phase-ordered steps.
-//! Emit consumes these typed specs directly — no string-based arg lookup.
+//! All protocol behavior is lowered to generic `BehaviorCall` steps that
+//! emit `AccountBehavior` trait calls. No SPL domain knowledge.
 
 use syn::{Expr, Ident, Type};
 
 // ---------------------------------------------------------------------------
-// Value provenance
+// Behavior call — the single protocol-neutral operation
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// References
-// ---------------------------------------------------------------------------
-
-/// A reference to an account field or constant expression.
+/// A resolved behavior call for one behavior group on one field.
+///
+/// The emitter uses this to generate:
+/// ```text
+/// let __args = path::Args::builder()
+///     .key(lowered_value)
+///     .build_check()?;
+/// <path::Behavior as AccountBehavior<FieldTy>>::check(&field, &__args)?;
+/// ```
 #[derive(Clone)]
-pub(crate) enum ArgRef {
-    /// Another field in the accounts struct.
-    Field(Ident),
-    /// A constant path or literal expression.
+pub(crate) struct BehaviorCall {
+    /// Module path for the behavior (e.g., `token`,
+    /// `quasar_spl::accounts::token`).
+    pub path: syn::Path,
+    /// Resolved arguments with lowered values.
+    pub args: Vec<LoweredArg>,
+    /// Which lifecycle phase this call participates in.
+    pub phase: BehaviorPhase,
+}
+
+/// A resolved key = value pair with the value already lowered.
+#[derive(Clone)]
+pub(crate) struct LoweredArg {
+    pub key: Ident,
+    pub lowered: LoweredValue,
+}
+
+/// How a behavior arg value is lowered for codegen.
+#[derive(Clone)]
+pub(crate) enum LoweredValue {
+    /// `field.to_account_view()` — bare field reference.
+    FieldView(Ident),
+    /// `field.as_ref().map(|v| v.to_account_view())` — optional field
+    /// reference.
+    OptionalFieldView(Ident),
+    /// Pass expression directly.
     Expr(Expr),
+    /// `None`.
+    NoneLiteral,
+    /// `Some(field.to_account_view())`.
+    SomeFieldView(Ident),
+    /// `Some(expr)`.
+    SomeExpr(Expr),
 }
 
-/// A resolved account reference (field or expression).
-#[derive(Clone)]
-pub(crate) struct AccountRef {
-    pub inner: ArgRef,
-}
-
-impl AccountRef {
-    pub(crate) fn field(ident: Ident) -> Self {
-        Self {
-            inner: ArgRef::Field(ident),
-        }
-    }
-
-    pub(crate) fn expr(expr: Expr) -> Self {
-        Self {
-            inner: ArgRef::Expr(expr),
-        }
-    }
-
-    pub(crate) fn arg_ref(&self) -> &ArgRef {
-        &self.inner
-    }
-}
-
-/// A reference that is guaranteed to be a field (never an expression).
-/// Used for payer and program refs where the planner enforces field-only.
-#[derive(Clone)]
-pub(crate) struct FieldRef {
-    pub ident: Ident,
-}
-
-/// How the token program is resolved for an init/exit operation (CPI needed).
-pub(crate) type ProgramRef = FieldRef;
-
-// ---------------------------------------------------------------------------
-// Omission semantics
-// ---------------------------------------------------------------------------
-
-/// Validation check mode: either skip or perform the check.
-#[derive(Clone)]
-pub(crate) enum CheckMode<T> {
-    /// Omitted by user → do not check this field.
-    DoNotCheck,
-    /// Present → check against this value.
-    Check(T),
-}
-
-/// A value that may be explicitly provided or defaulted.
-#[derive(Clone)]
-pub(crate) enum MaybeDefault<T> {
-    Explicit(T),
-    Defaulted(T),
-}
-
-impl<T> MaybeDefault<T> {
-    pub(crate) fn value(&self) -> &T {
-        match self {
-            Self::Explicit(v) | Self::Defaulted(v) => v,
-        }
-    }
-}
-
-/// Freeze authority specification.
-#[derive(Clone)]
-pub(crate) enum FreezeAuthoritySpec {
-    /// No freeze authority.
-    None,
-    /// Freeze authority is this account.
-    Some(AccountRef),
+/// Behavior lifecycle phase. Each phase maps to one associated const guard,
+/// one builder build method, and one trait method call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BehaviorPhase {
+    /// `SETS_INIT_PARAMS` → `build_init()` → `set_init_param()`
+    SetInitParam,
+    /// `RUN_AFTER_INIT` → `build_init()` → `after_init()`
+    AfterInit,
+    /// `RUN_CHECK` → `build_check()` → `check()`
+    Check,
+    /// `RUN_UPDATE` → `build_check()` → `update()`
+    Update,
+    /// `RUN_EXIT` → `build_exit()` → `exit()`
+    Exit,
 }
 
 // ---------------------------------------------------------------------------
-// Check specs
-// ---------------------------------------------------------------------------
-
-/// Fully resolved token account validation spec.
-#[derive(Clone)]
-pub(crate) struct TokenCheckSpec {
-    pub mint: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: TokenProgramCheckRef,
-}
-
-/// How the token program is provided for a check operation.
-#[derive(Clone)]
-pub(crate) enum TokenProgramCheckRef {
-    /// Concrete account type proves the owner — no runtime field needed.
-    /// Emit produces `None` for the ctx field.
-    ConcreteOwner,
-    /// Runtime program field provides the check value.
-    RuntimeField(Ident),
-}
-
-/// Fully resolved mint account validation spec.
-#[derive(Clone)]
-pub(crate) struct MintCheckSpec {
-    pub authority: AccountRef,
-    pub decimals: CheckMode<Expr>,
-    pub freeze_authority: CheckMode<FreezeAuthoritySpec>,
-    pub token_program: TokenProgramCheckRef,
-}
-
-/// Fully resolved associated token validation spec.
-#[derive(Clone)]
-pub(crate) struct AssociatedTokenCheckSpec {
-    pub mint: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: TokenProgramCheckRef,
-}
-
-// ---------------------------------------------------------------------------
-// Init specs
+// Core structural specs (protocol-agnostic)
 // ---------------------------------------------------------------------------
 
 /// Space specification for program init.
@@ -143,7 +82,15 @@ pub(crate) enum SpaceSpec {
     FromType(Type),
 }
 
-/// Plain program account init.
+/// A reference that is guaranteed to be a field (never an expression).
+/// Used for payer refs where the planner enforces field-only.
+#[derive(Clone)]
+pub(crate) struct FieldRef {
+    pub ident: Ident,
+}
+
+/// Plain program account init (no behavior — system program create +
+/// discriminator).
 #[derive(Clone)]
 pub(crate) struct ProgramInitSpec {
     pub payer: FieldRef,
@@ -151,78 +98,27 @@ pub(crate) struct ProgramInitSpec {
     pub idempotent: bool,
 }
 
-/// Token account init.
+/// Delegated init via behavior modules. Pre-load stage only: calls
+/// `set_init_param` for each behavior, then `AccountInit::init`. The account
+/// is loaded in the normal load phase. `after_init` + `check` run as
+/// post-load steps.
 #[derive(Clone)]
-pub(crate) struct TokenInitSpec {
+pub(crate) struct BehaviorInitSpec {
     pub payer: FieldRef,
-    pub mint: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: ProgramRef,
     pub idempotent: bool,
-}
-
-/// Mint account init.
-#[derive(Clone)]
-pub(crate) struct MintInitSpec {
-    pub payer: FieldRef,
-    pub decimals: MaybeDefault<Expr>,
-    pub authority: AccountRef,
-    pub freeze_authority: MaybeDefault<FreezeAuthoritySpec>,
-    pub token_program: ProgramRef,
-    pub idempotent: bool,
-}
-
-/// Associated token account init.
-#[derive(Clone)]
-pub(crate) struct AssociatedTokenInitSpec {
-    pub payer: FieldRef,
-    pub mint: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: ProgramRef,
-    pub system_program: ProgramRef,
-    pub ata_program: ProgramRef,
-    pub idempotent: bool,
+    /// Behavior calls that contribute init params via `set_init_param`.
+    pub init_param_calls: Vec<BehaviorCall>,
 }
 
 /// Discriminated init plan.
 #[derive(Clone)]
 pub(crate) enum InitPlan {
+    /// Plain program-owned init (system program create + discriminator).
     Program(ProgramInitSpec),
-    Token(TokenInitSpec),
-    Mint(MintInitSpec),
-    AssociatedToken(AssociatedTokenInitSpec),
+    /// Behavior-delegated init (set_init_param → AccountInit::init).
+    /// Load, after_init, and check happen in later phases.
+    Behavior(BehaviorInitSpec),
 }
-
-// ---------------------------------------------------------------------------
-// Exit specs
-// ---------------------------------------------------------------------------
-
-/// Program-level close (drain lamports).
-#[derive(Clone)]
-pub(crate) struct ProgramCloseSpec {
-    pub destination: AccountRef,
-}
-
-/// Token close via CPI.
-#[derive(Clone)]
-pub(crate) struct TokenCloseSpec {
-    pub destination: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: ProgramRef,
-}
-
-/// Token sweep (transfer all tokens before close).
-#[derive(Clone)]
-pub(crate) struct TokenSweepSpec {
-    pub receiver: AccountRef,
-    pub mint: AccountRef,
-    pub authority: AccountRef,
-    pub token_program: ProgramRef,
-}
-
-// ---------------------------------------------------------------------------
-// Realloc and migration specs
-// ---------------------------------------------------------------------------
 
 /// Realloc spec.
 #[derive(Clone)]
@@ -237,14 +133,16 @@ pub(crate) struct MigrationSpec {
     pub payer: FieldRef,
 }
 
-// ---------------------------------------------------------------------------
-// Address spec
-// ---------------------------------------------------------------------------
-
 /// Address verification plan for a field.
 #[derive(Clone)]
 pub(crate) struct AddressSpec {
     pub expr: Expr,
+}
+
+/// Program-level close (drain lamports). Core lifecycle — not protocol-owned.
+#[derive(Clone)]
+pub(crate) struct ProgramCloseSpec {
+    pub destination_field: Ident,
 }
 
 // ---------------------------------------------------------------------------
@@ -268,29 +166,33 @@ pub(crate) enum RentPlan {
 
 /// A step that runs before account load (address verify + init CPI).
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum PreLoadStep {
     VerifyAddress(AddressSpec),
     Init(InitPlan),
 }
 
-/// A step that runs after account load (checks, realloc, migration grow).
+/// A step that runs after account load.
 #[derive(Clone)]
 pub(crate) enum PostLoadStep {
-    TokenCheck(TokenCheckSpec),
-    MintCheck(MintCheckSpec),
-    AssociatedTokenCheck(AssociatedTokenCheckSpec),
-    Realloc(ReallocSpec),
-    MigrationGrow(MigrationSpec),
+    /// Behavior phase call (after_init, check, or update). Guarded by the
+    /// phase's associated const at compile time.
+    Behavior(BehaviorCall),
+    /// Core address verification for non-init fields.
     VerifyExistingAddress(AddressSpec),
+    /// Realloc.
+    Realloc(ReallocSpec),
+    /// Migration grow.
+    MigrationGrow(MigrationSpec),
 }
 
-/// A step that runs in the epilogue (close, sweep, migration normalize).
+/// A step that runs in the epilogue.
 #[derive(Clone)]
 pub(crate) enum EpilogueStep {
-    TokenSweep(TokenSweepSpec),
-    TokenClose(TokenCloseSpec),
+    /// Behavior exit phase call. Guarded by `RUN_EXIT` at compile time.
+    Behavior(BehaviorCall),
+    /// Core program close (lamport drain).
     ProgramClose(ProgramCloseSpec),
+    /// Migration verify + normalize.
     MigrationVerifyAndNormalize(MigrationSpec),
 }
 
@@ -302,7 +204,7 @@ pub(crate) struct FieldPlan {
     pub pre_load: Vec<PreLoadStep>,
     /// Steps after load (checks, realloc, migration grow, address verify).
     pub post_load: Vec<PostLoadStep>,
-    /// Steps in epilogue (sweep, close, migration normalize).
+    /// Steps in epilogue (behavior exit, program close, migration normalize).
     pub epilogue: Vec<EpilogueStep>,
 }
 

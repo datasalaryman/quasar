@@ -1,7 +1,7 @@
-//! Emit code from typed execution plan specs.
+//! Behavior call snippets — one shape per phase, all const-guarded.
 //!
-//! Each function takes a completed spec and produces a TokenStream.
-//! No arg lookup, no string filtering, no validation — the planner did that.
+//! Every behavior phase emits the same pattern: const guard → build args →
+//! call trait method. Protocol crates own the trait impls and builders.
 
 use {
     super::super::resolve::specs::*,
@@ -9,162 +9,101 @@ use {
 };
 
 // ---------------------------------------------------------------------------
-// Check emit
+// Behavior call emit — one function per phase, all const-guarded
 // ---------------------------------------------------------------------------
 
-pub(crate) fn emit_token_check(
-    spec: &TokenCheckSpec,
+/// Emit a const-guarded behavior phase call for the post-load phase.
+/// The `BehaviorPhase` on the call determines which const, which builder
+/// method, and which trait method to emit.
+pub(crate) fn emit_post_load_behavior(
+    call: &BehaviorCall,
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    let mint = emit_account_view_ref(&spec.mint);
-    let authority = emit_account_view_ref(&spec.authority);
-    let token_program = emit_token_program_check(&spec.token_program);
+    let path = &call.path;
+    let bhv =
+        quote! { <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#field_ty>> };
+    let args_block = emit_args_builder(call);
 
-    quote! {
-        <#field_ty as #spl_crate::ops::capabilities::TokenCheck>::check_token_view(
-            #field_ident.to_account_view(),
-            #spl_crate::ops::ctx::TokenCheckCtx {
-                mint: #mint,
-                authority: #authority,
-                token_program: #token_program,
-            },
-        )?;
+    match call.phase {
+        BehaviorPhase::AfterInit => quote! {
+            if #bhv::RUN_AFTER_INIT {
+                #args_block
+                #bhv::after_init(&mut #field_ident, &__bhv_args)?;
+            }
+        },
+        BehaviorPhase::Check => quote! {
+            if #bhv::RUN_CHECK {
+                #args_block
+                #bhv::check(&#field_ident, &__bhv_args)?;
+            }
+        },
+        BehaviorPhase::Update => quote! {
+            if #bhv::RUN_UPDATE {
+                #args_block
+                #bhv::update(&mut #field_ident, &__bhv_args)?;
+            }
+        },
+        _ => quote! {},
     }
 }
 
-pub(crate) fn emit_mint_check(
-    spec: &MintCheckSpec,
+/// Emit a const-guarded behavior phase call for the epilogue phase.
+/// Exit args use `self.field` references.
+pub(crate) fn emit_epilogue_behavior(
+    call: &BehaviorCall,
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    let authority = emit_account_view_ref(&spec.authority);
-    let decimals = emit_check_mode_u8(&spec.decimals);
-    let freeze_authority = emit_freeze_authority_check(&spec.freeze_authority);
-    let token_program = emit_token_program_check(&spec.token_program);
+    let path = &call.path;
+    let bhv =
+        quote! { <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#field_ty>> };
+    let args_block = emit_exit_args_builder(call, field_ident);
 
     quote! {
-        <#field_ty as #spl_crate::ops::capabilities::MintCheck>::check_mint_view(
-            #field_ident.to_account_view(),
-            #spl_crate::ops::ctx::MintCheckCtx {
-                authority: #authority,
-                decimals: #decimals,
-                freeze_authority: #freeze_authority,
-                token_program: #token_program,
-            },
-        )?;
+        if #bhv::RUN_EXIT {
+            #args_block
+            #bhv::exit(&mut self.#field_ident, &__bhv_args)?;
+        }
     }
 }
 
-pub(crate) fn emit_associated_token_check(
-    spec: &AssociatedTokenCheckSpec,
-    field_ident: &syn::Ident,
-    field_ty: &syn::Type,
-) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    let mint = emit_account_view_ref(&spec.mint);
-    let authority = emit_account_view_ref(&spec.authority);
-    let token_program = emit_token_program_check(&spec.token_program);
-
-    quote! {
-        <#field_ty as #spl_crate::ops::capabilities::AssociatedTokenCheck>::check_associated_token_view(
-            #field_ident.to_account_view(),
-            #spl_crate::ops::ctx::AssociatedTokenCheckCtx {
-                mint: #mint,
-                authority: #authority,
-                token_program: #token_program,
-            },
-        )?;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Init emit
-// ---------------------------------------------------------------------------
-
-pub(crate) fn emit_init_plan(
-    init: &InitPlan,
+/// Emit behavior init CPI: set_init_param → AccountInit::init.
+/// The account is loaded in the normal load phase. After_init and check
+/// run as post-load steps.
+pub(crate) fn emit_behavior_init(
+    spec: &BehaviorInitSpec,
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
     has_address: bool,
 ) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
+    let payer_ident = &spec.payer.ident;
+    let idempotent = spec.idempotent;
 
-    let (params_block, space, idempotent) = match init {
-        InitPlan::Program(spec) => {
-            let space = match &spec.space {
-                SpaceSpec::FromType(ty) => quote! {
-                    <#ty as quasar_lang::traits::Space>::SPACE as u64
-                },
-            };
-            (quote! { let __init_params = (); }, space, spec.idempotent)
-        }
-        InitPlan::Token(spec) => {
-            let mint = emit_account_view_ref(&spec.mint);
-            let authority = emit_account_view_ref(&spec.authority);
-            let token_program = emit_program_ref_view(&spec.token_program);
-            let kind_ty = format_ident!("Token{}Kind", "Init");
-            let params = quote! {
-                let __init_params = #spl_crate::#kind_ty::Token {
-                    mint: #mint,
-                    authority: #authority.address(),
-                    token_program: #token_program,
-                };
-            };
-            (params, quote! { 0u64 }, spec.idempotent)
-        }
-        InitPlan::Mint(spec) => {
-            let decimals_val = spec.decimals.value();
-            let authority = emit_account_view_ref(&spec.authority);
-            let token_program = emit_program_ref_view(&spec.token_program);
-            let freeze_authority = emit_freeze_authority_init(&spec.freeze_authority);
-            let params_ty = format_ident!("Mint{}Params", "Init");
-            let params = quote! {
-                let __init_params = #spl_crate::#params_ty {
-                    decimals: #decimals_val,
-                    authority: #authority.address(),
-                    freeze_authority: #freeze_authority,
-                    token_program: #token_program,
-                };
-            };
-            (params, quote! { 0u64 }, spec.idempotent)
-        }
-        InitPlan::AssociatedToken(spec) => {
-            let mint = emit_account_view_ref(&spec.mint);
-            let authority = emit_account_view_ref(&spec.authority);
-            let token_program = emit_program_ref_view(&spec.token_program);
-            let system_program = emit_program_ref_view(&spec.system_program);
-            let ata_program = emit_program_ref_view(&spec.ata_program);
-            let idempotent = spec.idempotent;
-            let kind_ty = format_ident!("Token{}Kind", "Init");
-            let params = quote! {
-                let __init_params = #spl_crate::#kind_ty::AssociatedToken {
-                    mint: #mint,
-                    authority: #authority,
-                    token_program: #token_program,
-                    system_program: #system_program,
-                    ata_program: #ata_program,
-                    idempotent: #idempotent,
-                };
-            };
-            (params, quote! { 0u64 }, spec.idempotent)
-        }
-    };
+    let set_params: Vec<proc_macro2::TokenStream> = spec
+        .init_param_calls
+        .iter()
+        .map(|call| {
+            let path = &call.path;
+            let args_block = emit_args_builder(call);
+            quote! {
+                if <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#field_ty>>::SETS_INIT_PARAMS {
+                    #args_block
+                    <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#field_ty>>::set_init_param(
+                        &mut __init_params,
+                        &__bhv_args,
+                    )?;
+                }
+            }
+        })
+        .collect();
 
-    let payer_ref = match init {
-        InitPlan::Program(s) => &s.payer,
-        InitPlan::Token(s) => &s.payer,
-        InitPlan::Mint(s) => &s.payer,
-        InitPlan::AssociatedToken(s) => &s.payer,
-    };
-    let payer = emit_field_ref_view(payer_ref);
-
-    let init_call = quote! {
+    let init_cpi = quote! {
+        let mut __init_params = <#field_ty as quasar_lang::account_init::AccountInit>::InitParams::default();
+        #(#set_params)*
         let __init_op = quasar_lang::ops::init::Op {
-            payer: #payer,
-            space: #space,
+            payer: #payer_ident.to_account_view(),
+            space: 0u64,
             signers: __signers,
             params: __init_params,
             idempotent: #idempotent,
@@ -172,9 +111,68 @@ pub(crate) fn emit_init_plan(
         __init_op.apply::<#field_ty>(#field_ident, &__rent_ctx)?;
     };
 
+    let body = if has_address {
+        let bump_var = format_ident!("__bumps_{}", field_ident);
+        let addr_var = format_ident!("__addr_{}", field_ident);
+        quote! {
+            let __bump_ref: &[u8] = &[#bump_var];
+            quasar_lang::address::AddressVerify::with_signer_seeds(
+                &#addr_var,
+                __bump_ref,
+                |__maybe_signer| -> Result<(), quasar_lang::prelude::ProgramError> {
+                    let __signers = match &__maybe_signer {
+                        Some(__signer) => core::slice::from_ref(__signer),
+                        None => &[] as &[quasar_lang::cpi::Signer<'_, '_>],
+                    };
+                    #init_cpi
+                    Ok(())
+                },
+            )?;
+        }
+    } else {
+        quote! {
+            let __signers: &[quasar_lang::cpi::Signer<'_, '_>] = &[];
+            #init_cpi
+        }
+    };
+
+    if idempotent {
+        quote! {
+            if quasar_lang::is_system_program(#field_ident.owner()) {
+                #body
+            }
+        }
+    } else {
+        quote! { { #body } }
+    }
+}
+
+/// Emit plain program init (no behavior — system program create +
+/// discriminator).
+pub(crate) fn emit_program_init(
+    spec: &ProgramInitSpec,
+    field_ident: &syn::Ident,
+    field_ty: &syn::Type,
+    has_address: bool,
+) -> proc_macro2::TokenStream {
+    let payer_ident = &spec.payer.ident;
+    let idempotent = spec.idempotent;
+    let space = match &spec.space {
+        SpaceSpec::FromType(ty) => quote! {
+            <#ty as quasar_lang::traits::Space>::SPACE as u64
+        },
+    };
+
     let inner_body = quote! {
-        #params_block
-        #init_call
+        let __init_params = ();
+        let __init_op = quasar_lang::ops::init::Op {
+            payer: #payer_ident.to_account_view(),
+            space: #space,
+            signers: __signers,
+            params: __init_params,
+            idempotent: #idempotent,
+        };
+        __init_op.apply::<#field_ty>(#field_ident, &__rent_ctx)?;
     };
 
     let body = if has_address {
@@ -214,7 +212,7 @@ pub(crate) fn emit_init_plan(
 }
 
 // ---------------------------------------------------------------------------
-// Exit emit
+// Program close emit (core lifecycle, not behavior)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn emit_program_close(
@@ -222,7 +220,7 @@ pub(crate) fn emit_program_close(
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
 ) -> proc_macro2::TokenStream {
-    let dest = emit_exit_account_view_ref(&spec.destination);
+    let dest_ident = &spec.destination_field;
     let trait_name = format_ident!("{}Close", "Account");
     quote! {
         {
@@ -233,142 +231,95 @@ pub(crate) fn emit_program_close(
             };
             <#field_ty as quasar_lang::ops::close::#trait_name>::close(
                 __view,
-                #dest,
+                self.#dest_ident.to_account_view(),
             )?;
         }
     }
 }
 
-pub(crate) fn emit_token_close(
-    spec: &TokenCloseSpec,
-    field_ident: &syn::Ident,
-    field_ty: &syn::Type,
-) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    let dest = emit_exit_account_view_ref(&spec.destination);
-    let authority = emit_exit_account_view_ref(&spec.authority);
-    let token_program = emit_exit_program_ref(&spec.token_program);
-    let trait_name = format_ident!("Token{}", "Close");
+// ---------------------------------------------------------------------------
+// Args builder codegen
+// ---------------------------------------------------------------------------
+
+/// Emit the builder chain for a behavior call (parse-time phase: uses local
+/// vars).
+fn emit_args_builder(call: &BehaviorCall) -> proc_macro2::TokenStream {
+    let path = &call.path;
+    let setters: Vec<proc_macro2::TokenStream> = call
+        .args
+        .iter()
+        .map(|arg| {
+            let key = &arg.key;
+            let val = emit_lowered_value(&arg.lowered);
+            quote! { .#key(#val) }
+        })
+        .collect();
+
+    let build_method = match call.phase {
+        BehaviorPhase::SetInitParam | BehaviorPhase::AfterInit => quote! { build_init },
+        BehaviorPhase::Check | BehaviorPhase::Update => quote! { build_check },
+        BehaviorPhase::Exit => quote! { build_exit },
+    };
+
     quote! {
-        {
-            let __view = unsafe {
-                <#field_ty as quasar_lang::account_load::AccountLoad>::to_account_view_mut(
-                    &mut self.#field_ident
-                )
-            };
-            <#field_ty as #spl_crate::ops::close::#trait_name>::close(
-                __view,
-                #dest,
-                #authority,
-                #token_program,
-            )?;
+        let __bhv_args = #path::Args::builder()
+            #(#setters)*
+            .#build_method()?;
+    }
+}
+
+/// Emit the builder chain for an exit behavior call (epilogue phase: uses
+/// `self.field`).
+fn emit_exit_args_builder(
+    call: &BehaviorCall,
+    _field_ident: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    let path = &call.path;
+    let setters: Vec<proc_macro2::TokenStream> = call
+        .args
+        .iter()
+        .map(|arg| {
+            let key = &arg.key;
+            let val = emit_exit_lowered_value(&arg.lowered);
+            quote! { .#key(#val) }
+        })
+        .collect();
+
+    quote! {
+        let __bhv_args = #path::Args::builder()
+            #(#setters)*
+            .build_exit()?;
+    }
+}
+
+/// Emit a lowered value in parse-time context (local variables).
+fn emit_lowered_value(val: &LoweredValue) -> proc_macro2::TokenStream {
+    match val {
+        LoweredValue::FieldView(ident) => quote! { #ident.to_account_view() },
+        LoweredValue::OptionalFieldView(ident) => {
+            quote! { #ident.as_ref().map(|v| v.to_account_view()) }
         }
-    }
-}
-
-pub(crate) fn emit_token_sweep(
-    spec: &TokenSweepSpec,
-    field_ident: &syn::Ident,
-    field_ty: &syn::Type,
-) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    let receiver = emit_exit_account_view_ref(&spec.receiver);
-    let mint = emit_exit_account_view_ref(&spec.mint);
-    let authority = emit_exit_account_view_ref(&spec.authority);
-    let token_program = emit_exit_program_ref(&spec.token_program);
-    let trait_name = format_ident!("Token{}", "Sweep");
-    quote! {
-        <#field_ty as #spl_crate::ops::sweep::#trait_name>::sweep(
-            self.#field_ident.to_account_view(),
-            #receiver,
-            #mint,
-            #authority,
-            #token_program,
-        )?;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers: arg → TokenStream
-// ---------------------------------------------------------------------------
-
-/// Emit a FieldRef as `field.to_account_view()` (guaranteed field).
-fn emit_field_ref_view(field_ref: &FieldRef) -> proc_macro2::TokenStream {
-    let ident = &field_ref.ident;
-    quote! { #ident.to_account_view() }
-}
-
-/// Emit an AccountRef as `field.to_account_view()` (post-load phase context).
-fn emit_account_view_ref(account_ref: &AccountRef) -> proc_macro2::TokenStream {
-    match account_ref.arg_ref() {
-        ArgRef::Field(ident) => quote! { #ident.to_account_view() },
-        ArgRef::Expr(expr) => quote! { #expr },
-    }
-}
-
-/// Emit an AccountRef for exit phase: `self.field.to_account_view()`.
-fn emit_exit_account_view_ref(account_ref: &AccountRef) -> proc_macro2::TokenStream {
-    match account_ref.arg_ref() {
-        ArgRef::Field(ident) => quote! { self.#ident.to_account_view() },
-        ArgRef::Expr(expr) => quote! { #expr },
-    }
-}
-
-/// Emit a ProgramRef as an account view (post-load or init context).
-fn emit_program_ref_view(program_ref: &ProgramRef) -> proc_macro2::TokenStream {
-    emit_field_ref_view(program_ref)
-}
-
-/// Emit a ProgramRef for exit phase.
-fn emit_exit_program_ref(program_ref: &ProgramRef) -> proc_macro2::TokenStream {
-    let ident = &program_ref.ident;
-    quote! { self.#ident.to_account_view() }
-}
-
-/// Emit token_program for check context: Some(field.to_account_view()) or None.
-fn emit_token_program_check(check_ref: &TokenProgramCheckRef) -> proc_macro2::TokenStream {
-    match check_ref {
-        TokenProgramCheckRef::ConcreteOwner => quote! { None },
-        TokenProgramCheckRef::RuntimeField(ident) => {
+        LoweredValue::Expr(expr) => quote! { #expr },
+        LoweredValue::NoneLiteral => quote! { None },
+        LoweredValue::SomeFieldView(ident) => {
             quote! { Some(#ident.to_account_view()) }
         }
+        LoweredValue::SomeExpr(expr) => quote! { Some(#expr) },
     }
 }
 
-/// Emit decimals CheckMode as Option<u8>.
-fn emit_check_mode_u8(mode: &CheckMode<syn::Expr>) -> proc_macro2::TokenStream {
-    match mode {
-        CheckMode::DoNotCheck => quote! { None },
-        CheckMode::Check(expr) => quote! { Some(#expr) },
-    }
-}
-
-/// Emit freeze_authority for check context: FreezeAuthorityCheck enum.
-fn emit_freeze_authority_check(mode: &CheckMode<FreezeAuthoritySpec>) -> proc_macro2::TokenStream {
-    let spl_crate = format_ident!("quasar_{}", "spl");
-    match mode {
-        CheckMode::DoNotCheck => {
-            quote! { #spl_crate::ops::ctx::FreezeAuthorityCheck::Skip }
+/// Emit a lowered value in epilogue context (`self.field`).
+fn emit_exit_lowered_value(val: &LoweredValue) -> proc_macro2::TokenStream {
+    match val {
+        LoweredValue::FieldView(ident) => quote! { self.#ident.to_account_view() },
+        LoweredValue::OptionalFieldView(ident) => {
+            quote! { self.#ident.as_ref().map(|v| v.to_account_view()) }
         }
-        CheckMode::Check(FreezeAuthoritySpec::None) => {
-            quote! { #spl_crate::ops::ctx::FreezeAuthorityCheck::AssertNone }
+        LoweredValue::Expr(expr) => quote! { #expr },
+        LoweredValue::NoneLiteral => quote! { None },
+        LoweredValue::SomeFieldView(ident) => {
+            quote! { Some(self.#ident.to_account_view()) }
         }
-        CheckMode::Check(FreezeAuthoritySpec::Some(account_ref)) => {
-            let view = emit_account_view_ref(account_ref);
-            quote! { #spl_crate::ops::ctx::FreezeAuthorityCheck::AssertEquals(#view) }
-        }
-    }
-}
-
-/// Emit freeze_authority for init context: Option<&Address>.
-fn emit_freeze_authority_init(
-    mode: &MaybeDefault<FreezeAuthoritySpec>,
-) -> proc_macro2::TokenStream {
-    match mode.value() {
-        FreezeAuthoritySpec::None => quote! { None },
-        FreezeAuthoritySpec::Some(account_ref) => {
-            let view = emit_account_view_ref(account_ref);
-            quote! { Some(#view.address()) }
-        }
+        LoweredValue::SomeExpr(expr) => quote! { Some(#expr) },
     }
 }

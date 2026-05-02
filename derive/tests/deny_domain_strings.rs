@@ -1,23 +1,11 @@
 //! Deny test: derive macro boundary enforcement.
 //!
-//! The derive owns SPL lowering in explicit SPL modules (specs, planner,
-//! typed_emit). Generic modules (syntax, field classification, output) must
-//! not contain literal SPL domain strings.
-//!
-//! SPL-aware modules are excluded from this check because they legitimately
-//! reference SPL type/trait names for greppability.
+//! The derive is protocol-neutral. NO module in derive/src/accounts/ may
+//! contain literal SPL domain strings. All SPL knowledge lives in
+//! quasar-spl behavior modules.
 
 /// Domain strings that must never appear in derive/src/accounts/ source.
-///
-/// This list is the single source of truth.
 const BANNED: &[&str] = &[
-    // ATA domain knowledge (Phase 3 deleted)
-    "AssociatedTokenProgram",
-    "find_field_by_inner_name",
-    // Expression-shape dispatch (Phase 1 deleted)
-    "is_raw_slot_safe",
-    // Migration type detection (Phase 4 deleted)
-    "is_migration_type",
     // SPL param types
     "TokenParams",
     "TokenInitKind",
@@ -26,6 +14,9 @@ const BANNED: &[&str] = &[
     "SPL_TOKEN",
     "quasar_spl",
     // SPL trait names
+    "TokenCheck",
+    "MintCheck",
+    "AssociatedTokenCheck",
     "TokenClose",
     "TokenSweep",
     "CloseCtx",
@@ -43,9 +34,20 @@ const BANNED: &[&str] = &[
     "SupportsRealloc",
     // Domain names in program type detection
     "SystemProgram",
-    // Old PDA machinery (deleted in Task 8)
+    "TokenProgram",
+    "Token2022Program",
+    "AssociatedTokenProgram",
+    "TokenInterface",
+    // Old machinery
     "SeedNode",
     "classify_seed",
+    "is_migration_type",
+    "find_field_by_inner_name",
+    "is_raw_slot_safe",
+    // Group/op classification (deleted)
+    "GroupKind",
+    "OpKind",
+    "ProgramCategory",
 ];
 
 fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -69,14 +71,8 @@ fn deny_domain_strings_in_derive() {
     collect_rs_files(&derive_src, &mut files);
     assert!(!files.is_empty(), "no .rs files found in {:?}", derive_src);
 
-    // SPL-aware modules are allowed to use domain strings directly.
-    // Generic modules must remain domain-free.
-    let spl_modules: &[&str] = &[
-        "resolve/specs.rs",
-        "resolve/planner.rs",
-        "emit/typed_emit.rs",
-        "emit/parse.rs",
-    ];
+    // No exceptions. Every module in derive/src/accounts/ must be
+    // protocol-neutral.
 
     let mut violations = Vec::new();
 
@@ -84,23 +80,16 @@ fn deny_domain_strings_in_derive() {
         let rel = file
             .strip_prefix(env!("CARGO_MANIFEST_DIR"))
             .unwrap_or(file);
-        let rel_str = rel.to_string_lossy();
-
-        // Skip SPL-aware modules.
-        if spl_modules.iter().any(|m| rel_str.contains(m)) {
-            continue;
-        }
 
         let content = std::fs::read_to_string(file).unwrap();
         for (line_num, line) in content.lines().enumerate() {
-            // Skip comments
             let trimmed = line.trim();
             if trimmed.starts_with("//") {
                 continue;
             }
             for term in BANNED {
                 if line.contains(term) {
-                    violations.push(format!("  {}:{}: `{}`", rel.display(), line_num + 1, term,));
+                    violations.push(format!("  {}:{}: `{}`", rel.display(), line_num + 1, term));
                 }
             }
         }
