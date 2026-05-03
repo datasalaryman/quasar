@@ -38,12 +38,14 @@ fn read_program_id(path: &Path) -> Result<String, crate::error::CliError> {
     Ok(bs58::encode(&bytes[32..64]).into_string())
 }
 
-/// Find the current `declare_id!("...")` value in src/lib.rs using the IDL
-/// parser.
+/// Find the current `declare_id!("...")` value in src/lib.rs.
 fn current_program_id() -> Option<String> {
     let source = fs::read_to_string("src/lib.rs").ok()?;
-    let file = syn::parse_file(&source).ok()?;
-    quasar_idl::parser::program::extract_program_id(&file)
+    // Simple string extraction: find declare_id!("...") pattern
+    let marker = "declare_id!(\"";
+    let start = source.find(marker)? + marker.len();
+    let end = source[start..].find('\"')? + start;
+    Some(source[start..end].to_owned())
 }
 
 /// Replace the address inside `declare_id!("...")` in src/lib.rs.

@@ -1449,6 +1449,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2085,7 +2094,6 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "syn 2.0.117",
  "tempfile",
  "thiserror 2.0.18",
  "toml 0.8.23",
@@ -2097,6 +2105,7 @@ version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quasar-derive",
+ "quasar-idl-schema",
  "quasar-lang",
  "quasar-schema",
  "quasar-spl",
@@ -2138,20 +2147,41 @@ name = "quasar-idl"
 version = "0.0.0"
 dependencies = [
  "bs58",
- "proc-macro2",
+ "quasar-idl-schema",
  "quasar-schema",
  "serde",
  "serde_json",
- "syn 2.0.117",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "quasar-idl-gen"
+version = "0.0.0"
+dependencies = [
+ "quasar-idl-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "quasar-idl-schema"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
 name = "quasar-lang"
 version = "0.0.0"
 dependencies = [
+ "bs58",
  "const-crypto",
+ "inventory",
  "quasar-derive",
+ "quasar-idl-schema",
+ "serde_json",
  "solana-account-view",
  "solana-address 2.2.0",
  "solana-define-syscall 5.0.0",
@@ -2217,9 +2247,6 @@ dependencies = [
 [[package]]
 name = "quasar-schema"
 version = "0.0.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "quasar-spl"

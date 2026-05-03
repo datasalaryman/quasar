@@ -23,6 +23,7 @@ pub(crate) fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut next_discriminant: u32 = 0;
     let mut match_arms = Vec::new();
+    let mut idl_error_entries = Vec::new();
     for v in variants.iter() {
         let ident = &v.ident;
         if let Some((_, expr)) = &v.discriminant {
@@ -64,7 +65,54 @@ pub(crate) fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
         match_arms.push(quote! { #value => Ok(#name::#ident) });
+
+        let variant_name = ident.to_string();
+        // Extract doc comments from variant attrs
+        let docs: Vec<String> = v
+            .attrs
+            .iter()
+            .filter(|a| a.path().is_ident("doc"))
+            .filter_map(|a| {
+                if let syn::Meta::NameValue(nv) = &a.meta {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    }) = &nv.value
+                    {
+                        return Some(s.value().trim().to_owned());
+                    }
+                }
+                None
+            })
+            .collect();
+        let msg_expr = if docs.is_empty() {
+            quote! { None }
+        } else {
+            let joined = docs.join(" ");
+            quote! { Some(quasar_lang::idl_build::s(#joined)) }
+        };
+        idl_error_entries.push(quote! {
+            quasar_lang::idl_build::__reexport::IdlErrorDef {
+                code: #value,
+                name: quasar_lang::idl_build::s(#variant_name),
+                msg: #msg_expr,
+            }
+        });
     }
+
+    let idl_fragment = quote! {
+        #[cfg(feature = "idl-build")]
+        quasar_lang::__private_inventory::submit! {
+            quasar_lang::idl_build::ErrorFragment {
+                build: {
+                    fn __build() -> quasar_lang::idl_build::Vec<quasar_lang::idl_build::__reexport::IdlErrorDef> {
+                        quasar_lang::idl_build::vec![#(#idl_error_entries),*]
+                    }
+                    __build
+                },
+            }
+        }
+    };
 
     quote! {
         #[repr(u32)]
@@ -88,6 +136,8 @@ pub(crate) fn error_code(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
+
+        #idl_fragment
     }
     .into()
 }

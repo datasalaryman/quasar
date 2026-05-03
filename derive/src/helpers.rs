@@ -1,4 +1,25 @@
 pub(crate) use quasar_schema::{pascal_to_snake, snake_to_pascal};
+
+/// Convert snake_case to camelCase (first word lowercase, subsequent words
+/// capitalized).
+pub(crate) fn snake_to_camel(s: &str) -> String {
+    let mut result = String::new();
+    for (i, part) in s.split('_').enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            result.push_str(part);
+        } else {
+            let mut chars = part.chars();
+            if let Some(c) = chars.next() {
+                result.push(c.to_ascii_uppercase());
+                result.extend(chars);
+            }
+        }
+    }
+    result
+}
 use {
     quote::quote,
     syn::{
@@ -353,6 +374,15 @@ pub(crate) fn classify_pod_dynamic(ty: &Type) -> Option<PodDynField> {
     classify_pod_string(ty).or_else(|| classify_pod_vec(ty))
 }
 
+/// Returns true if the type is `Option<T>` where T is a dynamic pod type.
+pub(crate) fn classify_option_dynamic(ty: &Type) -> bool {
+    if let Some(inner) = extract_generic_inner_type(ty, "Option") {
+        classify_pod_dynamic(inner).is_some()
+    } else {
+        false
+    }
+}
+
 /// Classify a borrowed reference type as a compact schema field.
 /// `&str` maps to PodDynField::Str, `&[T]` maps to PodDynField::Vec.
 /// Returns None if the type is not a supported reference type.
@@ -482,4 +512,185 @@ fn pod_alias_type(ty: &Type, accept_pod_aliases: bool) -> Option<proc_macro2::To
         }
     }
     None
+}
+
+/// Convert a Rust type to a `proc_macro2::TokenStream` that constructs an
+/// `Option<IdlCodec>` at runtime (used by IDL fragment emission).
+///
+/// Returns `None` for fixed types (inferred), and `Some(IdlCodec::SizePrefixed
+/// { .. })` for dynamic types (PodString, PodVec, String, Vec with const
+/// generics).
+pub(crate) fn type_to_idl_codec_tokens(ty: &Type) -> proc_macro2::TokenStream {
+    if let Some(dyn_field) = classify_pod_dynamic(ty) {
+        match dyn_field {
+            PodDynField::Str { max, prefix_bytes } => {
+                let pfx_ty_str = match prefix_bytes {
+                    1 => "u8",
+                    2 => "u16",
+                    4 => "u32",
+                    8 => "u64",
+                    _ => "u8",
+                };
+                return quote! {
+                    Some(quasar_lang::idl_build::__reexport::IdlCodec::SizePrefixed {
+                        prefix: quasar_lang::idl_build::__reexport::ScalarRepr {
+                            ty: quasar_lang::idl_build::s(#pfx_ty_str),
+                            endian: quasar_lang::idl_build::__reexport::Endian::Le,
+                        },
+                        storage: quasar_lang::idl_build::__reexport::Storage::Tail,
+                        max_bytes: Some(#max),
+                        max_items: None,
+                        encoding: Some(quasar_lang::idl_build::s("utf8")),
+                        item: None,
+                    })
+                };
+            }
+            PodDynField::Vec {
+                max, prefix_bytes, ..
+            } => {
+                let pfx_ty_str = match prefix_bytes {
+                    1 => "u8",
+                    2 => "u16",
+                    4 => "u32",
+                    8 => "u64",
+                    _ => "u16",
+                };
+                return quote! {
+                    Some(quasar_lang::idl_build::__reexport::IdlCodec::SizePrefixed {
+                        prefix: quasar_lang::idl_build::__reexport::ScalarRepr {
+                            ty: quasar_lang::idl_build::s(#pfx_ty_str),
+                            endian: quasar_lang::idl_build::__reexport::Endian::Le,
+                        },
+                        storage: quasar_lang::idl_build::__reexport::Storage::Tail,
+                        max_bytes: None,
+                        max_items: Some(#max),
+                        encoding: None,
+                        item: None,
+                    })
+                };
+            }
+        }
+    }
+    // Check if it's Option<dynamic_type> — the option-wrapped dynamic field is also
+    // dynamic
+    if let Some(inner) = extract_generic_inner_type(ty, "Option") {
+        if let Some(dyn_field) = classify_pod_dynamic(inner) {
+            match dyn_field {
+                PodDynField::Str { max, prefix_bytes } => {
+                    let pfx_ty_str = match prefix_bytes {
+                        1 => "u8",
+                        2 => "u16",
+                        4 => "u32",
+                        8 => "u64",
+                        _ => "u8",
+                    };
+                    return quote! {
+                        Some(quasar_lang::idl_build::__reexport::IdlCodec::SizePrefixed {
+                            prefix: quasar_lang::idl_build::__reexport::ScalarRepr {
+                                ty: quasar_lang::idl_build::s(#pfx_ty_str),
+                                endian: quasar_lang::idl_build::__reexport::Endian::Le,
+                            },
+                            storage: quasar_lang::idl_build::__reexport::Storage::Tail,
+                            max_bytes: Some(#max),
+                            max_items: None,
+                            encoding: Some(quasar_lang::idl_build::s("utf8")),
+                            item: None,
+                        })
+                    };
+                }
+                PodDynField::Vec {
+                    max, prefix_bytes, ..
+                } => {
+                    let pfx_ty_str = match prefix_bytes {
+                        1 => "u8",
+                        2 => "u16",
+                        4 => "u32",
+                        8 => "u64",
+                        _ => "u16",
+                    };
+                    return quote! {
+                        Some(quasar_lang::idl_build::__reexport::IdlCodec::SizePrefixed {
+                            prefix: quasar_lang::idl_build::__reexport::ScalarRepr {
+                                ty: quasar_lang::idl_build::s(#pfx_ty_str),
+                                endian: quasar_lang::idl_build::__reexport::Endian::Le,
+                            },
+                            storage: quasar_lang::idl_build::__reexport::Storage::Tail,
+                            max_bytes: None,
+                            max_items: Some(#max),
+                            encoding: None,
+                            item: None,
+                        })
+                    };
+                }
+            }
+        }
+    }
+    // Fixed types: codec is inferred, return None
+    quote! { None }
+}
+
+/// Convert a Rust type to a `proc_macro2::TokenStream` that constructs an
+/// `IdlType` at runtime (used by IDL fragment emission).
+pub(crate) fn type_to_idl_type_tokens(ty: &Type) -> proc_macro2::TokenStream {
+    if let Type::Path(type_path) = ty {
+        if let Some(seg) = type_path.path.segments.last() {
+            let name = seg.ident.to_string();
+            let primitive = match name.as_str() {
+                "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "u128" | "i128"
+                | "bool" | "f32" | "f64" => Some(name.clone()),
+                "Address" | "Pubkey" => Some("pubkey".to_owned()),
+                _ => None,
+            };
+            if let Some(prim) = primitive {
+                return quote! {
+                    quasar_lang::idl_build::__reexport::IdlType::Primitive(quasar_lang::idl_build::s(#prim))
+                };
+            }
+            // Option<T>
+            if name == "Option" {
+                if let PathArguments::AngleBracketed(ab) = &seg.arguments {
+                    if let Some(GenericArgument::Type(inner)) = ab.args.first() {
+                        let inner_tokens = type_to_idl_type_tokens(inner);
+                        return quote! {
+                            quasar_lang::idl_build::__reexport::IdlType::Option {
+                                option: quasar_lang::idl_build::Box::new(#inner_tokens),
+                            }
+                        };
+                    }
+                }
+            }
+            // Vec<T> / PodVec<T, N>
+            if name == "Vec" || name == "PodVec" {
+                if let PathArguments::AngleBracketed(ab) = &seg.arguments {
+                    if let Some(GenericArgument::Type(inner)) = ab.args.first() {
+                        let inner_tokens = type_to_idl_type_tokens(inner);
+                        return quote! {
+                            quasar_lang::idl_build::__reexport::IdlType::Vec {
+                                vec: quasar_lang::idl_build::Box::new(#inner_tokens),
+                            }
+                        };
+                    }
+                }
+            }
+            // String / PodString
+            if name == "String" || name == "PodString" {
+                return quote! {
+                    quasar_lang::idl_build::__reexport::IdlType::Primitive(quasar_lang::idl_build::s("string"))
+                };
+            }
+            // Fall back to defined type reference
+            return quote! {
+                quasar_lang::idl_build::__reexport::IdlType::Defined {
+                    defined: quasar_lang::idl_build::__reexport::IdlDefinedRef {
+                        name: quasar_lang::idl_build::s(#name),
+                        generics: quasar_lang::idl_build::Vec::new(),
+                    },
+                }
+            };
+        }
+    }
+    // Fallback: opaque bytes
+    quote! {
+        quasar_lang::idl_build::__reexport::IdlType::Primitive(quasar_lang::idl_build::s("bytes"))
+    }
 }

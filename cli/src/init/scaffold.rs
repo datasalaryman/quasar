@@ -251,6 +251,7 @@ crate-type = ["cdylib"]
 alloc = []
 client = []
 debug = []
+idl-build = ["quasar-lang/idl-build"]
 
 [dependencies]
 quasar-lang = {quasar_lang_dep}

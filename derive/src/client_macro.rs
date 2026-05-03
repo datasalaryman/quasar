@@ -2,11 +2,17 @@
 //! No FieldShape references.
 
 use {
-    crate::helpers::extract_generic_inner_type,
     proc_macro2::TokenStream,
-    quasar_schema::{known_address_for_type, pascal_to_snake, IdlAccountItem},
+    quasar_schema::pascal_to_snake,
     quote::{format_ident, quote},
 };
+
+/// Internal account descriptor for client macro generation.
+struct AccountDescriptor {
+    name: String,
+    writable: bool,
+    signer: bool,
+}
 
 pub fn generate_accounts_macro(
     name: &syn::Ident,
@@ -86,12 +92,12 @@ pub fn generate_accounts_macro(
     }
 }
 
-fn emit_account_field(descriptor: &IdlAccountItem) -> TokenStream {
+fn emit_account_field(descriptor: &AccountDescriptor) -> TokenStream {
     let ident: syn::Ident = syn::parse_str(&descriptor.name).expect("valid account field name");
     quote! { pub #ident: quasar_lang::prelude::Address, }
 }
 
-fn emit_account_meta(descriptor: &IdlAccountItem) -> TokenStream {
+fn emit_account_meta(descriptor: &AccountDescriptor) -> TokenStream {
     let ident: syn::Ident = syn::parse_str(&descriptor.name).expect("valid account field name");
     if descriptor.writable {
         let signer = descriptor.signer;
@@ -108,26 +114,18 @@ fn emit_account_meta(descriptor: &IdlAccountItem) -> TokenStream {
 
 fn describe_accounts(
     semantics: &[crate::accounts::resolve::FieldSemantics],
-) -> Vec<IdlAccountItem> {
+) -> Vec<AccountDescriptor> {
     semantics
         .iter()
         .map(|sem| {
             let ty = &sem.core.effective_ty;
             // Detect signer/program/sysvar from the type, not from FieldShape
             let is_signer = is_signer_type(ty);
-            let is_program = is_program_type(ty);
-            let is_sysvar = is_sysvar_type(ty);
 
-            IdlAccountItem {
+            AccountDescriptor {
                 name: sem.core.ident.to_string(),
                 writable: sem.is_writable(),
                 signer: is_signer || client_requires_signer(sem),
-                optional: sem.core.optional,
-                docs: vec![],
-                pda: None, // PDA info now opaque via AddressVerify
-                address: known_address(ty, is_program, is_sysvar).map(str::to_owned),
-                relations: vec![],
-                migration: None,
             }
         })
         .collect()
@@ -142,41 +140,9 @@ fn is_signer_type(ty: &syn::Type) -> bool {
     type_base_name(ty).is_some_and(|n| n == "Signer")
 }
 
-fn is_program_type(ty: &syn::Type) -> bool {
-    extract_generic_inner_type(ty, "Program").is_some()
-        || extract_generic_inner_type(ty, "Interface").is_some()
-}
-
-fn is_sysvar_type(ty: &syn::Type) -> bool {
-    extract_generic_inner_type(ty, "Sysvar").is_some()
-}
-
 fn type_base_name(ty: &syn::Type) -> Option<&syn::Ident> {
     match ty {
         syn::Type::Path(tp) => tp.path.segments.last().map(|s| &s.ident),
         _ => None,
-    }
-}
-
-fn known_address(ty: &syn::Type, is_program: bool, is_sysvar: bool) -> Option<&'static str> {
-    let inner_name = if is_program {
-        extract_generic_inner_type(ty, "Program")
-            .or_else(|| extract_generic_inner_type(ty, "Interface"))
-    } else if is_sysvar {
-        extract_generic_inner_type(ty, "Sysvar")
-    } else {
-        None
-    };
-
-    let inner_str = inner_name
-        .and_then(|t| type_base_name(t))
-        .map(|i| i.to_string());
-
-    if is_program {
-        known_address_for_type("Program", inner_str.as_deref())
-    } else if is_sysvar {
-        known_address_for_type("Sysvar", inner_str.as_deref())
-    } else {
-        None
     }
 }

@@ -1,5 +1,5 @@
 use {
-    crate::types::{Idl, IdlSeed, IdlType, IdlTypeDef},
+    crate::types::{Idl, IdlCodec, IdlPdaSeed, IdlResolver, IdlType, IdlTypeDef},
     quasar_schema::pascal_to_snake,
     std::{collections::HashMap, fmt::Write},
 };
@@ -9,7 +9,7 @@ use {
 /// Produces a single header depending on `caravel.h` for Pubkey, AccountMeta,
 /// and Instruction.
 pub fn generate_c_client(idl: &Idl) -> String {
-    let prefix = idl.metadata.client_name().replace('-', "_");
+    let prefix = idl.metadata.client_name(&idl.name).replace('-', "_");
     let guard = format!("{}_CLIENT_H", prefix.to_ascii_uppercase());
     let mut out = String::new();
 
@@ -92,11 +92,11 @@ fn emit_type_defs(out: &mut String, prefix: &str, types: &[IdlTypeDef]) {
     for td in types {
         let snake = pascal_to_snake(&td.name);
         writeln!(out, "typedef struct {{").unwrap();
-        if td.ty.fields.is_empty() {
+        if td.fields.is_empty() {
             writeln!(out, "    uint8_t _pad;").unwrap();
         }
-        for field in &td.ty.fields {
-            emit_struct_field(out, prefix, &field.name, &field.ty);
+        for field in &td.fields {
+            emit_struct_field(out, prefix, &field.name, &field.ty, field.codec.as_ref());
         }
         writeln!(out, "}} {prefix}_{snake}_t;\n").unwrap();
     }
@@ -104,7 +104,7 @@ fn emit_type_defs(out: &mut String, prefix: &str, types: &[IdlTypeDef]) {
 
 fn emit_decode_fns(out: &mut String, prefix: &str, types: &[IdlTypeDef]) {
     for td in types {
-        if td.ty.fields.is_empty() {
+        if td.fields.is_empty() {
             continue;
         }
         let snake = pascal_to_snake(&td.name);
@@ -115,8 +115,14 @@ fn emit_decode_fns(out: &mut String, prefix: &str, types: &[IdlTypeDef]) {
         )
         .unwrap();
         writeln!(out, "    uint64_t offset = 0;").unwrap();
-        for field in &td.ty.fields {
-            out.push_str(&decode_field_expr(&field.name, &field.ty, 1, types));
+        for field in &td.fields {
+            out.push_str(&decode_field_expr(
+                &field.name,
+                &field.ty,
+                field.codec.as_ref(),
+                1,
+                types,
+            ));
         }
         out.push_str("}\n\n");
     }
@@ -127,7 +133,11 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
 
     for ix in &idl.instructions {
         let ix_snake = pascal_to_snake(&ix.name);
-        let user_accounts: Vec<_> = ix.accounts.iter().filter(|a| a.pda.is_none()).collect();
+        let user_accounts: Vec<_> = ix
+            .accounts
+            .iter()
+            .filter(|a| !matches!(a.resolver, IdlResolver::Pda { .. }))
+            .collect();
 
         writeln!(out, "typedef struct {{").unwrap();
         for acc in &user_accounts {
@@ -144,13 +154,13 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
             writeln!(out, "    uint8_t _pad;").unwrap();
         }
         for arg in &ix.args {
-            emit_struct_field(out, prefix, &arg.name, &arg.ty);
+            emit_struct_field(out, prefix, &arg.name, &arg.ty, arg.codec.as_ref());
         }
         writeln!(out, "}} {prefix}_{ix_snake}_args_t;\n").unwrap();
 
         let disc_len = ix.discriminator.len();
         let num_accounts = ix.accounts.len();
-        if ix.has_remaining {
+        if ix.remaining_accounts.is_some() {
             writeln!(
                 out,
                 "static inline uint64_t {prefix}_{ix_snake}_ix(\n    \
@@ -171,7 +181,11 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
             .unwrap();
         }
 
-        let pda_count = ix.accounts.iter().filter(|a| a.pda.is_some()).count();
+        let pda_count = ix
+            .accounts
+            .iter()
+            .filter(|a| matches!(a.resolver, IdlResolver::Pda { .. }))
+            .count();
         if pda_count > 0 {
             writeln!(out, "    Pubkey pda_keys[{pda_count}];").unwrap();
         }
@@ -180,7 +194,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         {
             let mut idx = 0usize;
             for acc in &ix.accounts {
-                if acc.pda.is_some() {
+                if matches!(acc.resolver, IdlResolver::Pda { .. }) {
                     pda_name_to_idx.insert(acc.name.as_str(), idx);
                     idx += 1;
                 }
@@ -190,8 +204,8 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         // derive pdas
         let mut pda_idx = 0usize;
         for acc in &ix.accounts {
-            if let Some(ref pda) = acc.pda {
-                emit_pda_derivation(out, pda, &upper, pda_idx, &pda_name_to_idx);
+            if let IdlResolver::Pda { ref seeds, .. } = acc.resolver {
+                emit_pda_derivation(out, seeds, &upper, pda_idx, &pda_name_to_idx);
                 pda_idx += 1;
             }
         }
@@ -199,7 +213,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         // build account metas
         pda_idx = 0;
         for (i, acc) in ix.accounts.iter().enumerate() {
-            let key_expr = if acc.pda.is_some() {
+            let key_expr = if matches!(acc.resolver, IdlResolver::Pda { .. }) {
                 let expr = format!("&pda_keys[{pda_idx}]");
                 pda_idx += 1;
                 expr
@@ -207,7 +221,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
                 format!("accounts->{}", acc.name)
             };
 
-            let helper = meta_helper(acc.writable, acc.signer);
+            let helper = meta_helper(acc.writable.is_true(), acc.signer.is_true());
             writeln!(out, "    meta_buf[{i}] = {helper}({key_expr});").unwrap();
         }
 
@@ -216,7 +230,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         let args_overhead: usize = ix
             .args
             .iter()
-            .map(|a| static_data_overhead(&a.ty, &idl.types))
+            .map(|a| static_data_overhead(&a.ty, a.codec.as_ref(), &idl.types))
             .sum();
         let min_data = disc_len + args_overhead;
         writeln!(out, "    if (data_buf_len < {min_data}) return 0;").unwrap();
@@ -232,6 +246,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
                 out.push_str(&serialize_field_expr(
                     &format!("args->{}", arg.name),
                     &arg.ty,
+                    arg.codec.as_ref(),
                     &idl.types,
                     1,
                 ));
@@ -239,7 +254,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         }
 
         // append remaining accounts
-        if ix.has_remaining {
+        if ix.remaining_accounts.is_some() {
             writeln!(
                 out,
                 "    for (uint64_t i = 0; i < remaining_len; i++) meta_buf[{num_accounts} + i] = \
@@ -255,7 +270,7 @@ fn emit_instructions(out: &mut String, prefix: &str, idl: &Idl) {
         )
         .unwrap();
         writeln!(out, "    ix_out->accounts = meta_buf;").unwrap();
-        if ix.has_remaining {
+        if ix.remaining_accounts.is_some() {
             writeln!(
                 out,
                 "    ix_out->accounts_len = {num_accounts} + remaining_len;"
@@ -282,17 +297,17 @@ fn meta_helper(writable: bool, signer: bool) -> &'static str {
 
 fn emit_pda_derivation(
     out: &mut String,
-    pda: &crate::types::IdlPda,
+    seeds: &[IdlPdaSeed],
     upper_prefix: &str,
     pda_idx: usize,
     pda_name_to_idx: &HashMap<&str, usize>,
 ) {
-    let seed_count = pda.seeds.len();
+    let seed_count = seeds.len();
     writeln!(out, "    {{").unwrap();
     writeln!(out, "        SignerSeed seeds[{seed_count}];").unwrap();
-    for (i, seed) in pda.seeds.iter().enumerate() {
+    for (i, seed) in seeds.iter().enumerate() {
         match seed {
-            IdlSeed::Const { value } => {
+            IdlPdaSeed::Const { value } => {
                 let hex = super::format_disc_hex(value);
                 let len = value.len();
                 writeln!(
@@ -302,7 +317,7 @@ fn emit_pda_derivation(
                 )
                 .unwrap();
             }
-            IdlSeed::Account { path } => {
+            IdlPdaSeed::Account { path } => {
                 if let Some(&ref_idx) = pda_name_to_idx.get(path.as_str()) {
                     writeln!(
                         out,
@@ -317,7 +332,7 @@ fn emit_pda_derivation(
                     .unwrap();
                 }
             }
-            IdlSeed::Arg { path } => {
+            IdlPdaSeed::Arg { path, .. } => {
                 writeln!(
                     out,
                     "        seeds[{i}].addr = (const uint8_t *)&args->{path}; seeds[{i}].len = \
@@ -337,7 +352,7 @@ fn emit_pda_derivation(
     writeln!(out, "    }}").unwrap();
 }
 
-fn emit_error_codes(out: &mut String, prefix: &str, errors: &[crate::types::IdlError]) {
+fn emit_error_codes(out: &mut String, prefix: &str, errors: &[crate::types::IdlErrorDef]) {
     if errors.is_empty() {
         return;
     }
@@ -366,27 +381,31 @@ fn c_type(ty: &IdlType, prefix: &str) -> String {
             "f64" => "double".into(),
             "pubkey" => "Pubkey".into(),
             "string" => "uint8_t *".into(),
-            _ if p.starts_with('[') => "uint8_t".into(),
             _ => "uint8_t *".into(),
         },
         IdlType::Option { option } => c_type(option, prefix),
-        IdlType::DynString { .. } => "uint8_t *".into(),
-        IdlType::DynVec { .. } => "uint8_t *".into(),
+        IdlType::Vec { .. } => "uint8_t *".into(),
+        IdlType::Array {
+            array: (_inner, size),
+        } => format!("uint8_t[{size}]"),
         IdlType::Defined { defined } => {
-            format!("{prefix}_{}_t", pascal_to_snake(defined))
+            format!("{prefix}_{}_t", pascal_to_snake(&defined.name))
+        }
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in C codegen", generic)
         }
     }
 }
 
 fn is_fixed_array_type(ty: &IdlType) -> bool {
-    matches!(ty, IdlType::Primitive(p) if p.starts_with('['))
+    matches!(ty, IdlType::Array { .. })
 }
 
 fn fixed_array_size(ty: &IdlType) -> usize {
     match ty {
-        IdlType::Primitive(p) if p.starts_with('[') => {
-            super::parse_fixed_array_size(p).unwrap_or(1)
-        }
+        IdlType::Array {
+            array: (_inner, size),
+        } => *size,
         _ => 1,
     }
 }
@@ -395,15 +414,29 @@ fn is_128bit(ty: &IdlType) -> bool {
     matches!(ty, IdlType::Primitive(p) if p == "u128" || p == "i128")
 }
 
-fn emit_struct_field(out: &mut String, prefix: &str, name: &str, ty: &IdlType) {
-    let (is_opt, inner) = match ty {
-        IdlType::Option { option } => (true, option.as_ref()),
-        other => (false, other),
+fn is_dynamic_with_codec(ty: &IdlType, codec: Option<&IdlCodec>) -> bool {
+    match ty {
+        IdlType::Primitive(p) if p == "string" && codec.is_some() => true,
+        IdlType::Vec { .. } if codec.is_some() => true,
+        _ => false,
+    }
+}
+
+fn emit_struct_field(
+    out: &mut String,
+    prefix: &str,
+    name: &str,
+    ty: &IdlType,
+    codec: Option<&IdlCodec>,
+) {
+    let (is_opt, inner, inner_codec) = match ty {
+        IdlType::Option { option } => (true, option.as_ref(), None),
+        other => (false, other, codec),
     };
     if is_opt {
         writeln!(out, "    bool {name}_present;").unwrap();
     }
-    if matches!(inner, IdlType::DynString { .. } | IdlType::DynVec { .. }) {
+    if is_dynamic_with_codec(inner, inner_codec) {
         writeln!(out, "    const uint8_t *{name};").unwrap();
         writeln!(out, "    uint32_t {name}_len;").unwrap();
     } else if is_fixed_array_type(inner) {
@@ -416,7 +449,7 @@ fn emit_struct_field(out: &mut String, prefix: &str, name: &str, ty: &IdlType) {
     }
 }
 
-fn static_data_overhead(ty: &IdlType, types: &[IdlTypeDef]) -> usize {
+fn static_data_overhead(ty: &IdlType, codec: Option<&IdlCodec>, types: &[IdlTypeDef]) -> usize {
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "bool" | "u8" | "i8" => 1,
@@ -425,23 +458,39 @@ fn static_data_overhead(ty: &IdlType, types: &[IdlTypeDef]) -> usize {
             "u64" | "i64" | "f64" => 8,
             "u128" | "i128" => 16,
             "pubkey" => 32,
-            other if other.starts_with('[') => super::parse_fixed_array_size(other).unwrap_or(0),
+            "string" => {
+                if let Some(c) = codec {
+                    c.prefix_bytes()
+                } else {
+                    4 // borsh-style u32 prefix
+                }
+            }
             _ => 0,
         },
-        IdlType::Option { option } => 1 + static_data_overhead(option, types),
+        IdlType::Option { option } => 1 + static_data_overhead(option, None, types),
         IdlType::Defined { defined } => types
             .iter()
-            .find(|t| t.name == *defined)
+            .find(|t| t.name == defined.name)
             .map(|td| {
-                td.ty
-                    .fields
+                td.fields
                     .iter()
-                    .map(|f| static_data_overhead(&f.ty, types))
+                    .map(|f| static_data_overhead(&f.ty, f.codec.as_ref(), types))
                     .sum()
             })
             .unwrap_or(0),
-        IdlType::DynString { ref string } => string.prefix_bytes,
-        IdlType::DynVec { ref vec } => vec.prefix_bytes,
+        IdlType::Vec { .. } => {
+            if let Some(c) = codec {
+                c.prefix_bytes()
+            } else {
+                4 // borsh-style u32 prefix
+            }
+        }
+        IdlType::Array {
+            array: (_inner, size),
+        } => *size,
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in C codegen", generic)
+        }
     }
 }
 
@@ -492,8 +541,31 @@ fn decode_dyn_bytes(name: &str, prefix_bytes: usize, t: &str) -> String {
     }
 }
 
-fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef], indent: usize) -> String {
+fn serialize_field_expr(
+    name: &str,
+    ty: &IdlType,
+    codec: Option<&IdlCodec>,
+    types: &[IdlTypeDef],
+    indent: usize,
+) -> String {
     let t = "    ".repeat(indent);
+
+    // Handle dynamic string with codec
+    if let IdlType::Primitive(p) = ty {
+        if p == "string" {
+            if let Some(c) = codec {
+                return serialize_dyn_bytes(name, c.prefix_bytes(), &t);
+            }
+        }
+    }
+
+    // Handle Vec with codec
+    if let IdlType::Vec { .. } = ty {
+        if let Some(c) = codec {
+            return serialize_dyn_bytes(name, c.prefix_bytes(), &t);
+        }
+    }
+
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "bool" => format!("{t}data_buf[off++] = {name} ? 1 : 0;\n"),
@@ -540,46 +612,80 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef], indent: 
             "pubkey" => format!(
                 "{t}for (int i = 0; i < 32; i++) data_buf[off + i] = {name}.bytes[i]; off += 32;\n"
             ),
-            other if other.starts_with('[') => {
-                let size = super::parse_fixed_array_size(other).unwrap_or(1);
-                format!(
-                    "{t}for (int i = 0; i < {size}; i++) data_buf[off + i] = {name}[i]; off += \
-                     {size};\n"
-                )
+            "string" => {
+                // Plain string without codec — u32 prefix (borsh-style)
+                serialize_dyn_bytes(name, 4, &t)
             }
             _ => format!("{t}/* unsupported type for {name} */\n"),
         },
         IdlType::Option { option } => {
             let ti = "    ".repeat(indent + 1);
-            let inner = serialize_field_expr(name, option, types, indent + 1);
+            let inner = serialize_field_expr(name, option, None, types, indent + 1);
             format!(
                 "{t}if ({name}_present) {{\n{ti}data_buf[off++] = 1;\n{inner}{t}}} else \
                  {{\n{ti}data_buf[off++] = 0;\n{t}}}\n"
             )
         }
         IdlType::Defined { defined } => {
-            if let Some(td) = types.iter().find(|t| t.name == *defined) {
+            if let Some(td) = types.iter().find(|t| t.name == defined.name) {
                 let mut result = String::new();
-                for field in &td.ty.fields {
+                for field in &td.fields {
                     result.push_str(&serialize_field_expr(
                         &format!("{name}.{f}", f = field.name),
                         &field.ty,
+                        field.codec.as_ref(),
                         types,
                         indent,
                     ));
                 }
                 result
             } else {
-                format!("{t}/* unknown defined type: {defined} */\n")
+                format!("{t}/* unknown defined type: {} */\n", defined.name)
             }
         }
-        IdlType::DynString { ref string } => serialize_dyn_bytes(name, string.prefix_bytes, &t),
-        IdlType::DynVec { ref vec } => serialize_dyn_bytes(name, vec.prefix_bytes, &t),
+        IdlType::Vec { .. } => {
+            // Vec without codec — u32 prefix (borsh-style)
+            serialize_dyn_bytes(name, 4, &t)
+        }
+        IdlType::Array {
+            array: (_inner, size),
+        } => {
+            format!(
+                "{t}for (int i = 0; i < {size}; i++) data_buf[off + i] = {name}[i]; off += \
+                 {size};\n"
+            )
+        }
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in C codegen", generic)
+        }
     }
 }
 
-fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef]) -> String {
+fn decode_field_expr(
+    name: &str,
+    ty: &IdlType,
+    codec: Option<&IdlCodec>,
+    depth: usize,
+    types: &[IdlTypeDef],
+) -> String {
     let t = "    ".repeat(depth);
+
+    // Handle dynamic string with codec
+    if let IdlType::Primitive(p) = ty {
+        if p == "string" {
+            if let Some(c) = codec {
+                return decode_dyn_bytes(name, c.prefix_bytes(), &t);
+            }
+        }
+    }
+
+    // Handle Vec with codec
+    if let IdlType::Vec { .. } = ty {
+        if let Some(c) = codec {
+            return decode_dyn_bytes(name, c.prefix_bytes(), &t);
+        }
+    }
+
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "bool" => format!("{t}out->{name} = data[offset] != 0; offset += 1;\n"),
@@ -629,17 +735,26 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 "{t}for (int i = 0; i < 32; i++) out->{name}.bytes[i] = data[offset + i]; offset \
                  += 32;\n"
             ),
-            other if other.starts_with('[') => {
-                let size = super::parse_fixed_array_size(other).unwrap_or(1);
-                format!(
-                    "{t}for (int i = 0; i < {size}; i++) out->{name}[i] = data[offset + i]; \
-                     offset += {size};\n"
-                )
+            "string" => {
+                // Plain string without codec — u32 prefix (borsh-style)
+                decode_dyn_bytes(name, 4, &t)
             }
             _ => format!("{t}/* unsupported decode for {name} */\n"),
         },
+        IdlType::Vec { .. } => {
+            // Vec without codec — u32 prefix (borsh-style)
+            decode_dyn_bytes(name, 4, &t)
+        }
+        IdlType::Array {
+            array: (_inner, size),
+        } => {
+            format!(
+                "{t}for (int i = 0; i < {size}; i++) out->{name}[i] = data[offset + i]; offset += \
+                 {size};\n"
+            )
+        }
         IdlType::Option { option } => {
-            let inner = decode_field_expr(name, option, depth + 1, types);
+            let inner = decode_field_expr(name, option, None, depth + 1, types);
             let ti = "    ".repeat(depth + 1);
             format!(
                 "{t}if (data[offset] != 0) {{\n{ti}offset += 1;\n{ti}out->{name}_present = \
@@ -647,22 +762,24 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
             )
         }
         IdlType::Defined { defined } => {
-            if let Some(td) = types.iter().find(|t| t.name == *defined) {
+            if let Some(td) = types.iter().find(|t| t.name == defined.name) {
                 let mut result = String::new();
-                for field in &td.ty.fields {
+                for field in &td.fields {
                     result.push_str(&decode_field_expr(
                         &format!("{name}.{f}", f = field.name),
                         &field.ty,
+                        field.codec.as_ref(),
                         depth,
                         types,
                     ));
                 }
                 result
             } else {
-                format!("{t}/* unknown defined type: {defined} */\n")
+                format!("{t}/* unknown defined type: {} */\n", defined.name)
             }
         }
-        IdlType::DynString { ref string } => decode_dyn_bytes(name, string.prefix_bytes, &t),
-        IdlType::DynVec { ref vec } => decode_dyn_bytes(name, vec.prefix_bytes, &t),
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in C codegen", generic)
+        }
     }
 }

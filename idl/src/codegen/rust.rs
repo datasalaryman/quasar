@@ -1,6 +1,9 @@
 use {
     super::model::ProgramModel,
-    crate::types::{Idl, IdlAccountItem, IdlField, IdlSeed, IdlType},
+    crate::types::{
+        AccountFlag, Idl, IdlAccountNode, IdlCodec, IdlFieldDef, IdlLayout, IdlPdaSeed,
+        IdlResolver, IdlType,
+    },
     quasar_schema::{
         camel_to_pascal, camel_to_snake, pascal_to_snake, snake_to_pascal,
         to_screaming_snake as pascal_to_screaming_snake,
@@ -12,13 +15,6 @@ use {
 };
 
 /// Generate Cargo.toml content for the standalone client crate.
-///
-/// `quasar-lang` is sourced from the GitHub master branch rather than
-/// crates.io so that source-build users always get a `quasar-lang` that
-/// matches the CLI they built. The wincode and solana-address versions are
-/// exact-pinned to avoid the wincode 0.4/0.5 split (`solana-address >= 2.3`
-/// depends on wincode 0.5, but the generated code and quasar-lang both
-/// target wincode 0.4).
 pub fn generate_cargo_toml(name: &str, version: &str, has_pdas: bool) -> String {
     let solana_address = if has_pdas {
         r#"solana-address = { version = "=2.2.0", features = ["curve25519", "wincode"] }"#
@@ -43,13 +39,12 @@ solana-instruction = "3"
 pub fn generate_cargo_toml_for_program(model: &ProgramModel<'_>) -> String {
     generate_cargo_toml(
         &model.identity.client_name,
-        &model.idl.metadata.version,
+        &model.idl.version,
         model.features.has_pdas,
     )
 }
 
 /// Check whether the IDL has any resolvable PDA annotations.
-/// Used by the CLI to decide whether `generate_cargo_toml` needs PDA deps.
 pub fn has_pdas(idl: &Idl) -> bool {
     ProgramModel::new(idl).features.has_pdas
 }
@@ -57,18 +52,16 @@ pub fn has_pdas(idl: &Idl) -> bool {
 /// Generate a standalone Rust client crate from the IDL.
 ///
 /// Returns a `Vec<(relative_path, file_content)>` where paths are relative to
-/// the client crate `src/` directory (e.g. `"lib.rs"`,
-/// `"instructions/mod.rs"`).
+/// the client crate `src/` directory.
 pub fn generate_client(idl: &Idl) -> Vec<(String, String)> {
     let model = ProgramModel::new(idl);
     let mut files: Vec<(String, String)> = Vec::new();
 
-    // Build type map for custom data types. The IDL already resolved these
-    // transitively in build_idl — this is the single source of truth.
-    let type_map: HashMap<String, Vec<IdlField>> = idl
+    // Build type map for custom data types.
+    let type_map: HashMap<String, Vec<IdlFieldDef>> = idl
         .types
         .iter()
-        .map(|td| (td.name.clone(), td.ty.fields.clone()))
+        .map(|td| (td.name.clone(), td.fields.clone()))
         .collect();
 
     let has_instructions = model.features.has_instructions;
@@ -214,7 +207,7 @@ fn emit_lib_rs(
 
 fn emit_instructions(
     idl: &Idl,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) -> (String, Vec<(String, String)>) {
     let mut mod_rs = String::new();
     let mut ix_files: Vec<(String, String)> = Vec::new();
@@ -225,7 +218,12 @@ fn emit_instructions(
     let mut needs_address = false;
     for ix in &idl.instructions {
         for arg in &ix.args {
-            collect_wrapper_needs(&arg.ty, &mut needs_dyn_string, &mut needs_dyn_vec);
+            collect_wrapper_needs(
+                &arg.ty,
+                &arg.codec,
+                &mut needs_dyn_string,
+                &mut needs_dyn_vec,
+            );
             if field_needs_address(&arg.ty) {
                 needs_address = true;
             }
@@ -270,7 +268,7 @@ fn emit_instructions(
                     mod_rs,
                     "{}: {}",
                     camel_to_snake(&arg.name),
-                    rust_field_type(&arg.ty)
+                    rust_field_type(&arg.ty, &arg.codec)
                 )
                 .expect("write to String");
             }
@@ -282,7 +280,6 @@ fn emit_instructions(
     // decode_instruction function
     mod_rs.push_str("pub fn decode_instruction(data: &[u8]) -> Option<ProgramInstruction> {\n");
 
-    // All instructions share the same discriminator width (enforced by the parser).
     let disc_len = idl
         .instructions
         .first()
@@ -314,19 +311,20 @@ fn emit_instructions(
             writeln!(mod_rs, "            let payload = &data[{}..];", disc_len)
                 .expect("write to String");
 
-            let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty));
+            let is_compact = matches!(ix.layout, Some(IdlLayout::Compact { .. }));
+            let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty, &a.codec));
 
-            if has_dyn {
+            if has_dyn && is_compact {
                 // Compact layout: [fixed fields][all dynamic prefixes][all dynamic data]
                 let fixed_args: Vec<_> = ix
                     .args
                     .iter()
-                    .filter(|a| !is_direct_dynamic(&a.ty))
+                    .filter(|a| !is_direct_dynamic(&a.ty, &a.codec))
                     .collect();
                 let dyn_args: Vec<_> = ix
                     .args
                     .iter()
-                    .filter(|a| is_direct_dynamic(&a.ty))
+                    .filter(|a| is_direct_dynamic(&a.ty, &a.codec))
                     .collect();
 
                 mod_rs.push_str("            let mut offset = 0usize;\n");
@@ -334,7 +332,7 @@ fn emit_instructions(
                 // Phase 1: read fixed fields
                 for arg in &fixed_args {
                     let name = camel_to_snake(&arg.name);
-                    let rty = rust_field_type(&arg.ty);
+                    let rty = rust_field_type(&arg.ty, &arg.codec);
                     writeln!(
                         mod_rs,
                         "            let {name}: {rty} = \
@@ -351,7 +349,7 @@ fn emit_instructions(
                 // Phase 2: read length table (all dynamic prefixes)
                 for arg in &dyn_args {
                     let name = camel_to_snake(&arg.name);
-                    let pfx = dynamic_prefix_bytes(&arg.ty);
+                    let pfx = dynamic_prefix_bytes_from_codec(&arg.codec);
                     writeln!(mod_rs, "            let {name}_len = {{").expect("write to String");
                     writeln!(mod_rs, "                let mut buf = [0u8; 8];")
                         .expect("write to String");
@@ -370,47 +368,43 @@ fn emit_instructions(
                 // Phase 3: read tail data
                 for arg in &dyn_args {
                     let name = camel_to_snake(&arg.name);
-                    let rty = rust_field_type(&arg.ty);
-                    match &arg.ty {
-                        IdlType::DynString { .. } => {
-                            writeln!(
-                                mod_rs,
-                                "            let {name}: {rty} = payload[offset..offset + \
-                                 {name}_len].to_vec().into();"
-                            )
+                    let rty = rust_field_type(&arg.ty, &arg.codec);
+                    if is_dynamic_string(&arg.ty) {
+                        writeln!(
+                            mod_rs,
+                            "            let {name}: {rty} = payload[offset..offset + \
+                             {name}_len].to_vec().into();"
+                        )
+                        .expect("write to String");
+                        writeln!(mod_rs, "            offset += {name}_len;")
                             .expect("write to String");
-                            writeln!(mod_rs, "            offset += {name}_len;")
-                                .expect("write to String");
-                        }
-                        IdlType::DynVec { vec } => {
-                            let item_ty = rust_field_type(&vec.items);
-                            writeln!(mod_rs, "            let {name}: {rty} = {{")
-                                .expect("write to String");
-                            writeln!(
-                                mod_rs,
-                                "                let mut items = Vec::with_capacity({name}_len);"
-                            )
+                    } else if is_dynamic_vec(&arg.ty) {
+                        let item_ty = rust_field_type(vec_inner_type(&arg.ty).unwrap(), &None);
+                        writeln!(mod_rs, "            let {name}: {rty} = {{")
                             .expect("write to String");
-                            writeln!(mod_rs, "                for _ in 0..{name}_len {{")
-                                .expect("write to String");
-                            writeln!(
-                                mod_rs,
-                                "                    let item: {item_ty} = \
-                                 wincode::deserialize(&payload[offset..]).ok()?;"
-                            )
+                        writeln!(
+                            mod_rs,
+                            "                let mut items = Vec::with_capacity({name}_len);"
+                        )
+                        .expect("write to String");
+                        writeln!(mod_rs, "                for _ in 0..{name}_len {{")
                             .expect("write to String");
-                            writeln!(
-                                mod_rs,
-                                "                    offset += \
-                                 wincode::serialized_size(&item).ok()? as usize;"
-                            )
-                            .expect("write to String");
-                            mod_rs.push_str("                    items.push(item);\n");
-                            mod_rs.push_str("                }\n");
-                            mod_rs.push_str("                items.into()\n");
-                            mod_rs.push_str("            };\n");
-                        }
-                        _ => unreachable!(),
+                        writeln!(
+                            mod_rs,
+                            "                    let item: {item_ty} = \
+                             wincode::deserialize(&payload[offset..]).ok()?;"
+                        )
+                        .expect("write to String");
+                        writeln!(
+                            mod_rs,
+                            "                    offset += wincode::serialized_size(&item).ok()? \
+                             as usize;"
+                        )
+                        .expect("write to String");
+                        mod_rs.push_str("                    items.push(item);\n");
+                        mod_rs.push_str("                }\n");
+                        mod_rs.push_str("                items.into()\n");
+                        mod_rs.push_str("            };\n");
                     }
                 }
             } else {
@@ -421,7 +415,7 @@ fn emit_instructions(
                 }
                 for (i, arg) in ix.args.iter().enumerate() {
                     let name = camel_to_snake(&arg.name);
-                    let rty = rust_field_type(&arg.ty);
+                    let rty = rust_field_type(&arg.ty, &arg.codec);
                     if arg_count == 1 {
                         writeln!(
                             mod_rs,
@@ -480,14 +474,15 @@ fn emit_instructions(
 
 fn emit_single_instruction(
     ix: &crate::types::IdlInstruction,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) -> String {
     let mut out = String::new();
 
     let struct_name = camel_to_pascal(&ix.name);
 
     // --- Per-file imports ---
-    if ix.has_remaining {
+    let has_remaining = ix.remaining_accounts.is_some();
+    if has_remaining {
         out.push_str("use std::vec::Vec;\n");
     }
 
@@ -495,7 +490,11 @@ fn emit_single_instruction(
     out.push_str("use solana_instruction::{AccountMeta, Instruction};\n");
     out.push_str("use crate::ID;\n");
 
-    emit_field_imports(&mut out, ix.args.iter().map(|a| &a.ty), type_map);
+    emit_field_imports(
+        &mut out,
+        ix.args.iter().map(|a| (&a.ty, &a.codec)),
+        type_map,
+    );
 
     out.push('\n');
 
@@ -512,12 +511,12 @@ fn emit_single_instruction(
             out,
             "    pub {}: {},",
             camel_to_snake(&arg.name),
-            rust_field_type(&arg.ty)
+            rust_field_type(&arg.ty, &arg.codec)
         )
         .expect("write to String");
     }
 
-    if ix.has_remaining {
+    if has_remaining {
         out.push_str("    pub remaining_accounts: Vec<AccountMeta>,\n");
     }
 
@@ -537,7 +536,7 @@ fn emit_single_instruction(
     )
     .expect("write to String");
 
-    if ix.has_remaining {
+    if has_remaining {
         out.push_str("        let mut accounts = vec![\n");
     } else {
         out.push_str("        let accounts = vec![\n");
@@ -546,13 +545,14 @@ fn emit_single_instruction(
         writeln!(out, "            {},", account_meta_expr(account)).expect("write to String");
     }
     out.push_str("        ];\n");
-    if ix.has_remaining {
+    if has_remaining {
         out.push_str("        accounts.extend(ix.remaining_accounts);\n");
     }
 
     // Instruction data — compact wire format:
     //   [disc][fixed fields][all dynamic prefixes][all dynamic data]
     let disc_str = super::format_disc_decimal(&ix.discriminator);
+    let is_compact = matches!(ix.layout, Some(IdlLayout::Compact { .. }));
 
     if ix.args.is_empty() {
         writeln!(out, "        let data = vec![{}];", disc_str).expect("write to String");
@@ -562,12 +562,12 @@ fn emit_single_instruction(
         let fixed_args: Vec<_> = ix
             .args
             .iter()
-            .filter(|a| !is_direct_dynamic(&a.ty))
+            .filter(|a| !is_direct_dynamic(&a.ty, &a.codec))
             .collect();
         let dyn_args: Vec<_> = ix
             .args
             .iter()
-            .filter(|a| is_direct_dynamic(&a.ty))
+            .filter(|a| is_direct_dynamic(&a.ty, &a.codec))
             .collect();
 
         // Phase 1: fixed fields (serialised via wincode — order preserving)
@@ -581,54 +581,61 @@ fn emit_single_instruction(
             .expect("write to String");
         }
 
-        if !dyn_args.is_empty() {
+        if !dyn_args.is_empty() && is_compact {
             // Phase 2: length table — all dynamic prefixes grouped together
             for arg in &dyn_args {
                 let name = camel_to_snake(&arg.name);
-                let pfx = dynamic_prefix_bytes(&arg.ty);
-                match &arg.ty {
-                    IdlType::DynString { .. } => {
-                        // DynString byte length via public accessor
-                        writeln!(
-                            out,
-                            "        data.extend_from_slice(&(ix.{name}.len() as \
-                             u64).to_le_bytes()[..{pfx}]);"
-                        )
-                        .expect("write to String");
-                    }
-                    IdlType::DynVec { .. } => {
-                        // DynVec inner items: .0 is Vec<T>
-                        writeln!(
-                            out,
-                            "        data.extend_from_slice(&(ix.{name}.len() as \
-                             u64).to_le_bytes()[..{pfx}]);"
-                        )
-                        .expect("write to String");
-                    }
-                    _ => unreachable!(),
-                }
+                let pfx = dynamic_prefix_bytes_from_codec(&arg.codec);
+                writeln!(
+                    out,
+                    "        data.extend_from_slice(&(ix.{name}.len() as \
+                     u64).to_le_bytes()[..{pfx}]);"
+                )
+                .expect("write to String");
             }
 
             // Phase 3: tail — all dynamic data in field order
             for arg in &dyn_args {
                 let name = camel_to_snake(&arg.name);
-                match &arg.ty {
-                    IdlType::DynString { .. } => {
-                        writeln!(out, "        data.extend_from_slice(ix.{name}.as_bytes());")
-                            .expect("write to String");
-                    }
-                    IdlType::DynVec { .. } => {
-                        writeln!(out, "        for item in ix.{name}.iter() {{")
-                            .expect("write to String");
-                        writeln!(
-                            out,
-                            "            wincode::serialize_into(&mut data, \
-                             item).expect(\"serialization into Vec<u8> is infallible\");"
-                        )
+                if is_dynamic_string(&arg.ty) {
+                    writeln!(out, "        data.extend_from_slice(ix.{name}.as_bytes());")
                         .expect("write to String");
-                        out.push_str("        }\n");
-                    }
-                    _ => unreachable!(),
+                } else if is_dynamic_vec(&arg.ty) {
+                    writeln!(out, "        for item in ix.{name}.iter() {{")
+                        .expect("write to String");
+                    writeln!(
+                        out,
+                        "            wincode::serialize_into(&mut data, \
+                         item).expect(\"serialization into Vec<u8> is infallible\");"
+                    )
+                    .expect("write to String");
+                    out.push_str("        }\n");
+                }
+            }
+        } else if !dyn_args.is_empty() {
+            // Non-compact: serialize dynamic fields sequentially with inline prefixes
+            for arg in &dyn_args {
+                let name = camel_to_snake(&arg.name);
+                let pfx = dynamic_prefix_bytes_from_codec(&arg.codec);
+                writeln!(
+                    out,
+                    "        data.extend_from_slice(&(ix.{name}.len() as \
+                     u64).to_le_bytes()[..{pfx}]);"
+                )
+                .expect("write to String");
+                if is_dynamic_string(&arg.ty) {
+                    writeln!(out, "        data.extend_from_slice(ix.{name}.as_bytes());")
+                        .expect("write to String");
+                } else if is_dynamic_vec(&arg.ty) {
+                    writeln!(out, "        for item in ix.{name}.iter() {{")
+                        .expect("write to String");
+                    writeln!(
+                        out,
+                        "            wincode::serialize_into(&mut data, \
+                         item).expect(\"serialization into Vec<u8> is infallible\");"
+                    )
+                    .expect("write to String");
+                    out.push_str("        }\n");
                 }
             }
         }
@@ -675,15 +682,12 @@ impl DiscriminatedItem for crate::types::IdlEventDef {
 
 /// Generate mod.rs + individual files for a discriminated module (state or
 /// events).
-///
-/// `kind` is `"account"` or `"event"` — controls discriminator constant suffix,
-/// enum name stripping, and SchemaRead error messages.
 fn emit_discriminated_module<T: DiscriminatedItem>(
     items: &[T],
     kind: &str,
     enum_name: &str,
     decode_fn: &str,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) -> (String, Vec<(String, String)>) {
     let mut mod_rs = String::new();
     let mut item_files: Vec<(String, String)> = Vec::new();
@@ -788,8 +792,8 @@ fn emit_discriminated_module<T: DiscriminatedItem>(
     (mod_rs, item_files)
 }
 
-/// Strip "Event" suffix for event discriminator constant names to avoid stutter
-/// (e.g. MakeEvent → MAKE, not MAKE_EVENT). Accounts keep their full name.
+/// Strip "Event" suffix for event discriminator constant names to avoid
+/// stutter.
 fn disc_base_name<'a>(name: &'a str, kind: &str) -> &'a str {
     if kind == "event" {
         name.strip_suffix("Event").unwrap_or(name)
@@ -801,9 +805,9 @@ fn disc_base_name<'a>(name: &'a str, kind: &str) -> &'a str {
 fn emit_single_state_or_event(
     name: &str,
     discriminator: &[u8],
-    fields: &[IdlField],
+    fields: &[IdlFieldDef],
     kind: &str,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) -> String {
     let mut out = String::new();
 
@@ -814,7 +818,7 @@ fn emit_single_state_or_event(
     out.push_str("use wincode::io::{Reader, Writer};\n");
     out.push_str("use std::mem::MaybeUninit;\n");
 
-    emit_field_imports(&mut out, fields.iter().map(|f| &f.ty), type_map);
+    emit_field_imports(&mut out, fields.iter().map(|f| (&f.ty, &f.codec)), type_map);
 
     out.push('\n');
 
@@ -841,7 +845,7 @@ fn emit_single_state_or_event(
 // types/
 // ===========================================================================
 
-fn emit_types(type_map: &HashMap<String, Vec<IdlField>>) -> (String, Vec<(String, String)>) {
+fn emit_types(type_map: &HashMap<String, Vec<IdlFieldDef>>) -> (String, Vec<(String, String)>) {
     let mut mod_rs = String::new();
     let mut type_files: Vec<(String, String)> = Vec::new();
 
@@ -871,14 +875,14 @@ fn emit_types(type_map: &HashMap<String, Vec<IdlField>>) -> (String, Vec<(String
 
 fn emit_single_type(
     type_name: &str,
-    fields: &[IdlField],
-    type_map: &HashMap<String, Vec<IdlField>>,
+    fields: &[IdlFieldDef],
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) -> String {
     let mut out = String::new();
 
     out.push_str("use wincode::{SchemaWrite, SchemaRead};\n");
 
-    emit_field_imports(&mut out, fields.iter().map(|f| &f.ty), type_map);
+    emit_field_imports(&mut out, fields.iter().map(|f| (&f.ty, &f.codec)), type_map);
 
     out.push('\n');
 
@@ -889,7 +893,7 @@ fn emit_single_type(
             out,
             "    pub {}: {},",
             camel_to_snake(&field.name),
-            rust_field_type(&field.ty)
+            rust_field_type(&field.ty, &field.codec)
         )
         .expect("write to String");
     }
@@ -953,29 +957,29 @@ fn emit_errors(idl: &Idl) -> String {
 /// A collected PDA with its field name and seeds.
 struct PdaInfo {
     field_name: String,
-    seeds: Vec<IdlSeed>,
+    seeds: Vec<IdlPdaSeed>,
 }
 
 fn collect_pdas(idl: &Idl) -> Vec<PdaInfo> {
     let mut pdas: Vec<PdaInfo> = Vec::new();
-    let mut seen_seeds: HashSet<Vec<IdlSeed>> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     for ix in &idl.instructions {
         for account in &ix.accounts {
-            if let Some(pda) = &account.pda {
-                if pda.seeds.is_empty() {
+            if let IdlResolver::Pda { ref seeds, .. } = account.resolver {
+                if seeds.is_empty() {
                     continue;
                 }
 
-                // Dedup by seed identity. When two instructions name the same
-                // PDA differently, the first occurrence's field name wins.
-                if !seen_seeds.insert(pda.seeds.clone()) {
+                // Dedup by seed identity (use debug repr as key)
+                let key = format!("{:?}", seeds);
+                if !seen.insert(key) {
                     continue;
                 }
 
                 pdas.push(PdaInfo {
                     field_name: camel_to_snake(&account.name),
-                    seeds: pda.seeds.clone(),
+                    seeds: seeds.clone(),
                 });
             }
         }
@@ -1005,9 +1009,9 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
             .seeds
             .iter()
             .map(|s| match s {
-                IdlSeed::Const { value } => format_const_seed_display(value),
-                IdlSeed::Account { path } => camel_to_snake(path),
-                IdlSeed::Arg { path } => format!("arg:{}", camel_to_snake(path)),
+                IdlPdaSeed::Const { value } => format_const_seed_display(value),
+                IdlPdaSeed::Account { path } => camel_to_snake(path),
+                IdlPdaSeed::Arg { path, .. } => format!("arg:{}", camel_to_snake(path)),
             })
             .collect();
         writeln!(out, "/// Seeds: [{}]", seed_desc.join(", ")).expect("write to String");
@@ -1016,10 +1020,10 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
         let mut params: Vec<String> = Vec::new();
         for seed in &pda.seeds {
             match seed {
-                IdlSeed::Account { path } => {
+                IdlPdaSeed::Account { path } => {
                     params.push(format!("{}: &Address", camel_to_snake(path)));
                 }
-                IdlSeed::Arg { path } => {
+                IdlPdaSeed::Arg { path, .. } => {
                     params.push(format!("{}: &[u8]", camel_to_snake(path)));
                 }
                 _ => {}
@@ -1041,9 +1045,9 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
             .seeds
             .iter()
             .map(|s| match s {
-                IdlSeed::Const { value } => format_const_seed_display(value),
-                IdlSeed::Account { path } => format!("{}.as_ref()", camel_to_snake(path)),
-                IdlSeed::Arg { path } => camel_to_snake(path),
+                IdlPdaSeed::Const { value } => format_const_seed_display(value),
+                IdlPdaSeed::Account { path } => format!("{}.as_ref()", camel_to_snake(path)),
+                IdlPdaSeed::Arg { path, .. } => camel_to_snake(path),
             })
             .collect();
 
@@ -1063,19 +1067,43 @@ fn emit_pda(pdas: &[PdaInfo]) -> String {
 // Compact-layout helpers
 // ===========================================================================
 
-/// Returns `true` if the field is a top-level dynamic type (`DynString` or
-/// `DynVec`). These require compact wire-format handling: their length
-/// prefixes are grouped in the header, and their data is written in the tail.
-fn is_direct_dynamic(ty: &IdlType) -> bool {
-    matches!(ty, IdlType::DynString { .. } | IdlType::DynVec { .. })
+/// Returns `true` if the field is a top-level dynamic type (string or vec with
+/// SizePrefixed codec). These require compact wire-format handling.
+fn is_direct_dynamic(ty: &IdlType, codec: &Option<IdlCodec>) -> bool {
+    matches!(codec, Some(IdlCodec::SizePrefixed { .. }))
+        && (is_dynamic_string(ty) || is_dynamic_vec(ty))
 }
 
-/// Return the byte-width of the length prefix for a dynamic field.
-fn dynamic_prefix_bytes(ty: &IdlType) -> usize {
+/// Check if the type represents a dynamic string.
+fn is_dynamic_string(ty: &IdlType) -> bool {
+    matches!(ty, IdlType::Primitive(p) if p == "string")
+}
+
+/// Check if the type represents a dynamic vec.
+fn is_dynamic_vec(ty: &IdlType) -> bool {
+    matches!(ty, IdlType::Vec { .. })
+}
+
+/// Get the inner type of a Vec type.
+fn vec_inner_type(ty: &IdlType) -> Option<&IdlType> {
     match ty {
-        IdlType::DynString { string } => string.prefix_bytes,
-        IdlType::DynVec { vec } => vec.prefix_bytes,
-        _ => unreachable!("dynamic_prefix_bytes called on non-dynamic type"),
+        IdlType::Vec { vec } => Some(vec.as_ref()),
+        _ => None,
+    }
+}
+
+/// Return the byte-width of the length prefix from codec info.
+fn dynamic_prefix_bytes_from_codec(codec: &Option<IdlCodec>) -> usize {
+    if let Some(IdlCodec::SizePrefixed { ref prefix, .. }) = codec {
+        match prefix.ty.as_str() {
+            "u8" => 1,
+            "u16" => 2,
+            "u32" => 4,
+            "u64" => 8,
+            _ => 2,
+        }
+    } else {
+        2 // default
     }
 }
 
@@ -1084,18 +1112,17 @@ fn dynamic_prefix_bytes(ty: &IdlType) -> usize {
 // ===========================================================================
 
 /// Scan field types and emit wrapper imports (DynString, DynVec), Address
-/// import, and defined type imports. Used by instruction, state/event, and type
-/// emitters.
+/// import, and defined type imports.
 fn emit_field_imports<'a>(
     out: &mut String,
-    types: impl Iterator<Item = &'a IdlType>,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    types: impl Iterator<Item = (&'a IdlType, &'a Option<IdlCodec>)>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) {
     let mut needs_address = false;
     let mut needs_dyn_string = false;
     let mut needs_dyn_vec = false;
-    for ty in types {
-        collect_wrapper_needs(ty, &mut needs_dyn_string, &mut needs_dyn_vec);
+    for (ty, codec) in types {
+        collect_wrapper_needs(ty, codec, &mut needs_dyn_string, &mut needs_dyn_vec);
         if field_needs_address(ty) {
             needs_address = true;
         }
@@ -1108,18 +1135,17 @@ fn emit_field_imports<'a>(
 }
 
 /// Emit struct definition + manual SchemaWrite/SchemaRead impls with
-/// discriminator handling. Uses compact wire format: all dynamic field
-/// prefixes are grouped in the header, followed by dynamic data in the tail.
+/// discriminator handling.
 fn emit_manual_impls(
     out: &mut String,
     name: &str,
     discriminator: &[u8],
-    idl_fields: &[IdlField],
+    idl_fields: &[IdlFieldDef],
     kind: &str,
 ) {
     let has_dynamic = idl_fields
         .iter()
-        .any(|f| matches!(f.ty, IdlType::DynString { .. } | IdlType::DynVec { .. }));
+        .any(|f| is_direct_dynamic(&f.ty, &f.codec));
 
     if has_dynamic {
         out.push_str("#[derive(Clone)]\n");
@@ -1129,38 +1155,36 @@ fn emit_manual_impls(
     writeln!(out, "pub struct {} {{", name).expect("write to String");
     let fields: Vec<(String, String)> = idl_fields
         .iter()
-        .map(|f| (camel_to_snake(&f.name), rust_field_type(&f.ty)))
+        .map(|f| (camel_to_snake(&f.name), rust_field_type(&f.ty, &f.codec)))
         .collect();
     for (field_name, field_type) in &fields {
         writeln!(out, "    pub {}: {},", field_name, field_type).expect("write to String");
     }
     out.push_str("}\n\n");
 
-    // Partition into fixed and dynamic fields (preserving original order within
-    // each group).
-    let fixed_fields: Vec<(&str, &str, &IdlField)> = idl_fields
+    // Partition into fixed and dynamic fields
+    let fixed_fields: Vec<(&str, &str, &IdlFieldDef)> = idl_fields
         .iter()
         .zip(fields.iter())
-        .filter(|(f, _)| !is_direct_dynamic(&f.ty))
+        .filter(|(f, _)| !is_direct_dynamic(&f.ty, &f.codec))
         .map(|(f, (n, t))| (n.as_str(), t.as_str(), f))
         .collect();
-    let dyn_fields: Vec<(&str, &str, &IdlField)> = idl_fields
+    let dyn_fields: Vec<(&str, &str, &IdlFieldDef)> = idl_fields
         .iter()
         .zip(fields.iter())
-        .filter(|(f, _)| is_direct_dynamic(&f.ty))
+        .filter(|(f, _)| is_direct_dynamic(&f.ty, &f.codec))
         .map(|(f, (n, t))| (n.as_str(), t.as_str(), f))
         .collect();
 
-    // Collect unique types for trait bounds. Fixed fields use their full type.
-    // Dynamic DynVec fields need bounds on their inner item type.
+    // Collect unique types for trait bounds.
     let unique_bound_types: Vec<String> = {
         let mut types: Vec<String> = fixed_fields
             .iter()
             .map(|(_, ty, _)| ty.to_string())
             .collect();
         for (_, _, idl_f) in &dyn_fields {
-            if let IdlType::DynVec { vec } = &idl_f.ty {
-                types.push(rust_field_type(&vec.items));
+            if let Some(inner) = vec_inner_type(&idl_f.ty) {
+                types.push(rust_field_type(inner, &None));
             }
         }
         types.sort();
@@ -1200,35 +1224,30 @@ fn emit_manual_impls(
     }
     // Dynamic prefix sizes (constant per field)
     for (_, _, idl_f) in &dyn_fields {
-        let pfx = dynamic_prefix_bytes(&idl_f.ty);
+        let pfx = dynamic_prefix_bytes_from_codec(&idl_f.codec);
         write!(out, "\n            + {pfx}").expect("write to String");
     }
     // Dynamic data sizes
     for (field_name, _, idl_f) in &dyn_fields {
-        match &idl_f.ty {
-            IdlType::DynString { .. } => {
-                // DynString: inner bytes length
-                write!(out, "\n            + src.{field_name}.len()").expect("write to String");
-            }
-            IdlType::DynVec { vec } => {
-                let item_ty = rust_field_type(&vec.items);
-                write!(out, "\n            + {{").expect("write to String");
-                write!(out, "\n                let mut s = 0usize;").expect("write to String");
-                write!(
-                    out,
-                    "\n                for item in src.{field_name}.iter() {{"
-                )
-                .expect("write to String");
-                write!(
-                    out,
-                    "\n                    s += <{item_ty} as SchemaWrite<C>>::size_of(item)?;"
-                )
-                .expect("write to String");
-                write!(out, "\n                }}").expect("write to String");
-                write!(out, "\n                s").expect("write to String");
-                write!(out, "\n            }}").expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_dynamic_string(&idl_f.ty) {
+            write!(out, "\n            + src.{field_name}.len()").expect("write to String");
+        } else if is_dynamic_vec(&idl_f.ty) {
+            let item_ty = rust_field_type(vec_inner_type(&idl_f.ty).unwrap(), &None);
+            write!(out, "\n            + {{").expect("write to String");
+            write!(out, "\n                let mut s = 0usize;").expect("write to String");
+            write!(
+                out,
+                "\n                for item in src.{field_name}.iter() {{"
+            )
+            .expect("write to String");
+            write!(
+                out,
+                "\n                    s += <{item_ty} as SchemaWrite<C>>::size_of(item)?;"
+            )
+            .expect("write to String");
+            write!(out, "\n                }}").expect("write to String");
+            write!(out, "\n                s").expect("write to String");
+            write!(out, "\n            }}").expect("write to String");
         }
     }
     out.push_str(")\n");
@@ -1250,47 +1269,29 @@ fn emit_manual_impls(
     if has_dynamic {
         // Phase 2: length table
         for (field_name, _, idl_f) in &dyn_fields {
-            let pfx = dynamic_prefix_bytes(&idl_f.ty);
-            match &idl_f.ty {
-                IdlType::DynString { .. } => {
-                    writeln!(
-                        out,
-                        "        writer.write(&(src.{field_name}.len() as \
-                         u64).to_le_bytes()[..{pfx}])?;"
-                    )
-                    .expect("write to String");
-                }
-                IdlType::DynVec { .. } => {
-                    writeln!(
-                        out,
-                        "        writer.write(&(src.{field_name}.len() as \
-                         u64).to_le_bytes()[..{pfx}])?;"
-                    )
-                    .expect("write to String");
-                }
-                _ => unreachable!(),
-            }
+            let pfx = dynamic_prefix_bytes_from_codec(&idl_f.codec);
+            writeln!(
+                out,
+                "        writer.write(&(src.{field_name}.len() as u64).to_le_bytes()[..{pfx}])?;"
+            )
+            .expect("write to String");
         }
 
         // Phase 3: tail data
         for (field_name, _, idl_f) in &dyn_fields {
-            match &idl_f.ty {
-                IdlType::DynString { .. } => {
-                    writeln!(out, "        writer.write(src.{field_name}.as_bytes())?;")
-                        .expect("write to String");
-                }
-                IdlType::DynVec { vec } => {
-                    let item_ty = rust_field_type(&vec.items);
-                    writeln!(out, "        for item in src.{field_name}.iter() {{")
-                        .expect("write to String");
-                    writeln!(
-                        out,
-                        "            <{item_ty} as SchemaWrite<C>>::write(writer.by_ref(), item)?;"
-                    )
+            if is_dynamic_string(&idl_f.ty) {
+                writeln!(out, "        writer.write(src.{field_name}.as_bytes())?;")
                     .expect("write to String");
-                    out.push_str("        }\n");
-                }
-                _ => unreachable!(),
+            } else if is_dynamic_vec(&idl_f.ty) {
+                let item_ty = rust_field_type(vec_inner_type(&idl_f.ty).unwrap(), &None);
+                writeln!(out, "        for item in src.{field_name}.iter() {{")
+                    .expect("write to String");
+                writeln!(
+                    out,
+                    "            <{item_ty} as SchemaWrite<C>>::write(writer.by_ref(), item)?;"
+                )
+                .expect("write to String");
+                out.push_str("        }\n");
             }
         }
     }
@@ -1372,7 +1373,7 @@ fn emit_manual_impls(
 
         // Phase 2: length table
         for (field_name, _, idl_f) in &dyn_fields {
-            let pfx = dynamic_prefix_bytes(&idl_f.ty);
+            let pfx = dynamic_prefix_bytes_from_codec(&idl_f.codec);
             writeln!(out, "        let {field_name}_len = {{").expect("write to String");
             writeln!(out, "            let mut buf = [0u8; 8];").expect("write to String");
             writeln!(
@@ -1388,37 +1389,33 @@ fn emit_manual_impls(
 
         // Phase 3: tail data
         for (field_name, field_type, idl_f) in &dyn_fields {
-            match &idl_f.ty {
-                IdlType::DynString { .. } => {
-                    writeln!(
-                        out,
-                        "        let {field_name}: {field_type} = \
-                         reader.take_scoped({field_name}_len)?.to_vec().into();"
-                    )
+            if is_dynamic_string(&idl_f.ty) {
+                writeln!(
+                    out,
+                    "        let {field_name}: {field_type} = \
+                     reader.take_scoped({field_name}_len)?.to_vec().into();"
+                )
+                .expect("write to String");
+            } else if is_dynamic_vec(&idl_f.ty) {
+                let item_ty = rust_field_type(vec_inner_type(&idl_f.ty).unwrap(), &None);
+                writeln!(out, "        let {field_name}: {field_type} = {{")
                     .expect("write to String");
-                }
-                IdlType::DynVec { vec } => {
-                    let item_ty = rust_field_type(&vec.items);
-                    writeln!(out, "        let {field_name}: {field_type} = {{")
-                        .expect("write to String");
-                    writeln!(
-                        out,
-                        "            let mut items = Vec::with_capacity({field_name}_len);"
-                    )
+                writeln!(
+                    out,
+                    "            let mut items = Vec::with_capacity({field_name}_len);"
+                )
+                .expect("write to String");
+                writeln!(out, "            for _ in 0..{field_name}_len {{")
                     .expect("write to String");
-                    writeln!(out, "            for _ in 0..{field_name}_len {{")
-                        .expect("write to String");
-                    writeln!(
-                        out,
-                        "                items.push(<{item_ty} as SchemaRead<'de, \
-                         C>>::get(reader.by_ref())?);"
-                    )
-                    .expect("write to String");
-                    out.push_str("            }\n");
-                    out.push_str("            items.into()\n");
-                    out.push_str("        };\n");
-                }
-                _ => unreachable!(),
+                writeln!(
+                    out,
+                    "                items.push(<{item_ty} as SchemaRead<'de, \
+                     C>>::get(reader.by_ref())?);"
+                )
+                .expect("write to String");
+                out.push_str("            }\n");
+                out.push_str("            items.into()\n");
+                out.push_str("        };\n");
             }
         }
 
@@ -1435,10 +1432,10 @@ fn emit_manual_impls(
     out.push_str("}\n\n");
 }
 
-fn account_meta_expr(account: &IdlAccountItem) -> String {
+fn account_meta_expr(account: &IdlAccountNode) -> String {
     let field_name = camel_to_snake(&account.name);
-    let signer = account.signer;
-    if account.writable {
+    let signer = matches!(account.signer, AccountFlag::Fixed(true));
+    if matches!(account.writable, AccountFlag::Fixed(true)) {
         format!("AccountMeta::new(ix.{}, {})", field_name, signer)
     } else {
         format!("AccountMeta::new_readonly(ix.{}, {})", field_name, signer)
@@ -1446,19 +1443,56 @@ fn account_meta_expr(account: &IdlAccountItem) -> String {
 }
 
 /// Map an `IdlType` to its Rust field type for the client struct.
-fn rust_field_type(ty: &IdlType) -> String {
+fn rust_field_type(ty: &IdlType, codec: &Option<IdlCodec>) -> String {
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "pubkey" => "Address".to_string(),
+            "string" => {
+                // If codec is SizePrefixed, use DynString<PrefixType>
+                if let Some(IdlCodec::SizePrefixed { ref prefix, .. }) = codec {
+                    let pfx_bytes = match prefix.ty.as_str() {
+                        "u8" => 1,
+                        "u16" => 2,
+                        "u32" => 4,
+                        "u64" => 8,
+                        _ => 2,
+                    };
+                    prefix_generic("DynString", pfx_bytes)
+                } else {
+                    "String".to_string()
+                }
+            }
             other => other.to_string(),
         },
-        IdlType::Option { option } => format!("Option<{}>", rust_field_type(option)),
-        IdlType::DynString { string } => prefix_generic("DynString", string.prefix_bytes),
-        IdlType::DynVec { vec } => {
-            let inner = rust_field_type(&vec.items);
-            format!("DynVec<{}, {}>", inner, prefix_rust_type(vec.prefix_bytes))
+        IdlType::Option { option } => format!("Option<{}>", rust_field_type(option, &None)),
+        IdlType::Vec { vec } => {
+            // If codec is SizePrefixed, use DynVec<Inner, PrefixType>
+            if let Some(IdlCodec::SizePrefixed { ref prefix, .. }) = codec {
+                let pfx_bytes = match prefix.ty.as_str() {
+                    "u8" => 1,
+                    "u16" => 2,
+                    "u32" => 4,
+                    "u64" => 8,
+                    _ => 2,
+                };
+                let inner = rust_field_type(vec, &None);
+                format!("DynVec<{}, {}>", inner, prefix_rust_type(pfx_bytes))
+            } else {
+                let inner = rust_field_type(vec, &None);
+                format!("Vec<{}>", inner)
+            }
         }
-        IdlType::Defined { defined } => defined.clone(),
+        IdlType::Array {
+            array: (inner, size),
+        } => {
+            let inner_ty = rust_field_type(inner, &None);
+            format!("[{}; {}]", inner_ty, size)
+        }
+        IdlType::Defined { defined } => defined.name.clone(),
+        IdlType::Generic { generic } => {
+            // For now, just use the generic name as-is
+            generic.clone()
+        }
     }
 }
 
@@ -1475,15 +1509,26 @@ fn prefix_rust_type(prefix_bytes: usize) -> &'static str {
     }
 }
 
-fn collect_wrapper_needs(ty: &IdlType, needs_dyn_string: &mut bool, needs_dyn_vec: &mut bool) {
+fn collect_wrapper_needs(
+    ty: &IdlType,
+    codec: &Option<IdlCodec>,
+    needs_dyn_string: &mut bool,
+    needs_dyn_vec: &mut bool,
+) {
     match ty {
         IdlType::Option { option } => {
-            collect_wrapper_needs(option, needs_dyn_string, needs_dyn_vec)
+            collect_wrapper_needs(option, &None, needs_dyn_string, needs_dyn_vec)
         }
-        IdlType::DynString { .. } => *needs_dyn_string = true,
-        IdlType::DynVec { vec } => {
-            *needs_dyn_vec = true;
-            collect_wrapper_needs(&vec.items, needs_dyn_string, needs_dyn_vec);
+        IdlType::Primitive(p) if p == "string" => {
+            if matches!(codec, Some(IdlCodec::SizePrefixed { .. })) {
+                *needs_dyn_string = true;
+            }
+        }
+        IdlType::Vec { vec } => {
+            if matches!(codec, Some(IdlCodec::SizePrefixed { .. })) {
+                *needs_dyn_vec = true;
+            }
+            collect_wrapper_needs(vec, &None, needs_dyn_string, needs_dyn_vec);
         }
         _ => {}
     }
@@ -1493,7 +1538,8 @@ fn field_needs_address(ty: &IdlType) -> bool {
     match ty {
         IdlType::Primitive(p) => p == "pubkey",
         IdlType::Option { option } => field_needs_address(option),
-        IdlType::DynVec { vec } => field_needs_address(&vec.items),
+        IdlType::Vec { vec } => field_needs_address(vec),
+        IdlType::Array { array: (inner, _) } => field_needs_address(inner),
         _ => false,
     }
 }
@@ -1515,17 +1561,18 @@ fn emit_wrapper_imports(out: &mut String, needs_dyn_string: bool, needs_dyn_vec:
 fn emit_type_use_imports(
     out: &mut String,
     ty: &IdlType,
-    type_map: &HashMap<String, Vec<IdlField>>,
+    type_map: &HashMap<String, Vec<IdlFieldDef>>,
 ) {
     match ty {
-        IdlType::Defined { defined } if type_map.contains_key(defined) => {
-            let import = format!("use crate::types::{};\n", defined);
+        IdlType::Defined { defined } if type_map.contains_key(&defined.name) => {
+            let import = format!("use crate::types::{};\n", defined.name);
             if !out.contains(&import) {
                 out.push_str(&import);
             }
         }
         IdlType::Option { option } => emit_type_use_imports(out, option, type_map),
-        IdlType::DynVec { vec } => emit_type_use_imports(out, &vec.items, type_map),
+        IdlType::Vec { vec } => emit_type_use_imports(out, vec, type_map),
+        IdlType::Array { array: (inner, _) } => emit_type_use_imports(out, inner, type_map),
         _ => {}
     }
 }

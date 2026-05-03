@@ -13,6 +13,7 @@ workspace = true
 alloc = []
 client = []
 debug = []
+idl-build = ["quasar-lang/idl-build"]
 
 [dependencies]
 quasar-lang = { path = "../../lang" }

@@ -1,6 +1,9 @@
 use {
     super::model::ProgramModel,
-    crate::types::{Idl, IdlSeed, IdlType},
+    crate::types::{
+        AccountFlag, Idl, IdlArg, IdlCodec, IdlFieldDef, IdlPdaSeed, IdlResolver, IdlType,
+        ScalarRepr,
+    },
     quasar_schema::{snake_to_pascal, to_screaming_snake as pascal_to_screaming_snake},
     std::{
         collections::{HashMap, HashSet},
@@ -49,7 +52,7 @@ pub fn generate_package_json(idl: &Idl) -> String {
 }}
 "#,
         package_name = model.identity.typescript_package,
-        version = idl.metadata.version,
+        version = idl.version,
     )
 }
 
@@ -67,7 +70,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     let has_public_key = used.contains("pubkey");
     let has_pdas = model.features.has_pdas;
     let has_pda_account_seeds = model.features.has_pda_account_seeds;
-    let has_dynamic_types = idl.types.iter().any(|t| has_dynamic_fields(&t.ty.fields));
+    let has_dynamic_types = idl.types.iter().any(|t| has_dynamic_field_defs(&t.fields));
 
     // --- Imports ---
     match target {
@@ -241,7 +244,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     // Type interfaces
     for type_def in &idl.types {
         let name = &type_def.name;
-        let fields = &type_def.ty.fields;
+        let fields = &type_def.fields;
         writeln!(out, "export interface {} {{", name).expect("write to String");
         for field in fields {
             writeln!(out, "  {}: {};", field.name, ts_type(&field.ty)).expect("write to String");
@@ -264,13 +267,14 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
 
     // Instruction input interfaces
     for ix in &idl.instructions {
+        let has_remaining = ix.remaining_accounts.is_some();
         let user_accs: Vec<_> = ix
             .accounts
             .iter()
-            .filter(|a| a.pda.is_none() && a.address.is_none())
+            .filter(|a| matches!(a.resolver, IdlResolver::Input {}))
             .collect();
 
-        if user_accs.is_empty() && ix.args.is_empty() && !ix.has_remaining {
+        if user_accs.is_empty() && ix.args.is_empty() && !has_remaining {
             continue;
         }
 
@@ -289,7 +293,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
             }
         }
 
-        if ix.has_remaining {
+        if has_remaining {
             match target {
                 TsTarget::Kit => {
                     out.push_str(
@@ -314,9 +318,9 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     }
     for type_def in &idl.types {
         let name = &type_def.name;
-        let fields = &type_def.ty.fields;
+        let fields = &type_def.fields;
 
-        if has_dynamic_fields(fields) {
+        if has_dynamic_field_defs(fields) {
             emit_compact_type_codec(&mut out, name, fields, target);
         } else {
             writeln!(out, "export const {}Codec = getStructCodec([", name)
@@ -326,7 +330,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
                     out,
                     "  [\"{}\", {}],",
                     field.name,
-                    ts_codec(&field.ty, target)
+                    ts_codec_for_field_def(field, target)
                 )
                 .expect("write to String");
             }
@@ -483,7 +487,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
                 )
                 .expect("write to String");
             } else {
-                let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty));
+                let has_dyn = ix.args.iter().any(is_arg_dynamic);
                 writeln!(out, "    if (matchDisc(data, {})) {{", const_name)
                     .expect("write to String");
 
@@ -495,7 +499,7 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
                             out,
                             "        [\"{}\", {}],",
                             arg.name,
-                            ts_codec(&arg.ty, target)
+                            ts_codec_for_arg(arg, target)
                         )
                         .expect("write to String");
                     }
@@ -570,11 +574,12 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
 fn generate_instruction_builders_web3js(
     out: &mut String,
     idl: &Idl,
-    exportable_pda_helpers: &HashMap<Vec<IdlSeed>, String>,
+    exportable_pda_helpers: &HashMap<String, String>,
     program_name: &str,
 ) {
     let class_name = format!("{}Client", snake_to_pascal(program_name));
     for ix in &idl.instructions {
+        let has_remaining = ix.remaining_accounts.is_some();
         out.push('\n');
         let pascal = snake_to_pascal(&ix.name);
         let arg_types = instruction_arg_types(ix);
@@ -582,7 +587,7 @@ fn generate_instruction_builders_web3js(
         let mut user_accs = Vec::new();
         let mut has_non_input_accounts = false;
         for acc in &ix.accounts {
-            if acc.pda.is_none() && acc.address.is_none() {
+            if matches!(acc.resolver, IdlResolver::Input {}) {
                 user_accs.push(acc);
             } else {
                 has_non_input_accounts = true;
@@ -601,7 +606,7 @@ fn generate_instruction_builders_web3js(
         };
 
         // Method signature
-        let input_param = if user_accs.is_empty() && ix.args.is_empty() && !ix.has_remaining {
+        let input_param = if user_accs.is_empty() && ix.args.is_empty() && !has_remaining {
             String::new()
         } else {
             format!("input: {pascal}InstructionInput")
@@ -618,11 +623,11 @@ fn generate_instruction_builders_web3js(
 
         // Derive fixed-address accounts
         for acc in &ix.accounts {
-            if let Some(addr) = &acc.address {
+            if let IdlResolver::Const { address } = &acc.resolver {
                 writeln!(
                     out,
                     "    accountsMap[\"{}\"] = new Address(\"{}\");",
-                    acc.name, addr
+                    acc.name, address
                 )
                 .expect("write to String");
             }
@@ -630,9 +635,9 @@ fn generate_instruction_builders_web3js(
 
         // Derive PDA accounts
         for acc in &ix.accounts {
-            if let Some(pda) = &acc.pda {
-                if let Some(helper_name) = exportable_pda_helpers.get(&pda.seeds) {
-                    let args = helper_call_args(&pda.seeds, &account_expr);
+            if let IdlResolver::Pda { seeds, .. } = &acc.resolver {
+                if let Some(helper_name) = exportable_pda_helpers.get(&format!("{:?}", seeds)) {
+                    let args = helper_call_args(seeds, &account_expr);
                     writeln!(
                         out,
                         "    accountsMap[\"{}\"] = {}({});",
@@ -643,7 +648,7 @@ fn generate_instruction_builders_web3js(
                     emit_inline_pda_derivation(
                         out,
                         &acc.name,
-                        &pda.seeds,
+                        seeds,
                         TsTarget::Web3js,
                         &arg_types,
                         &account_expr,
@@ -655,7 +660,7 @@ fn generate_instruction_builders_web3js(
 
         // Encode instruction data
         let disc_str = super::format_disc_decimal(&ix.discriminator);
-        let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty));
+        let has_dyn = ix.args.iter().any(is_arg_dynamic);
         if ix.args.is_empty() {
             writeln!(out, "    const data = Buffer.from([{}]);", disc_str)
                 .expect("write to String");
@@ -667,7 +672,7 @@ fn generate_instruction_builders_web3js(
                     out,
                     "      [\"{}\", {}],",
                     arg.name,
-                    ts_codec(&arg.ty, TsTarget::Web3js)
+                    ts_codec_for_arg(arg, TsTarget::Web3js)
                 )
                 .expect("write to String");
             }
@@ -692,18 +697,20 @@ fn generate_instruction_builders_web3js(
         // Return TransactionInstruction
         out.push_str("    return new TransactionInstruction({\n");
         writeln!(out, "      programId: {class_name}.programId,").expect("write to String");
-        if !ix.accounts.is_empty() || ix.has_remaining {
+        if !ix.accounts.is_empty() || has_remaining {
             out.push_str("      keys: [\n");
             for acc in &ix.accounts {
                 let pubkey_expr = account_expr(&acc.name);
+                let is_signer = matches!(acc.signer, AccountFlag::Fixed(true));
+                let is_writable = matches!(acc.writable, AccountFlag::Fixed(true));
                 writeln!(
                     out,
                     "        {{ pubkey: {}, isSigner: {}, isWritable: {} }},",
-                    pubkey_expr, acc.signer, acc.writable
+                    pubkey_expr, is_signer, is_writable
                 )
                 .expect("write to String");
             }
-            if ix.has_remaining {
+            if has_remaining {
                 out.push_str("        ...(input.remainingAccounts ?? []),\n");
             }
             out.push_str("      ],\n");
@@ -721,9 +728,10 @@ fn generate_instruction_builders_web3js(
 fn generate_instruction_builders_kit(
     out: &mut String,
     idl: &Idl,
-    exportable_pda_helpers: &HashMap<Vec<IdlSeed>, String>,
+    exportable_pda_helpers: &HashMap<String, String>,
 ) {
     for ix in &idl.instructions {
+        let has_remaining = ix.remaining_accounts.is_some();
         out.push('\n');
         let pascal = snake_to_pascal(&ix.name);
         let arg_types = instruction_arg_types(ix);
@@ -731,7 +739,7 @@ fn generate_instruction_builders_kit(
         let mut user_accs = Vec::new();
         let mut has_non_input_accounts = false;
         for acc in &ix.accounts {
-            if acc.pda.is_none() && acc.address.is_none() {
+            if matches!(acc.resolver, IdlResolver::Input {}) {
                 user_accs.push(acc);
             } else {
                 has_non_input_accounts = true;
@@ -750,10 +758,13 @@ fn generate_instruction_builders_kit(
         };
 
         // Check if this instruction has any PDAs (requires async)
-        let ix_has_pdas = ix.accounts.iter().any(|a| a.pda.is_some());
+        let ix_has_pdas = ix
+            .accounts
+            .iter()
+            .any(|a| matches!(a.resolver, IdlResolver::Pda { .. }));
 
         // Method signature
-        let input_param = if user_accs.is_empty() && ix.args.is_empty() && !ix.has_remaining {
+        let input_param = if user_accs.is_empty() && ix.args.is_empty() && !has_remaining {
             String::new()
         } else {
             format!("input: {pascal}InstructionInput")
@@ -776,11 +787,11 @@ fn generate_instruction_builders_kit(
 
         // Derive fixed-address accounts
         for acc in &ix.accounts {
-            if let Some(addr) = &acc.address {
+            if let IdlResolver::Const { address } = &acc.resolver {
                 writeln!(
                     out,
                     "    accountsMap[\"{}\"] = address(\"{}\");",
-                    acc.name, addr
+                    acc.name, address
                 )
                 .expect("write to String");
             }
@@ -788,9 +799,9 @@ fn generate_instruction_builders_kit(
 
         // Derive PDA accounts (async in kit)
         for acc in &ix.accounts {
-            if let Some(pda) = &acc.pda {
-                if let Some(helper_name) = exportable_pda_helpers.get(&pda.seeds) {
-                    let args = helper_call_args(&pda.seeds, &account_expr);
+            if let IdlResolver::Pda { seeds, .. } = &acc.resolver {
+                if let Some(helper_name) = exportable_pda_helpers.get(&format!("{:?}", seeds)) {
+                    let args = helper_call_args(seeds, &account_expr);
                     writeln!(
                         out,
                         "    accountsMap[\"{}\"] = await {}({});",
@@ -801,7 +812,7 @@ fn generate_instruction_builders_kit(
                     emit_inline_pda_derivation(
                         out,
                         &acc.name,
-                        &pda.seeds,
+                        seeds,
                         TsTarget::Kit,
                         &arg_types,
                         &account_expr,
@@ -813,7 +824,7 @@ fn generate_instruction_builders_kit(
 
         // Encode instruction data
         let disc_str = super::format_disc_decimal(&ix.discriminator);
-        let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty));
+        let has_dyn = ix.args.iter().any(is_arg_dynamic);
         if ix.args.is_empty() {
             writeln!(out, "    const data = Uint8Array.from([{}]);", disc_str)
                 .expect("write to String");
@@ -825,7 +836,7 @@ fn generate_instruction_builders_kit(
                     out,
                     "      [\"{}\", {}],",
                     arg.name,
-                    ts_codec(&arg.ty, TsTarget::Kit)
+                    ts_codec_for_arg(arg, TsTarget::Kit)
                 )
                 .expect("write to String");
             }
@@ -850,15 +861,17 @@ fn generate_instruction_builders_kit(
         // Return Instruction
         out.push_str("    return {\n");
         out.push_str("      programAddress: PROGRAM_ADDRESS,\n");
-        if !ix.accounts.is_empty() || ix.has_remaining {
+        if !ix.accounts.is_empty() || has_remaining {
             out.push_str("      accounts: [\n");
             for acc in &ix.accounts {
                 let addr_expr = account_expr(&acc.name);
-                let role = account_role(acc.signer, acc.writable);
+                let is_signer = matches!(acc.signer, AccountFlag::Fixed(true));
+                let is_writable = matches!(acc.writable, AccountFlag::Fixed(true));
+                let role = account_role(is_signer, is_writable);
                 writeln!(out, "        {{ address: {}, role: {} }},", addr_expr, role)
                     .expect("write to String");
             }
-            if ix.has_remaining {
+            if has_remaining {
                 out.push_str("        ...(input.remainingAccounts ?? []),\n");
             }
             out.push_str("      ],\n");
@@ -869,28 +882,36 @@ fn generate_instruction_builders_kit(
     }
 }
 
-/// Returns `true` if any field in the slice is a direct dynamic type.
-fn has_dynamic_fields(fields: &[crate::types::IdlField]) -> bool {
-    fields.iter().any(|f| is_direct_dynamic(&f.ty))
+/// Returns `true` if any field in the slice is a dynamic field (has
+/// SizePrefixed codec).
+fn has_dynamic_field_defs(fields: &[IdlFieldDef]) -> bool {
+    fields.iter().any(is_field_def_dynamic)
+}
+
+/// Returns `true` if a field def has a SizePrefixed or Remainder codec
+/// (dynamic).
+fn is_field_def_dynamic(field: &IdlFieldDef) -> bool {
+    matches!(
+        field.codec,
+        Some(IdlCodec::SizePrefixed { .. }) | Some(IdlCodec::Remainder { .. })
+    )
+}
+
+/// Returns `true` if an instruction arg is dynamic (has SizePrefixed or
+/// Remainder codec).
+fn is_arg_dynamic(arg: &IdlArg) -> bool {
+    matches!(
+        arg.codec,
+        Some(IdlCodec::SizePrefixed { .. }) | Some(IdlCodec::Remainder { .. })
+    )
 }
 
 /// Emit a custom codec object for a type with dynamic fields (compact layout).
 ///
 /// Layout: `[fixed fields][all length prefixes][all tail data]`
-///
-/// Unlike instruction codecs, type codecs have no discriminator (the account
-/// decoder strips the disc before calling the codec).
-fn emit_compact_type_codec(
-    out: &mut String,
-    name: &str,
-    fields: &[crate::types::IdlField],
-    target: TsTarget,
-) {
-    let fixed_fields: Vec<_> = fields
-        .iter()
-        .filter(|f| !is_direct_dynamic(&f.ty))
-        .collect();
-    let dyn_fields: Vec<_> = fields.iter().filter(|f| is_direct_dynamic(&f.ty)).collect();
+fn emit_compact_type_codec(out: &mut String, name: &str, fields: &[IdlFieldDef], target: TsTarget) {
+    let fixed_fields: Vec<_> = fields.iter().filter(|f| !is_field_def_dynamic(f)).collect();
+    let dyn_fields: Vec<_> = fields.iter().filter(|f| is_field_def_dynamic(f)).collect();
 
     let buf_ctor = match target {
         TsTarget::Web3js => "Buffer.from",
@@ -908,8 +929,13 @@ fn emit_compact_type_codec(
     } else {
         out.push_str("    const fixedCodec = getStructCodec([\n");
         for f in &fixed_fields {
-            writeln!(out, "      [\"{}\", {}],", f.name, ts_codec(&f.ty, target))
-                .expect("write to String");
+            writeln!(
+                out,
+                "      [\"{}\", {}],",
+                f.name,
+                ts_codec_for_field_def(f, target)
+            )
+            .expect("write to String");
         }
         out.push_str("    ]);\n");
         let fixed_names: Vec<String> = fixed_fields
@@ -926,55 +952,48 @@ fn emit_compact_type_codec(
 
     // Phase 2: length prefixes
     for f in &dyn_fields {
-        let pfx = dynamic_prefix_bytes(&f.ty);
+        let pfx = codec_prefix_bytes(&f.codec);
         let pfx_codec = prefix_codec(pfx);
-        match &f.ty {
-            IdlType::DynString { .. } => {
-                writeln!(
-                    out,
-                    "    const {name}Bytes = new TextEncoder().encode(value.{name});",
-                    name = f.name
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "    const {name}Prefix = {codec}.encode({name}Bytes.length);",
-                    name = f.name,
-                    codec = pfx_codec
-                )
-                .expect("write to String");
-            }
-            IdlType::DynVec { .. } => {
-                writeln!(
-                    out,
-                    "    const {name}Prefix = {codec}.encode(value.{name}.length);",
-                    name = f.name,
-                    codec = pfx_codec
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&f.ty) {
+            writeln!(
+                out,
+                "    const {name}Bytes = new TextEncoder().encode(value.{name});",
+                name = f.name
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "    const {name}Prefix = {codec}.encode({name}Bytes.length);",
+                name = f.name,
+                codec = pfx_codec
+            )
+            .expect("write to String");
+        } else {
+            // Vec
+            writeln!(
+                out,
+                "    const {name}Prefix = {codec}.encode(value.{name}.length);",
+                name = f.name,
+                codec = pfx_codec
+            )
+            .expect("write to String");
         }
     }
 
     // Phase 3: tail data
     for f in &dyn_fields {
-        match &f.ty {
-            IdlType::DynString { .. } => {
-                // Already encoded as `{name}Bytes` in phase 2
-            }
-            IdlType::DynVec { vec } => {
-                let item_codec = ts_codec(&vec.items, target);
-                writeln!(
-                    out,
-                    "    const {name}Bytes = getArrayCodec({item_codec}, {{ size: \
-                     value.{name}.length }}).encode(value.{name});",
-                    name = f.name,
-                    item_codec = item_codec,
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&f.ty) {
+            // Already encoded as `{name}Bytes` in phase 2
+        } else if let IdlType::Vec { vec } = &f.ty {
+            let item_codec = ts_codec(vec, target);
+            writeln!(
+                out,
+                "    const {name}Bytes = getArrayCodec({item_codec}, {{ size: value.{name}.length \
+                 }}).encode(value.{name});",
+                name = f.name,
+                item_codec = item_codec,
+            )
+            .expect("write to String");
         }
     }
 
@@ -1008,8 +1027,13 @@ fn emit_compact_type_codec(
     if !fixed_fields.is_empty() {
         out.push_str("    const fixedCodec = getStructCodec([\n");
         for f in &fixed_fields {
-            writeln!(out, "      [\"{}\", {}],", f.name, ts_codec(&f.ty, target))
-                .expect("write to String");
+            writeln!(
+                out,
+                "      [\"{}\", {}],",
+                f.name,
+                ts_codec_for_field_def(f, target)
+            )
+            .expect("write to String");
         }
         out.push_str("    ]);\n");
         out.push_str("    const fixedResult = fixedCodec.decode(data.slice(offset));\n");
@@ -1020,7 +1044,7 @@ fn emit_compact_type_codec(
 
     // Phase 2: decode length prefixes
     for f in &dyn_fields {
-        let pfx = dynamic_prefix_bytes(&f.ty);
+        let pfx = codec_prefix_bytes(&f.codec);
         let pfx_codec = prefix_codec(pfx);
         writeln!(
             out,
@@ -1034,41 +1058,37 @@ fn emit_compact_type_codec(
 
     // Phase 3: decode tail data
     for f in &dyn_fields {
-        match &f.ty {
-            IdlType::DynString { .. } => {
-                writeln!(
-                    out,
-                    "    const {name} = new TextDecoder().decode(data.slice(offset, offset + \
-                     Number({name}Len)));",
-                    name = f.name
-                )
-                .expect("write to String");
-                writeln!(out, "    offset += Number({}Len);", f.name).expect("write to String");
-            }
-            IdlType::DynVec { vec } => {
-                let item_codec = ts_codec(&vec.items, target);
-                writeln!(
-                    out,
-                    "    const {name}Codec = getArrayCodec({item_codec}, {{ size: \
-                     Number({name}Len) }});",
-                    name = f.name,
-                    item_codec = item_codec,
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "    const {name} = {name}Codec.decode(data.slice(offset));",
-                    name = f.name
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "    offset += {name}Codec.encode({name}).length;",
-                    name = f.name
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&f.ty) {
+            writeln!(
+                out,
+                "    const {name} = new TextDecoder().decode(data.slice(offset, offset + \
+                 Number({name}Len)));",
+                name = f.name
+            )
+            .expect("write to String");
+            writeln!(out, "    offset += Number({}Len);", f.name).expect("write to String");
+        } else if let IdlType::Vec { vec } = &f.ty {
+            let item_codec = ts_codec(vec, target);
+            writeln!(
+                out,
+                "    const {name}Codec = getArrayCodec({item_codec}, {{ size: Number({name}Len) \
+                 }});",
+                name = f.name,
+                item_codec = item_codec,
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "    const {name} = {name}Codec.decode(data.slice(offset));",
+                name = f.name
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "    offset += {name}Codec.encode({name}).length;",
+                name = f.name
+            )
+            .expect("write to String");
         }
     }
 
@@ -1089,8 +1109,6 @@ fn emit_compact_type_codec(
 /// Emit compact (3-phase) encoding for an instruction with dynamic fields.
 ///
 /// Layout: `[disc][fixed fields][all length prefixes][all dynamic data]`
-///
-/// `buf_ctor` is `"Buffer.from"` for web3.js or `"Uint8Array.from"` for kit.
 fn emit_compact_encoding(
     out: &mut String,
     ix: &crate::types::IdlInstruction,
@@ -1098,16 +1116,8 @@ fn emit_compact_encoding(
     target: TsTarget,
     buf_ctor: &str,
 ) {
-    let fixed_args: Vec<_> = ix
-        .args
-        .iter()
-        .filter(|a| !is_direct_dynamic(&a.ty))
-        .collect();
-    let dyn_args: Vec<_> = ix
-        .args
-        .iter()
-        .filter(|a| is_direct_dynamic(&a.ty))
-        .collect();
+    let fixed_args: Vec<_> = ix.args.iter().filter(|a| !is_arg_dynamic(a)).collect();
+    let dyn_args: Vec<_> = ix.args.iter().filter(|a| is_arg_dynamic(a)).collect();
 
     out.push_str("    const disc = new Uint8Array([");
     out.push_str(disc_str);
@@ -1123,7 +1133,7 @@ fn emit_compact_encoding(
                 out,
                 "      [\"{}\", {}],",
                 arg.name,
-                ts_codec(&arg.ty, target)
+                ts_codec_for_arg(arg, target)
             )
             .expect("write to String");
         }
@@ -1142,55 +1152,48 @@ fn emit_compact_encoding(
 
     // Phase 2: length prefixes
     for arg in &dyn_args {
-        let pfx = dynamic_prefix_bytes(&arg.ty);
+        let pfx = codec_prefix_bytes(&arg.codec);
         let pfx_codec = prefix_codec(pfx);
-        match &arg.ty {
-            IdlType::DynString { .. } => {
-                writeln!(
-                    out,
-                    "    const {name}Bytes = new TextEncoder().encode(input.{name});",
-                    name = arg.name
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "    const {name}Prefix = {codec}.encode({name}Bytes.length);",
-                    name = arg.name,
-                    codec = pfx_codec
-                )
-                .expect("write to String");
-            }
-            IdlType::DynVec { .. } => {
-                writeln!(
-                    out,
-                    "    const {name}Prefix = {codec}.encode(input.{name}.length);",
-                    name = arg.name,
-                    codec = pfx_codec
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&arg.ty) {
+            writeln!(
+                out,
+                "    const {name}Bytes = new TextEncoder().encode(input.{name});",
+                name = arg.name
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "    const {name}Prefix = {codec}.encode({name}Bytes.length);",
+                name = arg.name,
+                codec = pfx_codec
+            )
+            .expect("write to String");
+        } else {
+            // Vec
+            writeln!(
+                out,
+                "    const {name}Prefix = {codec}.encode(input.{name}.length);",
+                name = arg.name,
+                codec = pfx_codec
+            )
+            .expect("write to String");
         }
     }
 
     // Phase 3: tail data
     for arg in &dyn_args {
-        match &arg.ty {
-            IdlType::DynString { .. } => {
-                // Already encoded as `{name}Bytes` in phase 2
-            }
-            IdlType::DynVec { vec } => {
-                let item_codec = ts_codec(&vec.items, target);
-                writeln!(
-                    out,
-                    "    const {name}Bytes = getArrayCodec({item_codec}, {{ size: \
-                     input.{name}.length }}).encode(input.{name});",
-                    name = arg.name,
-                    item_codec = item_codec,
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&arg.ty) {
+            // Already encoded as `{name}Bytes` in phase 2
+        } else if let IdlType::Vec { vec } = &arg.ty {
+            let item_codec = ts_codec(vec, target);
+            writeln!(
+                out,
+                "    const {name}Bytes = getArrayCodec({item_codec}, {{ size: input.{name}.length \
+                 }}).encode(input.{name});",
+                name = arg.name,
+                item_codec = item_codec,
+            )
+            .expect("write to String");
         }
     }
 
@@ -1224,16 +1227,8 @@ fn emit_compact_decode(
     pascal: &str,
     target: TsTarget,
 ) {
-    let fixed_args: Vec<_> = ix
-        .args
-        .iter()
-        .filter(|a| !is_direct_dynamic(&a.ty))
-        .collect();
-    let dyn_args: Vec<_> = ix
-        .args
-        .iter()
-        .filter(|a| is_direct_dynamic(&a.ty))
-        .collect();
+    let fixed_args: Vec<_> = ix.args.iter().filter(|a| !is_arg_dynamic(a)).collect();
+    let dyn_args: Vec<_> = ix.args.iter().filter(|a| is_arg_dynamic(a)).collect();
 
     writeln!(out, "      let offset = {}.length;", const_name).expect("write to String");
 
@@ -1245,7 +1240,7 @@ fn emit_compact_decode(
                 out,
                 "        [\"{}\", {}],",
                 arg.name,
-                ts_codec(&arg.ty, target)
+                ts_codec_for_arg(arg, target)
             )
             .expect("write to String");
         }
@@ -1258,7 +1253,7 @@ fn emit_compact_decode(
 
     // Phase 2: decode length prefixes
     for arg in &dyn_args {
-        let pfx = dynamic_prefix_bytes(&arg.ty);
+        let pfx = codec_prefix_bytes(&arg.codec);
         let pfx_codec = prefix_codec(pfx);
         writeln!(
             out,
@@ -1272,41 +1267,37 @@ fn emit_compact_decode(
 
     // Phase 3: decode tail data
     for arg in &dyn_args {
-        match &arg.ty {
-            IdlType::DynString { .. } => {
-                writeln!(
-                    out,
-                    "      const {name} = new TextDecoder().decode(data.slice(offset, offset + \
-                     Number({name}Len)));",
-                    name = arg.name
-                )
-                .expect("write to String");
-                writeln!(out, "      offset += Number({}Len);", arg.name).expect("write to String");
-            }
-            IdlType::DynVec { vec } => {
-                let item_codec = ts_codec(&vec.items, target);
-                writeln!(
-                    out,
-                    "      const {name}Codec = getArrayCodec({item_codec}, {{ size: \
-                     Number({name}Len) }});",
-                    name = arg.name,
-                    item_codec = item_codec,
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "      const {name} = {name}Codec.decode(data.slice(offset));",
-                    name = arg.name
-                )
-                .expect("write to String");
-                writeln!(
-                    out,
-                    "      offset += {name}Codec.encode({name}).length;",
-                    name = arg.name
-                )
-                .expect("write to String");
-            }
-            _ => unreachable!(),
+        if is_string_type(&arg.ty) {
+            writeln!(
+                out,
+                "      const {name} = new TextDecoder().decode(data.slice(offset, offset + \
+                 Number({name}Len)));",
+                name = arg.name
+            )
+            .expect("write to String");
+            writeln!(out, "      offset += Number({}Len);", arg.name).expect("write to String");
+        } else if let IdlType::Vec { vec } = &arg.ty {
+            let item_codec = ts_codec(vec, target);
+            writeln!(
+                out,
+                "      const {name}Codec = getArrayCodec({item_codec}, {{ size: Number({name}Len) \
+                 }});",
+                name = arg.name,
+                item_codec = item_codec,
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "      const {name} = {name}Codec.decode(data.slice(offset));",
+                name = arg.name
+            )
+            .expect("write to String");
+            writeln!(
+                out,
+                "      offset += {name}Codec.encode({name}).length;",
+                name = arg.name
+            )
+            .expect("write to String");
         }
     }
 
@@ -1351,33 +1342,37 @@ enum PdaParamType {
 /// A collected PDA with its field name, seeds, and helper signature params.
 struct PdaInfo {
     helper_name: String,
-    seeds: Vec<IdlSeed>,
+    seeds: Vec<IdlPdaSeed>,
     params: Vec<PdaParam>,
 }
 
 fn collect_pdas(idl: &Idl) -> Vec<PdaInfo> {
     let mut pdas: Vec<PdaInfo> = Vec::new();
-    let mut seen_seeds: HashSet<Vec<IdlSeed>> = HashSet::new();
+    let mut seen_seeds: HashSet<Vec<u8>> = HashSet::new();
     let mut used_helper_names: HashMap<String, usize> = HashMap::new();
 
     for ix in &idl.instructions {
         let arg_types = instruction_arg_types(ix);
         for account in &ix.accounts {
-            let Some(pda) = &account.pda else {
-                continue;
+            let seeds = match &account.resolver {
+                IdlResolver::Pda { seeds, .. } => seeds,
+                _ => continue,
             };
-            if pda.seeds.is_empty()
-                || !pda_is_exportable(&pda.seeds, &arg_types)
-                || !seen_seeds.insert(pda.seeds.clone())
-            {
+            if seeds.is_empty() || !pda_is_exportable(seeds, &arg_types) {
+                continue;
+            }
+
+            // Use a serialized form for dedup since IdlPdaSeed doesn't impl Hash
+            let seed_key = format!("{:?}", seeds).into_bytes();
+            if !seen_seeds.insert(seed_key) {
                 continue;
             }
 
             let mut params: Vec<PdaParam> = Vec::new();
-            for seed in &pda.seeds {
+            for seed in seeds {
                 match seed {
-                    IdlSeed::Const { .. } => {}
-                    IdlSeed::Account { path } => {
+                    IdlPdaSeed::Const { .. } => {}
+                    IdlPdaSeed::Account { path } => {
                         if !params.iter().any(|param| param.name == *path) {
                             params.push(PdaParam {
                                 name: path.clone(),
@@ -1385,17 +1380,13 @@ fn collect_pdas(idl: &Idl) -> Vec<PdaInfo> {
                             });
                         }
                     }
-                    IdlSeed::Arg { path } => {
+                    IdlPdaSeed::Arg { path, ty, .. } => {
                         if params.iter().any(|param| param.name == *path) {
                             continue;
                         }
-
-                        let arg = arg_types.get(path).unwrap_or_else(|| {
-                            panic!("missing PDA arg seed definition for {path}")
-                        });
                         params.push(PdaParam {
                             name: path.clone(),
-                            ty: PdaParamType::Arg((*arg).clone()),
+                            ty: PdaParamType::Arg(ty.clone()),
                         });
                     }
                 }
@@ -1403,7 +1394,7 @@ fn collect_pdas(idl: &Idl) -> Vec<PdaInfo> {
 
             pdas.push(PdaInfo {
                 helper_name: unique_pda_helper_name(&account.name, &mut used_helper_names),
-                seeds: pda.seeds.clone(),
+                seeds: seeds.clone(),
                 params,
             });
         }
@@ -1486,21 +1477,21 @@ fn unique_pda_helper_name(
     }
 }
 
-fn pda_helper_lookup(pdas: &[PdaInfo]) -> HashMap<Vec<IdlSeed>, String> {
+fn pda_helper_lookup(pdas: &[PdaInfo]) -> HashMap<String, String> {
     pdas.iter()
-        .map(|pda| (pda.seeds.clone(), pda.helper_name.clone()))
+        .map(|pda| (format!("{:?}", pda.seeds), pda.helper_name.clone()))
         .collect()
 }
 
-fn helper_call_args(seeds: &[IdlSeed], account_expr: &impl Fn(&str) -> String) -> String {
+fn helper_call_args(seeds: &[IdlPdaSeed], account_expr: &impl Fn(&str) -> String) -> String {
     let mut args = Vec::new();
     let mut seen = HashSet::new();
 
     for seed in seeds {
         let (name, expr) = match seed {
-            IdlSeed::Const { .. } => continue,
-            IdlSeed::Account { path } => (path.as_str(), account_expr(path)),
-            IdlSeed::Arg { path } => (path.as_str(), format!("input.{path}")),
+            IdlPdaSeed::Const { .. } => continue,
+            IdlPdaSeed::Account { path } => (path.as_str(), account_expr(path)),
+            IdlPdaSeed::Arg { path, .. } => (path.as_str(), format!("input.{path}")),
         };
 
         if seen.insert(name.to_string()) {
@@ -1513,14 +1504,14 @@ fn helper_call_args(seeds: &[IdlSeed], account_expr: &impl Fn(&str) -> String) -
 
 fn write_ts_pda_seed_lines(
     out: &mut String,
-    seeds: &[IdlSeed],
+    seeds: &[IdlPdaSeed],
     target: TsTarget,
     arg_types: &HashMap<String, IdlType>,
 ) {
     for seed in seeds {
         match seed {
-            IdlSeed::Const { value } => write_byte_array(out, value),
-            IdlSeed::Account { path } => match target {
+            IdlPdaSeed::Const { value } => write_byte_array(out, value),
+            IdlPdaSeed::Account { path } => match target {
                 TsTarget::Web3js => {
                     writeln!(out, "      {}.toBytes(),", path).expect("write to String");
                 }
@@ -1529,7 +1520,7 @@ fn write_ts_pda_seed_lines(
                         .expect("write to String");
                 }
             },
-            IdlSeed::Arg { path } => {
+            IdlPdaSeed::Arg { path, .. } => {
                 let expr = arg_types
                     .get(path)
                     .map(|ty| ts_pda_arg_seed_expr(path, ty, target))
@@ -1543,7 +1534,7 @@ fn write_ts_pda_seed_lines(
 fn emit_inline_pda_derivation(
     out: &mut String,
     account_name: &str,
-    seeds: &[IdlSeed],
+    seeds: &[IdlPdaSeed],
     target: TsTarget,
     arg_types: &HashMap<String, IdlType>,
     account_expr: &impl Fn(&str) -> String,
@@ -1584,15 +1575,15 @@ fn emit_inline_pda_derivation(
 
 fn write_inline_pda_seed_lines(
     out: &mut String,
-    seeds: &[IdlSeed],
+    seeds: &[IdlPdaSeed],
     target: TsTarget,
     arg_types: &HashMap<String, IdlType>,
     account_expr: &impl Fn(&str) -> String,
 ) {
     for seed in seeds {
         match seed {
-            IdlSeed::Const { value } => write_byte_array(out, value),
-            IdlSeed::Account { path } => match target {
+            IdlPdaSeed::Const { value } => write_byte_array(out, value),
+            IdlPdaSeed::Account { path } => match target {
                 TsTarget::Web3js => {
                     writeln!(out, "        {}.toBytes(),", account_expr(path))
                         .expect("write to String");
@@ -1606,7 +1597,7 @@ fn write_inline_pda_seed_lines(
                     .expect("write to String");
                 }
             },
-            IdlSeed::Arg { path } => {
+            IdlPdaSeed::Arg { path, .. } => {
                 let expr = arg_types
                     .get(path)
                     .map(|ty| ts_pda_arg_seed_expr(&format!("input.{path}"), ty, target))
@@ -1634,11 +1625,11 @@ fn pda_arg_types(pda: &PdaInfo) -> HashMap<String, IdlType> {
         .collect()
 }
 
-fn pda_is_exportable(seeds: &[IdlSeed], arg_types: &HashMap<String, IdlType>) -> bool {
+fn pda_is_exportable(seeds: &[IdlPdaSeed], arg_types: &HashMap<String, IdlType>) -> bool {
     seeds.iter().all(|seed| match seed {
-        IdlSeed::Const { .. } => true,
-        IdlSeed::Account { path } => is_identifier(path),
-        IdlSeed::Arg { path } => is_identifier(path) && arg_types.contains_key(path),
+        IdlPdaSeed::Const { .. } => true,
+        IdlPdaSeed::Account { path } => is_identifier(path),
+        IdlPdaSeed::Arg { path, .. } => is_identifier(path) && arg_types.contains_key(path),
     })
 }
 
@@ -1677,6 +1668,11 @@ fn ts_pda_arg_seed_expr(expr: &str, ty: &IdlType, target: TsTarget) -> String {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+/// Check if a type represents a string (for dynamic codec purposes).
+fn is_string_type(ty: &IdlType) -> bool {
+    matches!(ty, IdlType::Primitive(p) if p == "string")
+}
+
 fn ts_type(ty: &IdlType) -> String {
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
@@ -1684,16 +1680,23 @@ fn ts_type(ty: &IdlType) -> String {
             "u64" | "u128" | "i64" | "i128" => "bigint".to_string(),
             "bool" => "boolean".to_string(),
             "pubkey" => "Address".to_string(),
+            "string" => "string".to_string(),
+            "bytes" => "Uint8Array".to_string(),
             other if other.starts_with('[') => "Uint8Array".to_string(),
             other => other.to_string(),
         },
         IdlType::Option { option } => format!("{} | null", ts_type(option)),
-        IdlType::Defined { defined } => defined.clone(),
-        IdlType::DynString { .. } => "string".to_string(),
-        IdlType::DynVec { vec } => format!("Array<{}>", ts_type(&vec.items)),
+        IdlType::Defined { defined } => defined.name.clone(),
+        IdlType::Vec { vec } => format!("Array<{}>", ts_type(vec)),
+        IdlType::Array { array } => {
+            let (item, _size) = array;
+            format!("Array<{}>", ts_type(item))
+        }
+        IdlType::Generic { generic } => generic.clone(),
     }
 }
 
+/// Generate codec expression for a type (no codec metadata).
 fn ts_codec(ty: &IdlType, target: TsTarget) -> String {
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
@@ -1712,6 +1715,7 @@ fn ts_codec(ty: &IdlType, target: TsTarget) -> String {
                 TsTarget::Web3js => "getPublicKeyCodec()".to_string(),
                 TsTarget::Kit => "getAddressCodec()".to_string(),
             },
+            "string" => "addCodecSizePrefix(getUtf8Codec(), getU32Codec())".to_string(),
             other if other.starts_with('[') => {
                 let size = super::parse_fixed_array_size(other).unwrap_or(1);
                 format!("fixCodecSize(getBytesCodec(), {})", size)
@@ -1719,30 +1723,87 @@ fn ts_codec(ty: &IdlType, target: TsTarget) -> String {
             other => format!("/* unknown: {} */", other),
         },
         IdlType::Option { option } => format!("getOptionCodec({})", ts_codec(option, target)),
-        IdlType::Defined { defined } => format!("{}Codec", defined),
-        IdlType::DynString { string } => {
+        IdlType::Defined { defined } => format!("{}Codec", defined.name),
+        IdlType::Vec { vec } => {
             format!(
-                "addCodecSizePrefix(getUtf8Codec(), {})",
-                prefix_codec(string.prefix_bytes)
+                "getArrayCodec({}, {{ size: getU32Codec() }})",
+                ts_codec(vec, target)
             )
         }
-        IdlType::DynVec { vec } => {
+        IdlType::Array { array } => {
+            let (item, size) = array;
             format!(
                 "getArrayCodec({}, {{ size: {} }})",
-                ts_codec(&vec.items, target),
-                prefix_codec(vec.prefix_bytes)
+                ts_codec(item, target),
+                size
             )
         }
+        IdlType::Generic { generic } => format!("/* generic: {} */", generic),
     }
 }
 
-/// Map prefix byte width to the integer type name used for codec tracking.
-fn prefix_int_type(prefix_bytes: usize) -> &'static str {
-    match prefix_bytes {
-        1 => "u8",
-        2 => "u16",
-        4 => "u32",
-        _ => "u64",
+/// Generate codec expression for a field def, using its codec metadata if
+/// present.
+fn ts_codec_for_field_def(field: &IdlFieldDef, target: TsTarget) -> String {
+    match &field.codec {
+        Some(IdlCodec::SizePrefixed { prefix, item, .. }) => {
+            let pfx_bytes = scalar_repr_bytes(prefix);
+            let pfx_codec = prefix_codec(pfx_bytes);
+            if is_string_type(&field.ty) {
+                format!("addCodecSizePrefix(getUtf8Codec(), {})", pfx_codec)
+            } else if let IdlType::Vec { vec } = &field.ty {
+                let item_codec = match item {
+                    Some(codec_item) => ts_codec(&codec_item.ty, target),
+                    None => ts_codec(vec, target),
+                };
+                format!("getArrayCodec({}, {{ size: {} }})", item_codec, pfx_codec)
+            } else {
+                ts_codec(&field.ty, target)
+            }
+        }
+        _ => ts_codec(&field.ty, target),
+    }
+}
+
+/// Generate codec expression for an instruction arg, using its codec metadata
+/// if present.
+fn ts_codec_for_arg(arg: &IdlArg, target: TsTarget) -> String {
+    match &arg.codec {
+        Some(IdlCodec::SizePrefixed { prefix, item, .. }) => {
+            let pfx_bytes = scalar_repr_bytes(prefix);
+            let pfx_codec = prefix_codec(pfx_bytes);
+            if is_string_type(&arg.ty) {
+                format!("addCodecSizePrefix(getUtf8Codec(), {})", pfx_codec)
+            } else if let IdlType::Vec { vec } = &arg.ty {
+                let item_codec = match item {
+                    Some(codec_item) => ts_codec(&codec_item.ty, target),
+                    None => ts_codec(vec, target),
+                };
+                format!("getArrayCodec({}, {{ size: {} }})", item_codec, pfx_codec)
+            } else {
+                ts_codec(&arg.ty, target)
+            }
+        }
+        _ => ts_codec(&arg.ty, target),
+    }
+}
+
+/// Extract prefix byte width from a codec's ScalarRepr.
+fn scalar_repr_bytes(repr: &ScalarRepr) -> usize {
+    match repr.ty.as_str() {
+        "u8" => 1,
+        "u16" => 2,
+        "u32" => 4,
+        "u64" => 8,
+        _ => 4,
+    }
+}
+
+/// Extract prefix byte width from an optional codec on a field/arg.
+fn codec_prefix_bytes(codec: &Option<IdlCodec>) -> usize {
+    match codec {
+        Some(IdlCodec::SizePrefixed { prefix, .. }) => scalar_repr_bytes(prefix),
+        _ => 4, // default u32
     }
 }
 
@@ -1756,48 +1817,62 @@ fn prefix_codec(prefix_bytes: usize) -> &'static str {
     }
 }
 
+/// Map prefix byte width to the integer type name used for codec tracking.
+fn prefix_int_type(prefix_bytes: usize) -> &'static str {
+    match prefix_bytes {
+        1 => "u8",
+        2 => "u16",
+        4 => "u32",
+        _ => "u64",
+    }
+}
+
 fn collect_used_codecs(idl: &Idl) -> HashSet<String> {
     let mut used = HashSet::new();
 
-    let mut visit = |ty: &IdlType| match ty {
-        IdlType::Primitive(p) => {
-            used.insert(p.clone());
+    fn visit_type_into(ty: &IdlType, used: &mut HashSet<String>) {
+        match ty {
+            IdlType::Primitive(p) => {
+                used.insert(p.clone());
+            }
+            IdlType::Option { option } => {
+                used.insert("option".to_string());
+                visit_type_into(option, used);
+            }
+            IdlType::Vec { vec } => {
+                used.insert("dynVec".to_string());
+                visit_type_into(vec, used);
+            }
+            IdlType::Array { array } => {
+                visit_type_into(&array.0, used);
+            }
+            IdlType::Defined { .. } => {}
+            IdlType::Generic { .. } => {}
         }
-        IdlType::Option { .. } => {
-            used.insert("option".to_string());
-        }
-        IdlType::Defined { .. } => {}
-        IdlType::DynString { string } => {
+    }
+
+    fn visit_codec_into(codec: &Option<IdlCodec>, used: &mut HashSet<String>) {
+        if let Some(IdlCodec::SizePrefixed { prefix, .. }) = codec {
+            let pfx_bytes = scalar_repr_bytes(prefix);
+            used.insert(prefix_int_type(pfx_bytes).to_string());
             used.insert("dynString".to_string());
-            used.insert(prefix_int_type(string.prefix_bytes).to_string());
         }
-        IdlType::DynVec { vec } => {
-            used.insert("dynVec".to_string());
-            used.insert(prefix_int_type(vec.prefix_bytes).to_string());
-        }
-    };
+    }
 
     for type_def in &idl.types {
-        for field in &type_def.ty.fields {
-            visit_type(&field.ty, &mut visit);
+        for field in &type_def.fields {
+            visit_type_into(&field.ty, &mut used);
+            visit_codec_into(&field.codec, &mut used);
         }
     }
     for ix in &idl.instructions {
         for arg in &ix.args {
-            visit_type(&arg.ty, &mut visit);
+            visit_type_into(&arg.ty, &mut used);
+            visit_codec_into(&arg.codec, &mut used);
         }
     }
 
     used
-}
-
-fn visit_type(ty: &IdlType, visit: &mut impl FnMut(&IdlType)) {
-    visit(ty);
-    match ty {
-        IdlType::Option { option } => visit_type(option, visit),
-        IdlType::DynVec { vec } => visit_type(&vec.items, visit),
-        _ => {}
-    }
 }
 
 /// Write a `new Uint8Array([...])` seed line directly to the output.
@@ -1820,21 +1895,6 @@ const PUBLIC_KEY_CODEC_HELPER: &str = r#"function getPublicKeyCodec() {
   );
 }
 "#;
-
-/// Returns `true` if the field is a top-level dynamic type (`DynString` or
-/// `DynVec`). These require compact wire-format handling.
-fn is_direct_dynamic(ty: &IdlType) -> bool {
-    matches!(ty, IdlType::DynString { .. } | IdlType::DynVec { .. })
-}
-
-/// Return the byte-width of the length prefix for a dynamic field.
-fn dynamic_prefix_bytes(ty: &IdlType) -> usize {
-    match ty {
-        IdlType::DynString { string } => string.prefix_bytes,
-        IdlType::DynVec { vec } => vec.prefix_bytes,
-        _ => unreachable!("dynamic_prefix_bytes called on non-dynamic type"),
-    }
-}
 
 const MATCH_DISC_HELPER: &str = r#"function matchDisc(data: Uint8Array, disc: Uint8Array): boolean {
   if (data.length < disc.length) return false;

@@ -381,7 +381,7 @@ mod tests {
     fn set_data_zero_length() {
         let mut cpi = CpiDynamic::<1, 8>::new(&PROGRAM_ID);
         assert!(cpi.set_data(&[]).is_ok());
-        assert_eq!(cpi.instruction_data(), &[]);
+        assert_eq!(cpi.instruction_data(), &[] as &[u8]);
     }
 
     #[test]

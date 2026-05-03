@@ -139,15 +139,24 @@ struct RawInstructionSpec {
     heap: bool,
 }
 
+/// Original arg (name + type) as declared in the handler, for IDL emission.
+struct IdlArgSpec {
+    name: Ident,
+    ty: Type,
+}
+
 struct InstructionSpec {
     fn_name: Ident,
     disc_bytes: Vec<LitInt>,
     disc_values: Vec<u8>,
     accounts_type: TokenStream2,
+    #[allow(dead_code)]
+    accounts_type_str: String,
     heap: bool,
     client_struct_name: Ident,
     client_macro_ident: Ident,
     client_args: Vec<ClientArgSpec>,
+    idl_args: Vec<IdlArgSpec>,
     has_remaining: bool,
 }
 
@@ -320,6 +329,8 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let macro_ident =
                         format_ident!("__{}_instruction", pascal_to_snake(&accounts_type_str));
 
+                    // Collect original arg types for IDL emission (before client mapping).
+                    let mut idl_args: Vec<IdlArgSpec> = Vec::new();
                     let mut remaining_args: Vec<(Ident, Type)> = Vec::new();
                     for arg in func.sig.inputs.iter().skip(1) {
                         let FnArg::Typed(pt) = arg else {
@@ -329,6 +340,10 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
                             Pat::Ident(pi) => pi.ident.clone(),
                             _ => continue,
                         };
+                        idl_args.push(IdlArgSpec {
+                            name: name.clone(),
+                            ty: (*pt.ty).clone(),
+                        });
                         let ty = if classify_lifetime_arg(&pt.ty) {
                             // Borrowed struct (has lifetime param) — the off-chain client
                             // takes pre-serialized bytes. The user is responsible for
@@ -386,10 +401,12 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
                         disc_bytes: disc_bytes.clone(),
                         disc_values,
                         accounts_type,
+                        accounts_type_str,
                         heap: args.heap,
                         client_struct_name: struct_name,
                         client_macro_ident: macro_ident,
                         client_args,
+                        idl_args,
                         has_remaining: ctx_kind.has_remaining(),
                     });
 
@@ -827,6 +844,177 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
     // from macro-generated dispatch code, which the compiler can't see.
     module.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
 
+    // IDL instruction fragment emissions (feature-gated)
+    let idl_instruction_fragments: Vec<TokenStream2> = instruction_specs
+        .iter()
+        .map(|spec| {
+            let fn_name_str = spec.fn_name.to_string();
+            let disc_values = &spec.disc_values;
+            let accounts_type_str = &spec.accounts_type_str;
+            let arg_defs: Vec<TokenStream2> = spec.idl_args.iter().map(|arg| {
+                let arg_name = arg.name.to_string();
+                let idl_type_tokens = crate::helpers::type_to_idl_type_tokens(&arg.ty);
+                let codec_tokens = crate::helpers::type_to_idl_codec_tokens(&arg.ty);
+                quote! {
+                    quasar_lang::idl_build::__reexport::IdlArg {
+                        name: quasar_lang::idl_build::s(#arg_name),
+                        ty: #idl_type_tokens,
+                        codec: #codec_tokens,
+                        docs: quasar_lang::idl_build::Vec::new(),
+                    }
+                }
+            }).collect();
+
+            // Compute layout based on whether any arg has a codec (is dynamic)
+            let has_dynamic = spec.idl_args.iter().any(|arg| {
+                crate::helpers::classify_pod_dynamic(&arg.ty).is_some()
+                    || crate::helpers::classify_option_dynamic(&arg.ty)
+            });
+            let layout_tokens = if has_dynamic {
+                let inline_fields: Vec<String> = spec.idl_args.iter()
+                    .filter(|arg| {
+                        crate::helpers::classify_pod_dynamic(&arg.ty).is_none()
+                            && !crate::helpers::classify_option_dynamic(&arg.ty)
+                    })
+                    .map(|arg| arg.name.to_string())
+                    .collect();
+                let tail_fields: Vec<String> = spec.idl_args.iter()
+                    .filter(|arg| {
+                        crate::helpers::classify_pod_dynamic(&arg.ty).is_some()
+                            || crate::helpers::classify_option_dynamic(&arg.ty)
+                    })
+                    .map(|arg| arg.name.to_string())
+                    .collect();
+                quote! {
+                    Some(quasar_lang::idl_build::__reexport::IdlLayout::Compact {
+                        inline_fields: quasar_lang::idl_build::vec![#(quasar_lang::idl_build::s(#inline_fields)),*],
+                        tail_fields: quasar_lang::idl_build::vec![#(quasar_lang::idl_build::s(#tail_fields)),*],
+                        wire: quasar_lang::idl_build::__reexport::CompactWire::InlineFieldsThenTailHeadersThenTailPayloads,
+                    })
+                }
+            } else if spec.idl_args.is_empty() {
+                quote! { None }
+            } else {
+                let field_names: Vec<String> = spec.idl_args.iter().map(|arg| arg.name.to_string()).collect();
+                quote! {
+                    Some(quasar_lang::idl_build::__reexport::IdlLayout::Fixed {
+                        fields: quasar_lang::idl_build::vec![#(quasar_lang::idl_build::s(#field_names)),*],
+                    })
+                }
+            };
+
+            // remaining_accounts
+            let remaining_tokens = if spec.has_remaining {
+                quote! {
+                    Some(quasar_lang::idl_build::__reexport::IdlRemainingAccounts {
+                        kind: quasar_lang::idl_build::__reexport::RemainingAccountsKind::Append,
+                        name: quasar_lang::idl_build::s("remainingAccounts"),
+                        min: 0,
+                        max: None,
+                        item: quasar_lang::idl_build::__reexport::RemainingAccountItem {
+                            client_type: quasar_lang::idl_build::s("accountMeta"),
+                            signer: quasar_lang::idl_build::__reexport::AccountFlag::Dynamic(
+                                quasar_lang::idl_build::__reexport::AccountFlagDynamic::Input,
+                            ),
+                            writable: quasar_lang::idl_build::__reexport::AccountFlag::Dynamic(
+                                quasar_lang::idl_build::__reexport::AccountFlagDynamic::Input,
+                            ),
+                        },
+                        policy: quasar_lang::idl_build::__reexport::RemainingAccountPolicy {
+                            position: quasar_lang::idl_build::__reexport::RemainingPosition::AfterDeclaredAccounts,
+                            order: quasar_lang::idl_build::__reexport::RemainingOrder::PreserveInput,
+                        },
+                    })
+                }
+            } else {
+                quote! { None }
+            };
+
+            quote! {
+                #[cfg(feature = "idl-build")]
+                quasar_lang::__private_inventory::submit! {
+                    quasar_lang::idl_build::InstructionFragment {
+                        build: {
+                            fn __build() -> quasar_lang::idl_build::__reexport::IdlInstruction {
+                                quasar_lang::idl_build::__reexport::IdlInstruction {
+                                    name: quasar_lang::idl_build::s(#fn_name_str),
+                                    discriminator: quasar_lang::idl_build::vec![#(#disc_values),*],
+                                    docs: quasar_lang::idl_build::Vec::new(),
+                                    accounts: quasar_lang::idl_build::Vec::new(),
+                                    args: quasar_lang::idl_build::vec![#(#arg_defs),*],
+                                    layout: #layout_tokens,
+                                    returns: None,
+                                    effects: quasar_lang::idl_build::Vec::new(),
+                                    remaining_accounts: #remaining_tokens,
+                                }
+                            }
+                            __build
+                        },
+                        accounts_struct_name: #accounts_type_str,
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // IDL fragments for raw instructions (issue #5)
+    let idl_raw_instruction_fragments: Vec<TokenStream2> = raw_instruction_specs
+        .iter()
+        .map(|spec| {
+            let fn_name_str = spec.fn_name.to_string();
+            let disc_values = &spec.disc_values;
+            quote! {
+                #[cfg(feature = "idl-build")]
+                quasar_lang::__private_inventory::submit! {
+                    quasar_lang::idl_build::InstructionFragment {
+                        build: {
+                            fn __build() -> quasar_lang::idl_build::__reexport::IdlInstruction {
+                                quasar_lang::idl_build::__reexport::IdlInstruction {
+                                    name: quasar_lang::idl_build::s(#fn_name_str),
+                                    discriminator: quasar_lang::idl_build::vec![#(#disc_values),*],
+                                    docs: quasar_lang::idl_build::Vec::new(),
+                                    accounts: quasar_lang::idl_build::Vec::new(),
+                                    args: quasar_lang::idl_build::Vec::new(),
+                                    layout: None,
+                                    returns: None,
+                                    effects: quasar_lang::idl_build::Vec::new(),
+                                    remaining_accounts: None,
+                                }
+                            }
+                            __build
+                        },
+                        accounts_struct_name: "",
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // IDL build entry point (feature-gated, host-only)
+    let idl_build_fn = {
+        let mod_name_str = mod_name.to_string();
+        quote! {
+            /// Assemble all IDL fragments and return JSON.
+            #[cfg(feature = "idl-build")]
+            pub fn __quasar_build_idl() -> quasar_lang::idl_build::String {
+                let address = quasar_lang::idl_build::address_to_base58(&crate::ID);
+                let idl = quasar_lang::idl_build::build_idl(
+                    &address,
+                    #mod_name_str,
+                    env!("CARGO_PKG_VERSION"),
+                );
+                quasar_lang::idl_build::__reexport::serde_json::to_string_pretty(&idl).unwrap()
+            }
+
+            #[cfg(all(feature = "idl-build", test, not(any(target_os = "solana", target_arch = "bpf"))))]
+            #[test]
+            fn __quasar_emit_idl() {
+                extern crate std;
+                std::print!("{}", __quasar_build_idl());
+            }
+        }
+    };
+
     quote! {
         #program_type
 
@@ -855,6 +1043,11 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[allow(unexpected_cfgs)]
         #[cfg(not(feature = "alloc"))]
         quasar_lang::no_alloc!();
+
+        #(#idl_instruction_fragments)*
+        #(#idl_raw_instruction_fragments)*
+
+        #idl_build_fn
     }
     .into()
 }

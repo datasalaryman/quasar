@@ -4,14 +4,16 @@
 //! variants), and optional custom struct definitions for cross-program
 //! interaction without runtime IDL parsing.
 //!
-//! Uses canonical schema types from `quasar_schema` — no duplicate
-//! definitions.
+//! Uses canonical schema types from `quasar_idl_schema` — the
+//! `quasar-idl/1.0.0` contract.
 
 use {
     crate::helpers::pascal_to_snake,
     proc_macro::TokenStream,
     proc_macro2::{Ident, Span, TokenStream as TokenStream2},
-    quasar_schema::{Idl, IdlField, IdlInstruction, IdlType, IdlTypeDef},
+    quasar_idl_schema::{
+        AccountFlag, Idl, IdlArg, IdlFieldDef, IdlInstruction, IdlType, IdlTypeDef, IdlTypeDefKind,
+    },
     quote::{format_ident, quote},
     std::collections::{HashMap, HashSet},
 };
@@ -24,17 +26,18 @@ use {
 /// Returns an error if any type contains dynamic fields, circular references,
 /// or non-struct kinds.
 fn build_type_sizes(types: &[IdlTypeDef]) -> Result<HashMap<String, usize>, String> {
-    let type_map: HashMap<&str, &[IdlField]> = types
+    let type_map: HashMap<&str, &[IdlFieldDef]> = types
         .iter()
-        .map(|td| (td.name.as_str(), td.ty.fields.as_slice()))
+        .filter(|td| td.kind == IdlTypeDefKind::Struct)
+        .map(|td| (td.name.as_str(), td.fields.as_slice()))
         .collect();
 
     // Validate all types are structs (enum kind would produce wrong sizes).
     for td in types {
-        if td.ty.kind != quasar_schema::IdlTypeDefKind::Struct {
+        if td.kind != IdlTypeDefKind::Struct {
             return Err(format!(
                 "type '{}' has kind '{:?}' — only structs are supported in CPI",
-                td.name, td.ty.kind
+                td.name, td.kind
             ));
         }
     }
@@ -50,7 +53,7 @@ fn build_type_sizes(types: &[IdlTypeDef]) -> Result<HashMap<String, usize>, Stri
 
 fn resolve_size(
     name: &str,
-    type_map: &HashMap<&str, &[IdlField]>,
+    type_map: &HashMap<&str, &[IdlFieldDef]>,
     sizes: &mut HashMap<String, usize>,
     resolving: &mut HashSet<String>,
 ) -> Result<usize, String> {
@@ -74,20 +77,23 @@ fn resolve_size(
 
 fn field_byte_size(
     ty: &IdlType,
-    type_map: &HashMap<&str, &[IdlField]>,
+    type_map: &HashMap<&str, &[IdlFieldDef]>,
     sizes: &mut HashMap<String, usize>,
     resolving: &mut HashSet<String>,
 ) -> Result<usize, String> {
     match ty {
         IdlType::Primitive(p) => primitive_size(p),
         IdlType::Option { option } => Ok(1 + field_byte_size(option, type_map, sizes, resolving)?),
-        IdlType::Defined { defined } => resolve_size(defined, type_map, sizes, resolving),
-        IdlType::DynString { .. } => {
-            Err("dynamic string not supported in CPI — only fixed-size types allowed".into())
-        }
-        IdlType::DynVec { .. } => {
+        IdlType::Defined { defined } => resolve_size(&defined.name, type_map, sizes, resolving),
+        IdlType::Vec { .. } => {
             Err("dynamic vec not supported in CPI — only fixed-size types allowed".into())
         }
+        IdlType::Array { array } => {
+            let (item_ty, len) = array;
+            let item_size = field_byte_size(item_ty, type_map, sizes, resolving)?;
+            Ok(item_size * len)
+        }
+        IdlType::Generic { .. } => Err("generic types not supported in CPI".into()),
     }
 }
 
@@ -95,10 +101,14 @@ fn primitive_size(name: &str) -> Result<usize, String> {
     match name {
         "u8" | "i8" | "bool" => Ok(1),
         "u16" | "i16" => Ok(2),
-        "u32" | "i32" => Ok(4),
-        "u64" | "i64" => Ok(8),
+        "u32" | "i32" | "f32" => Ok(4),
+        "u64" | "i64" | "f64" => Ok(8),
         "u128" | "i128" => Ok(16),
         "pubkey" => Ok(32),
+        "string" => {
+            Err("dynamic string not supported in CPI — only fixed-size types allowed".into())
+        }
+        "bytes" => Err("dynamic bytes not supported in CPI — only fixed-size types allowed".into()),
         other => Err(format!("unsupported primitive type '{other}'")),
     }
 }
@@ -129,6 +139,8 @@ fn map_idl_type(ty: &IdlType, type_sizes: &HashMap<String, usize>) -> Result<Typ
                 "i64" => quote! { i64 },
                 "u128" => quote! { u128 },
                 "i128" => quote! { i128 },
+                "f32" => quote! { f32 },
+                "f64" => quote! { f64 },
                 "pubkey" => {
                     return Ok(TypeInfo {
                         param_type: quote! { &quasar_lang::prelude::Address },
@@ -143,10 +155,10 @@ fn map_idl_type(ty: &IdlType, type_sizes: &HashMap<String, usize>) -> Result<Typ
             })
         }
         IdlType::Defined { defined } => {
-            if !type_sizes.contains_key(defined.as_str()) {
-                return Err(format!("undefined type '{defined}'"));
+            if !type_sizes.contains_key(defined.name.as_str()) {
+                return Err(format!("undefined type '{}'", defined.name));
             }
-            let ident = Ident::new(defined, Span::call_site());
+            let ident = Ident::new(&defined.name, Span::call_site());
             Ok(TypeInfo {
                 param_type: quote! { #ident },
                 field_type: quote! { #ident },
@@ -155,12 +167,11 @@ fn map_idl_type(ty: &IdlType, type_sizes: &HashMap<String, usize>) -> Result<Typ
         IdlType::Option { .. } => {
             Err("option not supported in CPI — only fixed-size types allowed".into())
         }
-        IdlType::DynString { .. } => {
-            Err("dynamic string not supported in CPI — only fixed-size types allowed".into())
-        }
-        IdlType::DynVec { .. } => {
+        IdlType::Vec { .. } => {
             Err("dynamic vec not supported in CPI — only fixed-size types allowed".into())
         }
+        IdlType::Array { .. } => Err("fixed array not yet supported in CPI".into()),
+        IdlType::Generic { .. } => Err("generic types not supported in CPI".into()),
     }
 }
 
@@ -171,7 +182,7 @@ fn map_idl_type(ty: &IdlType, type_sizes: &HashMap<String, usize>) -> Result<Typ
 /// Generate the data write block for instruction args, flattening struct fields
 /// recursively into a packed byte buffer.
 fn generate_data_write(
-    args: &[IdlField],
+    args: &[IdlArg],
     disc: &[u8],
     idl_types: &[IdlTypeDef],
 ) -> Result<(TokenStream2, usize), String> {
@@ -248,15 +259,18 @@ fn emit_field_write(
             // Recurse into the struct's fields
             let td = idl_types
                 .iter()
-                .find(|t| t.name == *defined)
-                .ok_or_else(|| format!("undefined type '{defined}'"))?;
-            for sub_field in &td.ty.fields {
+                .find(|t| t.name == defined.name)
+                .ok_or_else(|| format!("undefined type '{}'", defined.name))?;
+            for sub_field in &td.fields {
                 let sub_name = Ident::new(&pascal_to_snake(&sub_field.name), Span::call_site());
                 let sub_access = quote! { #access.#sub_name };
                 emit_field_write(stmts, offset, &sub_access, &sub_field.ty, idl_types)?;
             }
         }
-        IdlType::Option { .. } | IdlType::DynString { .. } | IdlType::DynVec { .. } => {
+        IdlType::Option { .. }
+        | IdlType::Vec { .. }
+        | IdlType::Array { .. }
+        | IdlType::Generic { .. } => {
             return Err("dynamic types not supported in CPI".into());
         }
     }
@@ -264,8 +278,8 @@ fn emit_field_write(
 }
 
 /// Build an InstructionAccount constructor call for the given account flags.
-fn ia_constructor(writable: bool, signer: bool) -> &'static str {
-    match (writable, signer) {
+fn ia_constructor(writable: &AccountFlag, signer: &AccountFlag) -> &'static str {
+    match (writable.is_true(), signer.is_true()) {
         (true, true) => "writable_signer",
         (true, false) => "writable",
         (false, true) => "readonly_signer",
@@ -287,7 +301,6 @@ fn emit_struct_defs(
         }
         let name = Ident::new(&td.name, Span::call_site());
         let fields: Vec<TokenStream2> = td
-            .ty
             .fields
             .iter()
             .map(|f| {
@@ -326,18 +339,19 @@ fn collect_referenced_types(
 
 fn collect_type_refs(ty: &IdlType, idl_types: &[IdlTypeDef], out: &mut HashSet<String>) {
     match ty {
-        IdlType::Defined { defined } if out.insert(defined.clone()) => {
+        IdlType::Defined { defined } if out.insert(defined.name.clone()) => {
             // Recurse into nested types
-            if let Some(td) = idl_types.iter().find(|t| t.name == *defined) {
-                for field in &td.ty.fields {
+            if let Some(td) = idl_types.iter().find(|t| t.name == defined.name) {
+                for field in &td.fields {
                     collect_type_refs(&field.ty, idl_types, out);
                 }
             }
         }
         IdlType::Defined { .. } => {}
         IdlType::Option { option } => collect_type_refs(option, idl_types, out),
-        IdlType::DynVec { vec } => collect_type_refs(&vec.items, idl_types, out),
-        IdlType::Primitive(_) | IdlType::DynString { .. } => {}
+        IdlType::Vec { vec } => collect_type_refs(vec, idl_types, out),
+        IdlType::Array { array } => collect_type_refs(&array.0, idl_types, out),
+        IdlType::Primitive(_) | IdlType::Generic { .. } => {}
     }
 }
 
@@ -473,7 +487,7 @@ pub fn declare_program(input: TokenStream) -> TokenStream {
             .iter()
             .zip(&acct_idents)
             .map(|(a, name)| {
-                let method = Ident::new(ia_constructor(a.writable, a.signer), Span::call_site());
+                let method = Ident::new(ia_constructor(&a.writable, &a.signer), Span::call_site());
                 quote! { quasar_lang::cpi::InstructionAccount::#method(#name.address()) }
             })
             .collect();

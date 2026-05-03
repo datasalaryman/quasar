@@ -6,23 +6,74 @@ use {
     },
     quasar_idl::{
         codegen::{self, model::ProgramModel},
-        parser::{self, ParsedProgram},
         types::Idl,
     },
-    std::path::{Path, PathBuf},
+    std::{
+        path::{Path, PathBuf},
+        process::Command,
+    },
 };
 
-/// Parse program source, write IDL JSON and Rust client.
-/// Returns the IDL for optional downstream client generation.
-fn generate_idl(
-    crate_path: &Path,
-    clients_path: &Path,
-) -> Result<(Idl, ParsedProgram), anyhow::Error> {
-    let parsed = parser::parse_program(crate_path);
-    let idl =
-        parser::build_idl(&parsed).map_err(|errors| anyhow::anyhow!("{}", errors.join("\n")))?;
+/// Build the IDL by compiling the program crate with `--features idl-build`
+/// and running the `__quasar_emit_idl` test to capture the JSON output.
+fn build_idl_from_crate(crate_path: &Path) -> Result<Idl, anyhow::Error> {
+    // Read the crate name from Cargo.toml
+    let cargo_toml_path = crate_path.join("Cargo.toml");
+    let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", cargo_toml_path.display()))?;
+    let cargo_toml: toml::Value = cargo_toml_content
+        .parse()
+        .map_err(|e| anyhow::anyhow!("failed to parse Cargo.toml: {e}"))?;
+    let package_name = cargo_toml
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing [package].name in Cargo.toml"))?;
 
-    // All codegens now work from the IDL — single source of truth.
+    // Run the IDL emission test
+    let output = Command::new("cargo")
+        .arg("test")
+        .arg("-p")
+        .arg(package_name)
+        .arg("--features")
+        .arg("idl-build")
+        .arg("--")
+        .arg("__quasar_emit_idl")
+        .arg("--nocapture")
+        .current_dir(crate_path.parent().unwrap_or(crate_path))
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run cargo test: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "IDL build failed (cargo test --features idl-build):\n{stderr}"
+        ));
+    }
+
+    // Parse stdout — the IDL JSON is printed by the test.
+    // Filter out test harness lines (lines starting with "running", "test result",
+    // etc.)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_start = stdout
+        .find('{')
+        .ok_or_else(|| anyhow::anyhow!("no JSON found in IDL build output"))?;
+    let json_end = stdout
+        .rfind('}')
+        .ok_or_else(|| anyhow::anyhow!("no closing brace in IDL build output"))?;
+    let json_str = &stdout[json_start..=json_end];
+
+    let idl: Idl = serde_json::from_str(json_str)
+        .map_err(|e| anyhow::anyhow!("failed to parse IDL JSON: {e}"))?;
+
+    Ok(idl)
+}
+
+/// Generate IDL JSON and Rust client from the program crate.
+fn generate_idl(crate_path: &Path, clients_path: &Path) -> Result<Idl, anyhow::Error> {
+    let idl = build_idl_from_crate(crate_path)?;
+
+    // Generate client code from the IDL
     let model = ProgramModel::new(&idl);
     let client_code = codegen::rust::generate_client(&idl);
     let client_cargo_toml = codegen::rust::generate_cargo_toml_for_program(&model);
@@ -30,7 +81,7 @@ fn generate_idl(
     // Write IDL JSON
     let idl_dir = PathBuf::from("target").join("idl");
     std::fs::create_dir_all(&idl_dir)?;
-    let idl_path = idl_dir.join(format!("{}.json", idl.metadata.name));
+    let idl_path = idl_dir.join(format!("{}.json", idl.name));
     let json = serde_json::to_string_pretty(&idl)
         .map_err(|e| anyhow::anyhow!("failed to serialize IDL: {e}"))?;
     std::fs::write(&idl_path, &json)?;
@@ -54,8 +105,7 @@ fn generate_idl(
         std::fs::write(&file_path, content)?;
     }
 
-    // No re-parse needed — build_idl borrows, parsed survives for lint.
-    Ok((idl, parsed))
+    Ok(idl)
 }
 
 /// Called by `quasar idl <path>` — generates IDL JSON + Rust client only.
@@ -75,13 +125,13 @@ pub fn run(command: IdlCommand) -> CliResult {
 }
 
 /// Called by `quasar build` — generates IDL + Rust client + configured language
-/// clients. Returns the ParsedProgram for downstream lint use.
+/// clients.
 pub fn generate(
     crate_path: &Path,
     languages: &[&str],
     clients_path: &Path,
-) -> Result<ParsedProgram, CliError> {
-    let (idl, parsed) = generate_idl(crate_path, clients_path)?;
+) -> Result<(), CliError> {
+    let idl = generate_idl(crate_path, clients_path)?;
     crate::client::generate_clients(&idl, languages, clients_path)?;
-    Ok(parsed)
+    Ok(())
 }
