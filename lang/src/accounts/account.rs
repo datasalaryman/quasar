@@ -365,6 +365,7 @@ impl<T> core::ops::DerefMut for Account<T> {
 
 impl<T: crate::account_init::AccountInit> crate::account_init::AccountInit for Account<T> {
     type InitParams<'a> = T::InitParams<'a>;
+    const DEFAULT_INIT_PARAMS_VALID: bool = T::DEFAULT_INIT_PARAMS_VALID;
 
     #[inline(always)]
     fn init<'a>(

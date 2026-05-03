@@ -514,21 +514,27 @@ fn emit_behavior_assertions(semantics: &[FieldSemantics]) -> proc_macro2::TokenS
                         #at_most_one_msg,
                     );
                 });
-
-                // If the account type requires init params (DEFAULT_INIT_PARAMS_VALID
-                // = false), exactly one behavior must provide them.
-                let required_msg = format!(
-                    "field `{}` requires an init-param behavior (e.g., token(...) or mint(...))",
-                    field_name,
-                );
-                asserts.push(quote! {
-                    const _: () = assert!(
-                        <#ty as quasar_lang::account_init::AccountInit>::DEFAULT_INIT_PARAMS_VALID
-                            || #(#init_contributor_count)+* >= 1,
-                        #required_msg,
-                    );
-                });
             }
+
+            // If the account type requires init params (DEFAULT_INIT_PARAMS_VALID
+            // = false), at least one behavior must provide them.
+            // This fires even with zero behavior groups (count_expr = 0usize).
+            let count_expr = if init_contributor_count.is_empty() {
+                quote! { 0usize }
+            } else {
+                quote! { #(#init_contributor_count)+* }
+            };
+            let required_msg = format!(
+                "field `{}` requires an init-param behavior (e.g., token(...) or mint(...))",
+                field_name,
+            );
+            asserts.push(quote! {
+                const _: () = assert!(
+                    <#ty as quasar_lang::account_init::AccountInit>::DEFAULT_INIT_PARAMS_VALID
+                        || #count_expr >= 1,
+                    #required_msg,
+                );
+            });
         }
     }
 
