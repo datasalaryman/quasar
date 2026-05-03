@@ -37,7 +37,7 @@
     any(target_os = "solana", target_arch = "bpf"),
     feature(asm_experimental_arch)
 )]
-#[cfg(feature = "debug")]
+#[cfg(any(feature = "debug", feature = "idl-build"))]
 extern crate alloc;
 extern crate self as quasar_lang;
 
@@ -401,7 +401,16 @@ pub mod utils;
 /// Runtime validation helpers for account constraints.
 pub mod validation;
 
+/// IDL fragment collection for compile-time IDL generation.
+/// Feature-gated behind `idl-build`.
+#[cfg(feature = "idl-build")]
+pub mod idl_build;
+
 pub use crate::pod::{PodString as String, PodVec as Vec};
+/// Re-export `inventory` for proc macro codegen (hidden).
+#[cfg(feature = "idl-build")]
+#[doc(hidden)]
+pub use inventory as __private_inventory;
 #[doc(hidden)]
 pub use solana_program_error as __solana_program_error;
 /// Re-export of the `zeropod` crate so that `#[derive(ZeroPod)]` expansion

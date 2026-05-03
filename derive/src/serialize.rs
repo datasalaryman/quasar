@@ -118,6 +118,54 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
         .push(parse_quote!(__C: wincode::config::ConfigCore));
     let (schema_read_impl_generics, _, _) = schema_read_generics.split_for_impl();
 
+    // IDL fragment emission
+    let idl_fragment = {
+        let name_str = name.to_string();
+        let idl_field_defs: Vec<proc_macro2::TokenStream> = fields
+            .iter()
+            .map(|f| {
+                let fname = f.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
+                let fty = crate::helpers::type_to_idl_type_tokens(&f.ty);
+                quote! {
+                    quasar_lang::idl_build::__reexport::IdlFieldDef {
+                        name: quasar_lang::idl_build::s(#fname),
+                        ty: #fty,
+                        codec: None,
+                        docs: quasar_lang::idl_build::Vec::new(),
+                    }
+                }
+            })
+            .collect();
+
+        quote! {
+            #[cfg(feature = "idl-build")]
+            quasar_lang::__private_inventory::submit! {
+                quasar_lang::idl_build::TypeFragment {
+                    build: {
+                        fn __build() -> quasar_lang::idl_build::__reexport::IdlTypeDef {
+                            quasar_lang::idl_build::__reexport::IdlTypeDef {
+                                name: quasar_lang::idl_build::s(#name_str),
+                                kind: quasar_lang::idl_build::__reexport::IdlTypeDefKind::Struct,
+                                docs: quasar_lang::idl_build::Vec::new(),
+                                generics: quasar_lang::idl_build::Vec::new(),
+                                fields: quasar_lang::idl_build::vec![#(#idl_field_defs),*],
+                                variants: quasar_lang::idl_build::Vec::new(),
+                                repr: None,
+                                alias: None,
+                                fallback: None,
+                                codec: None,
+                                layout: None,
+                                space: None,
+                                semantics: None,
+                            }
+                        }
+                        __build
+                    },
+                }
+            }
+        }
+    };
+
     let expanded = quote! {
         #[doc(hidden)]
         #[derive(quasar_lang::__zeropod::ZeroPod)]
@@ -269,6 +317,8 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
                 Ok(())
             }
         }
+
+        #idl_fragment
     };
 
     expanded.into()
@@ -534,6 +584,27 @@ fn derive_enum(input: DeriveInput, variants: Vec<syn::Variant>) -> TokenStream {
         validate_arms.push(quote! { #discriminant => Ok(()) });
     }
 
+    // IDL data for enum fragment
+    let name_str = name.to_string();
+    let repr_name_str = quote!(#repr_ty).to_string();
+    let idl_variant_defs: Vec<proc_macro2::TokenStream> = variants
+        .iter()
+        .map(|v| {
+            let vname = v.ident.to_string();
+            // Use the explicit discriminant expression — guaranteed present by
+            // the earlier validation loop.
+            let disc_expr = &v.discriminant.as_ref().unwrap().1;
+            quote! {
+                quasar_lang::idl_build::__reexport::IdlEnumVariant {
+                    name: quasar_lang::idl_build::s(#vname),
+                    value: #disc_expr as u64,
+                    fields: quasar_lang::idl_build::Vec::new(),
+                    layout: None,
+                }
+            }
+        })
+        .collect();
+
     let mut schema_write_generics = input.generics.clone();
     schema_write_generics
         .params
@@ -630,6 +701,32 @@ fn derive_enum(input: DeriveInput, variants: Vec<syn::Variant>) -> TokenStream {
                     .map_err(|_| wincode::error::ReadError::InvalidValue("invalid enum discriminant"))?;
                 __dst.write(<Self as quasar_lang::instruction_arg::InstructionArg>::from_zc(__zc));
                 Ok(())
+            }
+        }
+
+        #[cfg(feature = "idl-build")]
+        quasar_lang::__private_inventory::submit! {
+            quasar_lang::idl_build::TypeFragment {
+                build: {
+                    fn __build() -> quasar_lang::idl_build::__reexport::IdlTypeDef {
+                        quasar_lang::idl_build::__reexport::IdlTypeDef {
+                            name: quasar_lang::idl_build::s(#name_str),
+                            kind: quasar_lang::idl_build::__reexport::IdlTypeDefKind::Enum,
+                            docs: quasar_lang::idl_build::Vec::new(),
+                            generics: quasar_lang::idl_build::Vec::new(),
+                            fields: quasar_lang::idl_build::Vec::new(),
+                            variants: quasar_lang::idl_build::vec![#(#idl_variant_defs),*],
+                            repr: Some(quasar_lang::idl_build::s(#repr_name_str)),
+                            alias: None,
+                            fallback: None,
+                            codec: None,
+                            layout: None,
+                            space: None,
+                            semantics: None,
+                        }
+                    }
+                    __build
+                },
             }
         }
     };

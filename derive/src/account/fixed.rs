@@ -203,6 +203,113 @@ pub(super) fn generate_account(
         }
     };
 
+    // IDL fragment emission (feature-gated)
+    let idl_fragment = {
+        let name_str = name.to_string();
+        let disc_values: Vec<u8> = disc_bytes
+            .iter()
+            .map(|lit| lit.base10_parse::<u8>().unwrap_or(0))
+            .collect();
+
+        let mut inline_field_names: Vec<String> = Vec::new();
+        let mut tail_field_names: Vec<String> = Vec::new();
+
+        let field_defs: Vec<proc_macro2::TokenStream> = field_infos
+            .iter()
+            .map(|fi| {
+                let fname = fi
+                    .field
+                    .ident
+                    .as_ref()
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
+                let fty = crate::helpers::type_to_idl_type_tokens(&fi.field.ty);
+                let codec_tokens = crate::helpers::type_to_idl_codec_tokens(&fi.field.ty);
+
+                if fi.pod_dyn.is_some() {
+                    tail_field_names.push(fname.clone());
+                } else {
+                    inline_field_names.push(fname.clone());
+                }
+
+                quote::quote! {
+                    quasar_lang::idl_build::__reexport::IdlFieldDef {
+                        name: quasar_lang::idl_build::s(#fname),
+                        ty: #fty,
+                        codec: #codec_tokens,
+                        docs: quasar_lang::idl_build::Vec::new(),
+                    }
+                }
+            })
+            .collect();
+
+        let layout_tokens = if tail_field_names.is_empty() {
+            // All fields are fixed — emit Fixed layout
+            let all_names = inline_field_names.iter().collect::<Vec<_>>();
+            quote::quote! {
+                Some(quasar_lang::idl_build::__reexport::IdlLayout::Fixed {
+                    fields: quasar_lang::idl_build::vec![
+                        #(quasar_lang::idl_build::s(#all_names)),*
+                    ],
+                })
+            }
+        } else {
+            // Has dynamic fields — emit Compact layout
+            let inline_refs = inline_field_names.iter().collect::<Vec<_>>();
+            let tail_refs = tail_field_names.iter().collect::<Vec<_>>();
+            quote::quote! {
+                Some(quasar_lang::idl_build::__reexport::IdlLayout::Compact {
+                    inline_fields: quasar_lang::idl_build::vec![
+                        #(quasar_lang::idl_build::s(#inline_refs)),*
+                    ],
+                    tail_fields: quasar_lang::idl_build::vec![
+                        #(quasar_lang::idl_build::s(#tail_refs)),*
+                    ],
+                    wire: quasar_lang::idl_build::__reexport::CompactWire::InlineFieldsThenTailHeadersThenTailPayloads,
+                })
+            }
+        };
+
+        quote::quote! {
+            #[cfg(feature = "idl-build")]
+            quasar_lang::__private_inventory::submit! {
+                quasar_lang::idl_build::AccountFragment {
+                    build: {
+                        fn __build() -> (
+                            quasar_lang::idl_build::__reexport::IdlAccountDef,
+                            quasar_lang::idl_build::__reexport::IdlTypeDef,
+                        ) {
+                            (
+                                quasar_lang::idl_build::__reexport::IdlAccountDef {
+                                    name: quasar_lang::idl_build::s(#name_str),
+                                    discriminator: quasar_lang::idl_build::vec![#(#disc_values),*],
+                                    docs: quasar_lang::idl_build::Vec::new(),
+                                    space: None,
+                                },
+                                quasar_lang::idl_build::__reexport::IdlTypeDef {
+                                    name: quasar_lang::idl_build::s(#name_str),
+                                    kind: quasar_lang::idl_build::__reexport::IdlTypeDefKind::Struct,
+                                    docs: quasar_lang::idl_build::Vec::new(),
+                                    generics: quasar_lang::idl_build::Vec::new(),
+                                    fields: quasar_lang::idl_build::vec![#(#field_defs),*],
+                                    variants: quasar_lang::idl_build::Vec::new(),
+                                    repr: None,
+                                    alias: None,
+                                    fallback: None,
+                                    codec: None,
+                                    layout: #layout_tokens,
+                                    space: None,
+                                    semantics: None,
+                                },
+                            )
+                        }
+                        __build
+                    },
+                }
+            }
+        }
+    };
+
     quote::quote! {
         #account_wrapper
 
@@ -227,6 +334,8 @@ pub(super) fn generate_account(
         #dyn_writer
 
         #set_inner_impl
+
+        #idl_fragment
     }
     .into()
 }

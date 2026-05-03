@@ -147,7 +147,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    TokenStream::from(emit::emit_accounts_output(emit::AccountsOutput {
+    // IDL accounts meta fragment (feature-gated behind `idl-build`)
+    let idl_accounts_meta = emit_idl_accounts_meta(name, &semantics);
+
+    let main_output = emit::emit_accounts_output(emit::AccountsOutput {
         name,
         bumps_name: &bumps_name,
         impl_generics: impl_generics_ts,
@@ -165,5 +168,77 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         seeds_methods,
         client_macro,
         ix_arg_extraction,
-    }))
+    });
+
+    TokenStream::from(quote::quote! {
+        #main_output
+        #idl_accounts_meta
+    })
+}
+
+/// Emit an `AccountsMetaFragment` inventory submission for this accounts
+/// struct.
+fn emit_idl_accounts_meta(
+    name: &syn::Ident,
+    semantics: &[resolve::FieldSemantics],
+) -> proc_macro2::TokenStream {
+    use quote::quote;
+
+    let struct_name_str = name.to_string();
+
+    let account_nodes: Vec<proc_macro2::TokenStream> = semantics
+        .iter()
+        .map(|sem| {
+            let field_name = crate::helpers::snake_to_camel(&sem.core.ident.to_string());
+            let writable = sem.is_writable();
+            let signer = is_signer_type(&sem.core.effective_ty);
+
+            // Determine resolver
+            let resolver_tokens = if let Some(addr_expr) = &sem.address {
+                let addr_str = quote::quote!(#addr_expr).to_string();
+                quote! {
+                    quasar_lang::idl_build::__reexport::IdlResolver::Const {
+                        address: quasar_lang::idl_build::s(#addr_str),
+                    }
+                }
+            } else {
+                quote! {
+                    quasar_lang::idl_build::__reexport::IdlResolver::Input {}
+                }
+            };
+
+            quote! {
+                quasar_lang::idl_build::__reexport::IdlAccountNode {
+                    name: quasar_lang::idl_build::s(#field_name),
+                    client_type: None,
+                    writable: quasar_lang::idl_build::__reexport::AccountFlag::Fixed(#writable),
+                    signer: quasar_lang::idl_build::__reexport::AccountFlag::Fixed(#signer),
+                    resolver: #resolver_tokens,
+                    docs: quasar_lang::idl_build::Vec::new(),
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #[cfg(feature = "idl-build")]
+        quasar_lang::__private_inventory::submit! {
+            quasar_lang::idl_build::AccountsMetaFragment(|| {
+                (
+                    quasar_lang::idl_build::s(#struct_name_str),
+                    quasar_lang::idl_build::vec![#(#account_nodes),*],
+                )
+            })
+        }
+    }
+}
+
+/// Check if the effective type is `Signer` (by last path segment name).
+fn is_signer_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty {
+        if let Some(last) = type_path.path.segments.last() {
+            return last.ident == "Signer";
+        }
+    }
+    false
 }
