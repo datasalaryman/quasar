@@ -10,6 +10,13 @@ authors.workspace = true
 [lints]
 workspace = true
 
+[features]
+debug = []
+
 [dependencies]
 quasar-lang = { path = "../lang" }
 solana-address = { version = ">=2.2, <2.6", features = ["copy"] }
+
+[dev-dependencies]
+trybuild = "1"
+solana-program-error = ">=2.2"

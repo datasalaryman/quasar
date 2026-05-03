@@ -1,14 +1,19 @@
-use solana_address::Address;
+use {
+    crate::constants::METADATA_PROGRAM_ID,
+    quasar_lang::{__zeropod as zeropod, prelude::*},
+    solana_address::Address,
+};
+
+// Re-export zeropod so #[derive(ZeroPod)] expansion resolves `zeropod::*`
+// paths.
 
 /// Metaplex Key enum discriminant for MetadataV1 accounts.
-#[allow(dead_code)]
-const KEY_METADATA_V1: u8 = 4;
+pub(crate) const KEY_METADATA_V1: u8 = 4;
 /// Metaplex Key enum discriminant for MasterEditionV2 accounts.
-#[allow(dead_code)]
-const KEY_MASTER_EDITION_V2: u8 = 6;
+pub(crate) const KEY_MASTER_EDITION_V2: u8 = 6;
 
 // ---------------------------------------------------------------------------
-// MetadataPrefix — zero-copy layout for the fixed 65-byte header
+// MetadataPrefix — ZeroPod schema for the fixed 65-byte header
 // ---------------------------------------------------------------------------
 
 /// Zero-copy layout for the fixed-size prefix of Metaplex Metadata accounts.
@@ -20,37 +25,21 @@ const KEY_MASTER_EDITION_V2: u8 = 6;
 ///
 /// Fields after the prefix (name, symbol, uri, creators, etc.) are
 /// variable-length Borsh-serialized data and require offset walking to access.
-#[repr(C)]
+#[derive(quasar_lang::__zeropod::ZeroPod)]
 pub struct MetadataPrefix {
-    key: u8,
-    update_authority: Address,
-    mint: Address,
+    pub key: u8,
+    pub update_authority: Address,
+    pub mint: Address,
 }
 
-impl MetadataPrefix {
-    pub const LEN: usize = core::mem::size_of::<Self>();
-
-    #[inline(always)]
-    pub fn key(&self) -> u8 {
-        self.key
-    }
-
-    #[inline(always)]
-    pub fn update_authority(&self) -> &Address {
-        &self.update_authority
-    }
-
-    #[inline(always)]
-    pub fn mint(&self) -> &Address {
-        &self.mint
-    }
-}
-
-const _: () = assert!(core::mem::size_of::<MetadataPrefix>() == 65);
-const _: () = assert!(core::mem::align_of::<MetadataPrefix>() == 1);
+const _: () = assert!(core::mem::size_of::<MetadataPrefixZc>() == 65);
+const _: () = assert!(core::mem::align_of::<MetadataPrefixZc>() == 1);
+const _: () = assert!(core::mem::offset_of!(MetadataPrefixZc, key) == 0);
+const _: () = assert!(core::mem::offset_of!(MetadataPrefixZc, update_authority) == 1);
+const _: () = assert!(core::mem::offset_of!(MetadataPrefixZc, mint) == 33);
 
 // ---------------------------------------------------------------------------
-// MasterEditionPrefix — zero-copy layout for the fixed 18-byte header
+// MasterEditionPrefix — ZeroPod schema for the fixed 18-byte header
 // ---------------------------------------------------------------------------
 
 /// Zero-copy layout for the fixed-size prefix of Metaplex MasterEdition
@@ -59,55 +48,79 @@ const _: () = assert!(core::mem::align_of::<MetadataPrefix>() == 1);
 /// - `key` (1 byte): Metaplex account type discriminant (`Key::MasterEditionV2
 ///   = 6`)
 /// - `supply` (8 bytes, u64 LE): number of editions printed
-/// - `max_supply_flag` (1 byte): `Option<u64>` tag — 0 = None (unlimited), 1 =
-///   Some
-/// - `max_supply` (8 bytes, u64 LE): maximum editions (valid only when flag ==
-///   1)
-#[repr(C)]
+/// - `max_supply` (9 bytes): Borsh `Option<u64>` — 1-byte tag + 8-byte value
+#[derive(quasar_lang::__zeropod::ZeroPod)]
 pub struct MasterEditionPrefix {
-    key: u8,
-    supply: [u8; 8],
-    max_supply_flag: u8,
-    max_supply: [u8; 8],
+    pub key: u8,
+    pub supply: u64,
+    pub max_supply: zeropod::pod::PodOption<zeropod::pod::PodU64, 1>,
 }
 
-impl MasterEditionPrefix {
-    pub const LEN: usize = core::mem::size_of::<Self>();
+const _: () = assert!(core::mem::size_of::<MasterEditionPrefixZc>() == 18);
+const _: () = assert!(core::mem::align_of::<MasterEditionPrefixZc>() == 1);
+const _: () = assert!(core::mem::offset_of!(MasterEditionPrefixZc, key) == 0);
+const _: () = assert!(core::mem::offset_of!(MasterEditionPrefixZc, supply) == 1);
+const _: () = assert!(core::mem::offset_of!(MasterEditionPrefixZc, max_supply) == 9);
 
+/// Semantic accessors for MasterEditionPrefixZc.
+impl MasterEditionPrefixZc {
     #[inline(always)]
-    pub fn key(&self) -> u8 {
-        self.key
+    pub fn supply_value(&self) -> u64 {
+        self.supply.get()
     }
 
     #[inline(always)]
-    pub fn supply(&self) -> u64 {
-        u64::from_le_bytes(self.supply)
-    }
-
-    #[inline(always)]
-    pub fn max_supply(&self) -> Option<u64> {
-        if self.max_supply_flag == 1 {
-            Some(u64::from_le_bytes(self.max_supply))
-        } else {
-            None
-        }
+    pub fn max_supply_value(&self) -> Option<u64> {
+        self.max_supply.get_ref().map(|v| v.get())
     }
 }
 
-const _: () = assert!(core::mem::size_of::<MasterEditionPrefix>() == 18);
-const _: () = assert!(core::mem::align_of::<MasterEditionPrefix>() == 1);
-
 // ---------------------------------------------------------------------------
-// MetadataAccount / MasterEditionAccount — TODO: rework in follow-up PR
-//
-// These marker types predate the current AccountLoad pattern. They need to be
-// reworked as #[repr(transparent)] over AccountView (like Token/Mint) to
-// satisfy AccountLoad's AsAccountView supertrait. Left commented out to
-// demonstrate how easy external account types are with the new system.
+// MetadataAccount — schema form define_account!
 // ---------------------------------------------------------------------------
 
-// pub struct MetadataAccount { ... }
-// pub struct MasterEditionAccount { ... }
+quasar_lang::define_account!(
+    /// Metaplex Metadata account — validates owner is Metadata program.
+    ///
+    /// Derefs to [`MetadataPrefixZc`] for zero-copy access to the fixed-size
+    /// header (update_authority, mint). Variable-length fields (name, symbol,
+    /// uri, creators) require Borsh deserialization and are not exposed here.
+    ///
+    /// Checks: owner == Metadata program, data_len >= 65, key byte == 4,
+    /// ZeroPod validation.
+    pub struct MetadataAccount => [checks::Owner, checks::Discriminator, checks::DataLen, checks::ZeroPod]: MetadataPrefix
+);
+
+impl Owner for MetadataAccount {
+    const OWNER: Address = METADATA_PROGRAM_ID;
+}
+
+impl quasar_lang::traits::Discriminator for MetadataAccount {
+    const DISCRIMINATOR: &'static [u8] = &[KEY_METADATA_V1];
+}
+
+// ---------------------------------------------------------------------------
+// MasterEditionAccount — schema form define_account!
+// ---------------------------------------------------------------------------
+
+quasar_lang::define_account!(
+    /// Metaplex MasterEdition account — validates owner is Metadata program.
+    ///
+    /// Derefs to [`MasterEditionPrefixZc`] for zero-copy access to supply and
+    /// max_supply fields.
+    ///
+    /// Checks: owner == Metadata program, data_len >= 18, key byte == 6,
+    /// ZeroPod validation.
+    pub struct MasterEditionAccount => [checks::Owner, checks::Discriminator, checks::DataLen, checks::ZeroPod]: MasterEditionPrefix
+);
+
+impl Owner for MasterEditionAccount {
+    const OWNER: Address = METADATA_PROGRAM_ID;
+}
+
+impl quasar_lang::traits::Discriminator for MasterEditionAccount {
+    const DISCRIMINATOR: &'static [u8] = &[KEY_MASTER_EDITION_V2];
+}
 
 // ---------------------------------------------------------------------------
 // Kani model-checking proof harnesses
@@ -117,66 +130,55 @@ const _: () = assert!(core::mem::align_of::<MasterEditionPrefix>() == 1);
 mod kani_proofs {
     use super::*;
 
-    // --- MetadataPrefix ---
+    // --- MetadataPrefixZc ---
 
-    /// Prove MetadataPrefix::LEN matches the actual struct size.
+    /// Prove MetadataPrefixZc is exactly 65 bytes (matches ZeroPodFixed::SIZE).
     #[kani::proof]
-    fn metadata_prefix_len_matches_sizeof() {
-        assert!(MetadataPrefix::LEN == core::mem::size_of::<MetadataPrefix>());
+    fn metadata_prefix_zc_size_65() {
+        assert!(core::mem::size_of::<MetadataPrefixZc>() == 65);
+        assert!(<MetadataPrefix as quasar_lang::__zeropod::ZeroPodFixed>::SIZE == 65);
     }
 
-    /// Prove MetadataPrefix has alignment 1 (safe for pointer cast from
+    /// Prove MetadataPrefixZc has alignment 1 (safe for pointer cast from
     /// arbitrary account data).
     #[kani::proof]
-    fn metadata_prefix_align_one() {
-        assert!(core::mem::align_of::<MetadataPrefix>() == 1);
+    fn metadata_prefix_zc_align_one() {
+        assert!(core::mem::align_of::<MetadataPrefixZc>() == 1);
     }
 
-    /// Prove MetadataPrefix is exactly 65 bytes.
-    #[kani::proof]
-    fn metadata_prefix_size_65() {
-        assert!(core::mem::size_of::<MetadataPrefix>() == 65);
-    }
-
-    /// Prove: for any `data_len >= MetadataPrefix::LEN`, the data covers
-    /// the full struct — verifies the runtime guard in `MetadataAccount::check`
-    /// is sufficient for the pointer cast in `deref_from`.
+    /// Prove: for any `data_len >= ZeroPodFixed::SIZE`, the data covers
+    /// the full Zc struct — verifies the DataLen check is sufficient for
+    /// the pointer cast in Deref.
     #[kani::proof]
     fn metadata_prefix_data_len_guard_sufficient() {
         let data_len: usize = kani::any();
-        kani::assume(data_len >= MetadataPrefix::LEN);
-        assert!(data_len >= core::mem::size_of::<MetadataPrefix>());
+        kani::assume(data_len >= <MetadataPrefix as quasar_lang::__zeropod::ZeroPodFixed>::SIZE);
+        assert!(data_len >= core::mem::size_of::<MetadataPrefixZc>());
     }
 
-    // --- MasterEditionPrefix ---
+    // --- MasterEditionPrefixZc ---
 
-    /// Prove MasterEditionPrefix::LEN matches the actual struct size.
+    /// Prove MasterEditionPrefixZc is exactly 18 bytes.
     #[kani::proof]
-    fn master_edition_prefix_len_matches_sizeof() {
-        assert!(MasterEditionPrefix::LEN == core::mem::size_of::<MasterEditionPrefix>());
+    fn master_edition_prefix_zc_size_18() {
+        assert!(core::mem::size_of::<MasterEditionPrefixZc>() == 18);
+        assert!(<MasterEditionPrefix as quasar_lang::__zeropod::ZeroPodFixed>::SIZE == 18);
     }
 
-    /// Prove MasterEditionPrefix has alignment 1 (safe for pointer cast from
-    /// arbitrary account data).
+    /// Prove MasterEditionPrefixZc has alignment 1.
     #[kani::proof]
-    fn master_edition_prefix_align_one() {
-        assert!(core::mem::align_of::<MasterEditionPrefix>() == 1);
+    fn master_edition_prefix_zc_align_one() {
+        assert!(core::mem::align_of::<MasterEditionPrefixZc>() == 1);
     }
 
-    /// Prove MasterEditionPrefix is exactly 18 bytes.
-    #[kani::proof]
-    fn master_edition_prefix_size_18() {
-        assert!(core::mem::size_of::<MasterEditionPrefix>() == 18);
-    }
-
-    /// Prove: for any `data_len >= MasterEditionPrefix::LEN`, the data covers
-    /// the full struct — verifies the runtime guard in
-    /// `MasterEditionAccount::check` is sufficient for the pointer cast in
-    /// `deref_from`.
+    /// Prove: for any `data_len >= ZeroPodFixed::SIZE`, the data covers
+    /// the full Zc struct.
     #[kani::proof]
     fn master_edition_prefix_data_len_guard_sufficient() {
         let data_len: usize = kani::any();
-        kani::assume(data_len >= MasterEditionPrefix::LEN);
-        assert!(data_len >= core::mem::size_of::<MasterEditionPrefix>());
+        kani::assume(
+            data_len >= <MasterEditionPrefix as quasar_lang::__zeropod::ZeroPodFixed>::SIZE,
+        );
+        assert!(data_len >= core::mem::size_of::<MasterEditionPrefixZc>());
     }
 }

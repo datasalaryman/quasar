@@ -8,3 +8,5 @@ quasar_lang::define_account!(pub struct MetadataProgram => [checks::Executable, 
 impl Id for MetadataProgram {
     const ID: Address = Address::new_from_array(METADATA_PROGRAM_BYTES);
 }
+
+impl crate::instructions::MetadataCpi for Program<MetadataProgram> {}

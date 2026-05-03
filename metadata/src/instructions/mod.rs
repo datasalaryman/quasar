@@ -1,7 +1,7 @@
 mod approve_collection;
 mod burn;
-mod create_master_edition;
-mod create_metadata;
+pub(crate) mod create_master_edition;
+pub(crate) mod create_metadata;
 mod freeze_thaw;
 mod mint_edition;
 mod remove_creator;
