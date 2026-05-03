@@ -1,21 +1,15 @@
 //! IDL generation for Quasar programs.
 //!
-//! Parses Quasar program source files and produces:
-//! - **IDL JSON** — machine-readable program interface (instructions, accounts,
-//!   events, errors, types)
-//! - **TypeScript client** — typed instruction builders and account decoders
-//! - **Rust client** — off-chain instruction construction
+//! IDL fragments are emitted at compile time by derive macros (`#[account]`,
+//! `#[event]`, `#[error_code]`, `#[derive(QuasarSerialize)]`) and assembled by
+//! the `#[program]` macro into a complete IDL JSON via the `idl-build` feature.
 //!
-//! The parser reads Rust AST via `syn` to extract `#[program]`, `#[account]`,
-//! `#[instruction]`, `#[event]`, and `#[error_code]` definitions. Discriminator
-//! collision detection prevents runtime ID clashes across all types.
+//! This crate provides:
+//! - **Codegen** — TypeScript and Rust client generators from IDL JSON
+//! - **Lint** — static analysis passes on the IDL
+//! - **Types** — re-export of `quasar-idl-schema` types
 //!
-//! # Usage
-//!
-//! ```bash
-//! cargo run -p quasar-idl -- path/to/program/crate
-//! ```
+//! The source-scraping parser has been replaced by trait-based emission from
+//! derive macros. Programs compile with `--features idl-build` to produce IDL.
 pub mod codegen;
-pub mod lint;
-pub mod parser;
 pub mod types;

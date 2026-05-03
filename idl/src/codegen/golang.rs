@@ -1,6 +1,6 @@
 use {
     super::model::{go_field_path, ProgramModel},
-    crate::types::{Idl, IdlType, IdlTypeDef},
+    crate::types::{Idl, IdlArg, IdlCodec, IdlPdaSeed, IdlResolver, IdlType, IdlTypeDef},
     quasar_schema::{snake_to_pascal, to_camel_case},
     std::fmt::Write,
 };
@@ -20,7 +20,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
 
     let has_events = model.features.has_events;
     let has_args = model.features.has_args;
-    let has_types_with_fields = idl.types.iter().any(|t| !t.ty.fields.is_empty());
+    let has_types_with_fields = idl.types.iter().any(|t| !t.fields.is_empty());
     let needs_binary = has_args || has_events || has_types_with_fields;
     let has_floats = model.features.has_float;
 
@@ -95,7 +95,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
     // Type definitions (structs)
     for type_def in &idl.types {
         writeln!(out, "type {} struct {{", type_def.name).unwrap();
-        for field in &type_def.ty.fields {
+        for field in &type_def.fields {
             writeln!(
                 out,
                 "\t{} {}",
@@ -107,7 +107,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
         out.push_str("}\n\n");
 
         // Decode function
-        if !type_def.ty.fields.is_empty() {
+        if !type_def.fields.is_empty() {
             writeln!(
                 out,
                 "func Decode{}(data []byte) *{} {{",
@@ -115,16 +115,16 @@ pub fn generate_go_client(idl: &Idl) -> String {
             )
             .unwrap();
             out.push_str("\toffset := 0\n");
-            for field in &type_def.ty.fields {
+            for field in &type_def.fields {
                 out.push_str(&decode_field_expr(
                     &to_camel_case(&field.name),
                     &field.ty,
+                    field.codec.as_ref(),
                     1,
                     &idl.types,
                 ));
             }
             let field_assigns: Vec<String> = type_def
-                .ty
                 .fields
                 .iter()
                 .map(|f| {
@@ -149,7 +149,10 @@ pub fn generate_go_client(idl: &Idl) -> String {
         // Input struct
         writeln!(out, "type {}Input struct {{", pascal_name).unwrap();
         for acc in &ix.accounts {
-            if acc.address.is_some() || acc.pda.is_some() {
+            if matches!(
+                acc.resolver,
+                IdlResolver::Const { .. } | IdlResolver::Pda { .. }
+            ) {
                 continue;
             }
             writeln!(out, "\t{} solana.PublicKey", snake_to_pascal(&acc.name)).unwrap();
@@ -157,7 +160,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
         for arg in &ix.args {
             writeln!(out, "\t{} {}", snake_to_pascal(&arg.name), go_type(&arg.ty),).unwrap();
         }
-        if ix.has_remaining {
+        if ix.remaining_accounts.is_some() {
             out.push_str("\tRemainingAccounts []*solana.AccountMeta\n");
         }
         out.push_str("}\n\n");
@@ -170,28 +173,29 @@ pub fn generate_go_client(idl: &Idl) -> String {
         )
         .unwrap();
 
-        out.push_str("\taccountsMap := map[string]solana.PublicKey{}\n");
-
         // Accounts
         out.push_str("\taccounts := []*solana.AccountMeta{}\n");
+        if !ix.accounts.is_empty() {
+            out.push_str("\taccountsMap := map[string]solana.PublicKey{}\n");
+        }
         for acc in &ix.accounts {
-            let key_expr = if let Some(ref addr) = acc.address {
-                format!("solana.MustPublicKeyFromBase58(\"{}\")", addr)
-            } else if let Some(ref pda) = acc.pda {
-                let mut seeds = Vec::new();
-                for seed in &pda.seeds {
+            let key_expr = if let IdlResolver::Const { ref address } = acc.resolver {
+                format!("solana.MustPublicKeyFromBase58(\"{}\")", address)
+            } else if let IdlResolver::Pda { ref seeds, .. } = acc.resolver {
+                let mut seed_exprs = Vec::new();
+                for seed in seeds {
                     match seed {
-                        crate::types::IdlSeed::Const { value } => {
-                            seeds.push(format!("[]byte{{{}}}", super::format_disc_hex(value)));
+                        IdlPdaSeed::Const { value } => {
+                            seed_exprs.push(format!("[]byte{{{}}}", super::format_disc_hex(value)));
                         }
-                        crate::types::IdlSeed::Account { path } => {
-                            seeds.push(format!(
+                        IdlPdaSeed::Account { path } => {
+                            seed_exprs.push(format!(
                                 "func() []byte {{ key := accountsMap[\"{}\"]; return key[:] }}()",
                                 path
                             ));
                         }
-                        crate::types::IdlSeed::Arg { path } => {
-                            seeds.push(format!("input.{}", go_field_path(path)));
+                        IdlPdaSeed::Arg { path, .. } => {
+                            seed_exprs.push(format!("input.{}", go_field_path(path)));
                         }
                     }
                 }
@@ -200,7 +204,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
                     "func() solana.PublicKey {{ addr, _, err := \
                      solana.FindProgramAddress([][]byte{{{}}}, ProgramID); if err != nil {{ \
                      panic(err) }}; return addr }}()",
-                    seeds.join(", ")
+                    seed_exprs.join(", ")
                 )
             } else {
                 format!("input.{}", snake_to_pascal(&acc.name))
@@ -209,20 +213,20 @@ pub fn generate_go_client(idl: &Idl) -> String {
             writeln!(out, "\taccountsMap[\"{}\"] = {}", acc.name, key_expr).unwrap();
             let meta_expr = account_meta_expr(
                 &format!("accountsMap[\"{}\"]", acc.name),
-                acc.signer,
-                acc.writable,
+                acc.signer.is_true(),
+                acc.writable.is_true(),
             );
             writeln!(out, "\taccounts = append(accounts, {})", meta_expr).unwrap();
         }
 
-        if ix.has_remaining {
+        if ix.remaining_accounts.is_some() {
             out.push_str("\taccounts = append(accounts, input.RemainingAccounts...)\n");
         }
 
         // Data — compact wire format:
         //   [disc][fixed fields][all dynamic prefixes][all dynamic data]
         let disc_var = format!("{}Discriminator", pascal_name);
-        let has_dyn = ix.args.iter().any(|a| is_direct_dynamic(&a.ty));
+        let has_dyn = ix.args.iter().any(is_direct_dynamic);
         if ix.args.is_empty() {
             writeln!(out, "\tdata := {}[:]", disc_var).unwrap();
         } else if !has_dyn {
@@ -233,21 +237,14 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 out.push_str(&serialize_field_expr(
                     &snake_to_pascal(&arg.name),
                     &arg.ty,
+                    arg.codec.as_ref(),
                     &idl.types,
                 ));
             }
         } else {
             // Compact 3-phase encoding.
-            let fixed_args: Vec<_> = ix
-                .args
-                .iter()
-                .filter(|a| !is_direct_dynamic(&a.ty))
-                .collect();
-            let dyn_args: Vec<_> = ix
-                .args
-                .iter()
-                .filter(|a| is_direct_dynamic(&a.ty))
-                .collect();
+            let fixed_args: Vec<_> = ix.args.iter().filter(|a| !is_direct_dynamic(a)).collect();
+            let dyn_args: Vec<_> = ix.args.iter().filter(|a| is_direct_dynamic(a)).collect();
 
             writeln!(out, "\tdata := make([]byte, 0, 256)").unwrap();
             writeln!(out, "\tdata = append(data, {}[:]...)", disc_var).unwrap();
@@ -257,6 +254,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 out.push_str(&serialize_field_expr(
                     &snake_to_pascal(&arg.name),
                     &arg.ty,
+                    arg.codec.as_ref(),
                     &idl.types,
                 ));
             }
@@ -265,11 +263,12 @@ pub fn generate_go_client(idl: &Idl) -> String {
             // length prefixes grouped together.
             for arg in &dyn_args {
                 let name = snake_to_pascal(&arg.name);
+                let prefix_bytes = arg.codec.as_ref().map(|c| c.prefix_bytes()).unwrap_or(2);
                 match &arg.ty {
-                    IdlType::DynString { ref string } => {
+                    IdlType::Primitive(p) if p == "string" => {
                         // Pre-encode string bytes so we know the length.
                         writeln!(out, "\t_{n}Bytes := []byte(input.{n})", n = name,).unwrap();
-                        match string.prefix_bytes {
+                        match prefix_bytes {
                             1 => writeln!(
                                 out,
                                 "\tdata = append(data, byte(len(_{n}Bytes)))",
@@ -299,7 +298,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
                             .unwrap(),
                         }
                     }
-                    IdlType::DynVec { ref vec } => match vec.prefix_bytes {
+                    IdlType::Vec { .. } => match prefix_bytes {
                         1 => {
                             writeln!(out, "\tdata = append(data, byte(len(input.{n})))", n = name,)
                                 .unwrap()
@@ -334,10 +333,10 @@ pub fn generate_go_client(idl: &Idl) -> String {
             for arg in &dyn_args {
                 let name = snake_to_pascal(&arg.name);
                 match &arg.ty {
-                    IdlType::DynString { .. } => {
+                    IdlType::Primitive(p) if p == "string" => {
                         writeln!(out, "\tdata = append(data, _{n}Bytes...)", n = name,).unwrap();
                     }
-                    IdlType::DynVec { .. } => {
+                    IdlType::Vec { .. } => {
                         writeln!(out, "\tdata = append(data, input.{n}...)", n = name,).unwrap();
                     }
                     _ => unreachable!(),
@@ -368,7 +367,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
             )
             .unwrap();
             if let Some(td) = type_def {
-                if td.ty.fields.is_empty() {
+                if td.fields.is_empty() {
                     writeln!(
                         out,
                         "\t\treturn &DecodedEvent{{Name: \"{}\", Data: nil}}",
@@ -439,16 +438,17 @@ fn go_type(ty: &IdlType) -> String {
             "f64" => "float64".to_string(),
             "pubkey" => "solana.PublicKey".to_string(),
             "string" => "string".to_string(),
-            other if other.starts_with('[') => {
-                let size = super::parse_fixed_array_size(other).unwrap_or(1);
-                format!("[{}]byte", size)
-            }
             _ => "[]byte".to_string(),
         },
         IdlType::Option { option } => format!("*{}", go_type(option)),
-        IdlType::DynString { .. } => "string".to_string(),
-        IdlType::DynVec { .. } => "[]byte".to_string(),
-        IdlType::Defined { defined } => defined.clone(),
+        IdlType::Vec { .. } => "[]byte".to_string(),
+        IdlType::Array {
+            array: (_inner, size),
+        } => format!("[{}]byte", size),
+        IdlType::Defined { defined } => defined.name.clone(),
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in Go codegen", generic)
+        }
     }
 }
 
@@ -471,13 +471,89 @@ fn account_meta_expr(key_expr: &str, signer: bool, writable: bool) -> String {
 // Serialization
 // ---------------------------------------------------------------------------
 
-/// Returns `true` if the type is a top-level dynamic type (`DynString` or
-/// `DynVec`). These require compact 3-phase encoding at the instruction level.
-fn is_direct_dynamic(ty: &IdlType) -> bool {
-    matches!(ty, IdlType::DynString { .. } | IdlType::DynVec { .. })
+/// Returns `true` if the arg is a top-level dynamic type (string with codec or
+/// Vec with codec). These require compact 3-phase encoding at the instruction
+/// level.
+fn is_direct_dynamic(arg: &IdlArg) -> bool {
+    match &arg.ty {
+        IdlType::Primitive(p) if p == "string" && arg.codec.is_some() => true,
+        IdlType::Vec { .. } if arg.codec.is_some() => true,
+        _ => false,
+    }
 }
 
-fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> String {
+fn serialize_field_expr(
+    name: &str,
+    ty: &IdlType,
+    codec: Option<&IdlCodec>,
+    types: &[IdlTypeDef],
+) -> String {
+    // Handle dynamic string with codec
+    if let IdlType::Primitive(p) = ty {
+        if p == "string" {
+            if let Some(c) = codec {
+                let prefix_bytes = c.prefix_bytes();
+                return match prefix_bytes {
+                    1 => format!(
+                        "\tdata = append(data, byte(len([]byte(input.{n}))))\n\tdata = \
+                         append(data, []byte(input.{n})...)\n",
+                        n = name,
+                    ),
+                    2 => format!(
+                        "\t{{ b := []byte(input.{n}); var buf [2]byte; \
+                         binary.LittleEndian.PutUint16(buf[:], uint16(len(b))); data = \
+                         append(data, buf[:]...); data = append(data, b...) }}\n",
+                        n = name,
+                    ),
+                    4 => format!(
+                        "\t{{ b := []byte(input.{n}); var buf [4]byte; \
+                         binary.LittleEndian.PutUint32(buf[:], uint32(len(b))); data = \
+                         append(data, buf[:]...); data = append(data, b...) }}\n",
+                        n = name,
+                    ),
+                    _ => format!(
+                        "\t{{ b := []byte(input.{n}); var buf [8]byte; \
+                         binary.LittleEndian.PutUint64(buf[:], uint64(len(b))); data = \
+                         append(data, buf[:]...); data = append(data, b...) }}\n",
+                        n = name,
+                    ),
+                };
+            }
+        }
+    }
+
+    // Handle Vec with codec
+    if let IdlType::Vec { .. } = ty {
+        if let Some(c) = codec {
+            let prefix_bytes = c.prefix_bytes();
+            return match prefix_bytes {
+                1 => format!(
+                    "\tdata = append(data, byte(len(input.{n})))\n\tdata = append(data, \
+                     input.{n}...)\n",
+                    n = name,
+                ),
+                2 => format!(
+                    "\t{{ var buf [2]byte; binary.LittleEndian.PutUint16(buf[:], \
+                     uint16(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
+                     input.{n}...) }}\n",
+                    n = name,
+                ),
+                4 => format!(
+                    "\t{{ var buf [4]byte; binary.LittleEndian.PutUint32(buf[:], \
+                     uint32(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
+                     input.{n}...) }}\n",
+                    n = name,
+                ),
+                _ => format!(
+                    "\t{{ var buf [8]byte; binary.LittleEndian.PutUint64(buf[:], \
+                     uint64(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
+                     input.{n}...) }}\n",
+                    n = name,
+                ),
+            };
+        }
+    }
+
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "bool" => format!(
@@ -535,38 +611,10 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
                  buf[:]...); data = append(data, b...) }}\n",
                 n = name,
             ),
-            _ if p.starts_with('[') => {
-                format!("\tdata = append(data, input.{}[:]...)\n", name)
-            }
             _ => format!("\tdata = append(data, input.{}...)\n", name),
         },
-        IdlType::DynString { ref string } => match string.prefix_bytes {
-            1 => format!(
-                "\tdata = append(data, byte(len([]byte(input.{n}))))\n\tdata = append(data, \
-                 []byte(input.{n})...)\n",
-                n = name,
-            ),
-            2 => format!(
-                "\t{{ b := []byte(input.{n}); var buf [2]byte; \
-                 binary.LittleEndian.PutUint16(buf[:], uint16(len(b))); data = append(data, \
-                 buf[:]...); data = append(data, b...) }}\n",
-                n = name,
-            ),
-            4 => format!(
-                "\t{{ b := []byte(input.{n}); var buf [4]byte; \
-                 binary.LittleEndian.PutUint32(buf[:], uint32(len(b))); data = append(data, \
-                 buf[:]...); data = append(data, b...) }}\n",
-                n = name,
-            ),
-            _ => format!(
-                "\t{{ b := []byte(input.{n}); var buf [8]byte; \
-                 binary.LittleEndian.PutUint64(buf[:], uint64(len(b))); data = append(data, \
-                 buf[:]...); data = append(data, b...) }}\n",
-                n = name,
-            ),
-        },
         IdlType::Option { option } => {
-            let inner = serialize_field_expr(&format!("(*input.{})", name), option, types);
+            let inner = serialize_field_expr(&format!("(*input.{})", name), option, None, types);
             format!(
                 "\tif input.{n} == nil {{\n\t\tdata = append(data, 0)\n\t}} else {{\n\t\tdata = \
                  append(data, 1)\n{inner}\t}}\n",
@@ -575,12 +623,13 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
             )
         }
         IdlType::Defined { defined } => {
-            if let Some(td) = types.iter().find(|t| t.name == *defined) {
+            if let Some(td) = types.iter().find(|t| t.name == defined.name) {
                 let mut result = String::new();
-                for field in &td.ty.fields {
+                for field in &td.fields {
                     result.push_str(&serialize_field_expr(
                         &format!("{}.{}", name, snake_to_pascal(&field.name)),
                         &field.ty,
+                        field.codec.as_ref(),
                         types,
                     ));
                 }
@@ -589,31 +638,23 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
                 format!("\tdata = append(data, input.{}...)\n", name)
             }
         }
-        IdlType::DynVec { vec } => match vec.prefix_bytes {
-            1 => format!(
-                "\tdata = append(data, byte(len(input.{n})))\n\tdata = append(data, \
-                 input.{n}...)\n",
-                n = name,
-            ),
-            2 => format!(
-                "\t{{ var buf [2]byte; binary.LittleEndian.PutUint16(buf[:], \
-                 uint16(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
-                 input.{n}...) }}\n",
-                n = name,
-            ),
-            4 => format!(
+        IdlType::Vec { .. } => {
+            // Vec without codec — u32 prefix (borsh-style)
+            format!(
                 "\t{{ var buf [4]byte; binary.LittleEndian.PutUint32(buf[:], \
                  uint32(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
                  input.{n}...) }}\n",
                 n = name,
-            ),
-            _ => format!(
-                "\t{{ var buf [8]byte; binary.LittleEndian.PutUint64(buf[:], \
-                 uint64(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
-                 input.{n}...) }}\n",
-                n = name,
-            ),
-        },
+            )
+        }
+        IdlType::Array {
+            array: (_inner, _size),
+        } => {
+            format!("\tdata = append(data, input.{}[:]...)\n", name)
+        }
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in Go codegen", generic)
+        }
     }
 }
 
@@ -630,8 +671,83 @@ fn go_float_decode(t: &str, n: &str, math_fn: &str, le_fn: &str, size: usize) ->
 // Deserialization
 // ---------------------------------------------------------------------------
 
-fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef]) -> String {
+fn decode_field_expr(
+    name: &str,
+    ty: &IdlType,
+    codec: Option<&IdlCodec>,
+    depth: usize,
+    types: &[IdlTypeDef],
+) -> String {
     let t = "\t".repeat(depth);
+
+    // Handle dynamic string with codec
+    if let IdlType::Primitive(p) = ty {
+        if p == "string" {
+            if let Some(c) = codec {
+                let prefix_bytes = c.prefix_bytes();
+                return match prefix_bytes {
+                    1 => format!(
+                        "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
+                         string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                        t = t,
+                        n = name,
+                    ),
+                    2 => format!(
+                        "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset \
+                         += 2\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                        t = t,
+                        n = name,
+                    ),
+                    4 => format!(
+                        "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset \
+                         += 4\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                        t = t,
+                        n = name,
+                    ),
+                    _ => format!(
+                        "{t}{n}Len := int(binary.LittleEndian.Uint64(data[offset:]))\n{t}offset \
+                         += 8\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                        t = t,
+                        n = name,
+                    ),
+                };
+            }
+        }
+    }
+
+    // Handle Vec with codec
+    if let IdlType::Vec { .. } = ty {
+        if let Some(c) = codec {
+            let prefix_bytes = c.prefix_bytes();
+            return match prefix_bytes {
+                1 => format!(
+                    "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
+                     data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                    t = t,
+                    n = name,
+                ),
+                2 => format!(
+                    "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset += \
+                     2\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                    t = t,
+                    n = name,
+                ),
+                4 => format!(
+                    "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
+                     4\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                    t = t,
+                    n = name,
+                ),
+                _ => format!(
+                    "{t}{n}Len := int(binary.LittleEndian.Uint64(data[offset:]))\n{t}offset += \
+                     8\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                    t = t,
+                    n = name,
+                ),
+            };
+        }
+    }
+
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "bool" => format!(
@@ -688,14 +804,13 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 t = t,
                 n = name,
             ),
-            _ if p.starts_with('[') => {
-                let size = super::parse_fixed_array_size(p).unwrap_or(1);
+            "string" => {
+                // Plain string without codec — u32 prefix (borsh-style)
                 format!(
-                    "{t}var {n} [{sz}]byte\n{t}copy({n}[:], data[offset:offset+{sz}])\n{t}offset \
-                     += {sz}\n",
+                    "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
+                     4\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
                     t = t,
                     n = name,
-                    sz = size,
                 )
             }
             _ => format!(
@@ -704,34 +819,28 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 n = name,
             ),
         },
-        IdlType::DynString { ref string } => match string.prefix_bytes {
-            1 => format!(
-                "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
-                 string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-            2 => format!(
-                "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset += \
-                 2\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-            4 => format!(
+        IdlType::Vec { .. } => {
+            // Vec without codec — u32 prefix (borsh-style)
+            format!(
                 "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
-                 4\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+                 4\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
                 t = t,
                 n = name,
-            ),
-            _ => format!(
-                "{t}{n}Len := int(binary.LittleEndian.Uint64(data[offset:]))\n{t}offset += \
-                 8\n{t}{n} := string(data[offset:offset+{n}Len])\n{t}offset += {n}Len\n",
+            )
+        }
+        IdlType::Array {
+            array: (_inner, size),
+        } => {
+            format!(
+                "{t}var {n} [{sz}]byte\n{t}copy({n}[:], data[offset:offset+{sz}])\n{t}offset += \
+                 {sz}\n",
                 t = t,
                 n = name,
-            ),
-        },
+                sz = size,
+            )
+        }
         IdlType::Option { option } => {
-            let inner = decode_field_expr(&format!("{}_val", name), option, depth, types);
+            let inner = decode_field_expr(&format!("{}_val", name), option, None, depth, types);
             format!(
                 "{t}var {n} *{ty}\n{t}if data[offset] != 0 {{\n{t}\toffset += 1\n{inner}{t}\t{n} \
                  = &{n}_val\n{t}}} else {{\n{t}\toffset += 1\n{t}}}\n",
@@ -742,18 +851,18 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
             )
         }
         IdlType::Defined { defined } => {
-            if let Some(td) = types.iter().find(|t| t.name == *defined) {
+            if let Some(td) = types.iter().find(|t| t.name == defined.name) {
                 let mut result = String::new();
-                for field in &td.ty.fields {
+                for field in &td.fields {
                     result.push_str(&decode_field_expr(
                         &to_camel_case(&field.name),
                         &field.ty,
+                        field.codec.as_ref(),
                         depth,
                         types,
                     ));
                 }
                 let field_assigns: Vec<String> = td
-                    .ty
                     .fields
                     .iter()
                     .map(|f| format!("{}: {},", snake_to_pascal(&f.name), to_camel_case(&f.name)))
@@ -762,7 +871,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                     "{t}{n} := {cls}{{\n",
                     t = t,
                     n = name,
-                    cls = defined
+                    cls = defined.name
                 ));
                 for a in &field_assigns {
                     result.push_str(&format!("{t}\t{a}\n", t = t, a = a));
@@ -777,31 +886,8 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 )
             }
         }
-        IdlType::DynVec { vec } => match vec.prefix_bytes {
-            1 => format!(
-                "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
-                 data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-            2 => format!(
-                "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset += \
-                 2\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-            4 => format!(
-                "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
-                 4\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-            _ => format!(
-                "{t}{n}Len := int(binary.LittleEndian.Uint64(data[offset:]))\n{t}offset += \
-                 8\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
-                t = t,
-                n = name,
-            ),
-        },
+        IdlType::Generic { generic } => {
+            panic!("Generic type '{}' not supported in Go codegen", generic)
+        }
     }
 }

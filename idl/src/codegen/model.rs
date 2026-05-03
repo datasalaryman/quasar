@@ -1,5 +1,5 @@
 use {
-    crate::types::{Idl, IdlType},
+    crate::types::{Idl, IdlPdaSeed, IdlResolver, IdlType},
     quasar_schema::{camel_to_pascal, camel_to_snake, snake_to_pascal},
 };
 
@@ -17,9 +17,13 @@ pub struct ResolvedIdentity {
 
 impl ResolvedIdentity {
     pub fn from_idl(idl: &Idl) -> Self {
-        let program_name = idl.metadata.name.clone();
-        let crate_name = idl.metadata.crate_name.clone();
-        let client_name = idl.metadata.client_name().to_string();
+        let program_name = idl.name.clone();
+        let crate_name = idl.metadata.crate_name.clone().unwrap_or_default();
+        let client_name = if crate_name.is_empty() {
+            program_name.clone()
+        } else {
+            crate_name.clone()
+        };
         let go_package = client_name.replace('-', "_");
 
         Self {
@@ -61,17 +65,20 @@ impl ProgramFeatures {
             has_types: !idl.types.is_empty(),
             has_errors: !idl.errors.is_empty(),
             has_args: idl.instructions.iter().any(|ix| !ix.args.is_empty()),
-            has_pdas: idl
-                .instructions
-                .iter()
-                .any(|ix| ix.accounts.iter().any(|account| account.pda.is_some())),
+            has_pdas: idl.instructions.iter().any(|ix| {
+                ix.accounts
+                    .iter()
+                    .any(|account| matches!(account.resolver, IdlResolver::Pda { .. }))
+            }),
             has_pda_account_seeds: idl.instructions.iter().any(|ix| {
                 ix.accounts.iter().any(|account| {
-                    account.pda.as_ref().is_some_and(|pda| {
-                        pda.seeds
+                    if let IdlResolver::Pda { seeds, .. } = &account.resolver {
+                        seeds
                             .iter()
-                            .any(|seed| matches!(seed, crate::types::IdlSeed::Account { .. }))
-                    })
+                            .any(|seed| matches!(seed, IdlPdaSeed::Account { .. }))
+                    } else {
+                        false
+                    }
                 })
             }),
             ..Self::default()
@@ -84,22 +91,23 @@ impl ProgramFeatures {
             if type_has_option(ty) {
                 features.has_option = true;
             }
-            if type_has_dynamic(ty) {
-                features.has_dynamic = true;
-            }
             if type_has_float(ty) {
                 features.has_float = true;
             }
         };
 
         for type_def in &idl.types {
-            for field in &type_def.ty.fields {
+            for field in &type_def.fields {
                 visit_type(&field.ty, &mut visit);
             }
         }
         for ix in &idl.instructions {
             for arg in &ix.args {
                 visit_type(&arg.ty, &mut visit);
+                // Check codec for dynamic fields
+                if arg.codec.is_some() {
+                    features.has_dynamic = true;
+                }
             }
         }
 
@@ -129,23 +137,17 @@ pub fn visit_type(ty: &IdlType, visit: &mut impl FnMut(&IdlType)) {
     visit(ty);
     match ty {
         IdlType::Option { option } => visit_type(option, visit),
-        IdlType::DynVec { vec } => visit_type(&vec.items, visit),
+        IdlType::Vec { vec } => visit_type(vec, visit),
+        IdlType::Array { array } => visit_type(&array.0, visit),
         _ => {}
-    }
-}
-
-pub fn type_has_dynamic(ty: &IdlType) -> bool {
-    match ty {
-        IdlType::Option { option } => type_has_dynamic(option),
-        IdlType::DynString { .. } | IdlType::DynVec { .. } => true,
-        _ => false,
     }
 }
 
 pub fn type_has_option(ty: &IdlType) -> bool {
     match ty {
         IdlType::Option { .. } => true,
-        IdlType::DynVec { vec } => type_has_option(&vec.items),
+        IdlType::Vec { vec } => type_has_option(vec),
+        IdlType::Array { array } => type_has_option(&array.0),
         _ => false,
     }
 }
@@ -154,7 +156,8 @@ pub fn type_has_float(ty: &IdlType) -> bool {
     match ty {
         IdlType::Primitive(p) => p == "f32" || p == "f64",
         IdlType::Option { option } => type_has_float(option),
-        IdlType::DynVec { vec } => type_has_float(&vec.items),
+        IdlType::Vec { vec } => type_has_float(vec),
+        IdlType::Array { array } => type_has_float(&array.0),
         _ => false,
     }
 }
@@ -163,7 +166,8 @@ pub fn type_has_public_key(ty: &IdlType) -> bool {
     match ty {
         IdlType::Primitive(p) => p == "pubkey",
         IdlType::Option { option } => type_has_public_key(option),
-        IdlType::DynVec { vec } => type_has_public_key(&vec.items),
+        IdlType::Vec { vec } => type_has_public_key(vec),
+        IdlType::Array { array } => type_has_public_key(&array.0),
         _ => false,
     }
 }
@@ -194,18 +198,28 @@ mod tests {
 
     fn idl_with_names(name: &str, crate_name: &str) -> Idl {
         Idl {
+            spec: "quasar-idl/1.0.0".to_string(),
+            name: name.to_string(),
+            version: "0.1.0".to_string(),
             address: "11111111111111111111111111111111".to_string(),
             metadata: IdlMetadata {
-                name: name.to_string(),
-                crate_name: crate_name.to_string(),
-                version: "0.1.0".to_string(),
-                spec: "0.1.0".to_string(),
+                crate_name: if crate_name.is_empty() {
+                    None
+                } else {
+                    Some(crate_name.to_string())
+                },
+                ..Default::default()
             },
+            docs: vec![],
             instructions: vec![],
             accounts: vec![],
             events: vec![],
             types: vec![],
             errors: vec![],
+            constants: vec![],
+            wrappers: None,
+            extensions: None,
+            hashes: None,
         }
     }
 
