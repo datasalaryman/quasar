@@ -109,3 +109,7 @@ mod test_migrate;
 // Raw instruction escape hatch
 #[cfg(test)]
 mod test_raw;
+
+// Metadata account validation
+#[cfg(test)]
+mod test_validate_metadata;

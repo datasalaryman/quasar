@@ -11,7 +11,7 @@ SBF_TEST_PROGRAMS := tests/programs/test-misc tests/programs/test-errors \
 	tests/programs/test-token-cpi tests/programs/test-token-init \
 	tests/programs/test-token-validate tests/programs/test-sysvar \
 	tests/programs/test-one-of tests/programs/test-migrate \
-	tests/programs/test-raw
+	tests/programs/test-raw tests/programs/test-metadata-validate
 
 # Example programs that produce SBF binaries
 SBF_EXAMPLES := examples/vault examples/escrow examples/multisig
@@ -22,7 +22,7 @@ SBF_ALL := $(SBF_EXAMPLES) $(SBF_TEST_PROGRAMS)
 .PHONY: format format-fix clippy clippy-fix check-features check-workspace-lints \
 	check-runtime-panics check-workspace-invariants build build-sbf test bench-cu \
 	bench-tracked compare-tracked test-miri test-miri-strict test-all nightly-version \
-	kani help-kani check-kani kani-lang kani-spl
+	kani help-kani check-kani kani-lang kani-spl kani-metadata
 
 # Print the nightly toolchain version for CI
 nightly-version:
@@ -158,6 +158,7 @@ test:
 	@$(MAKE) build
 	@$(MAKE) build-sbf
 	@TRYBUILD=overwrite cargo test -p quasar-lang -p quasar-derive -p quasar-spl \
+		-p quasar-metadata \
 		-p quasar-vault -p quasar-escrow -p quasar-multisig \
 		-p quasar-test-suite \
 		--all-features
@@ -181,12 +182,16 @@ test-miri:
 		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-lang --test miri
 	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
 		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-spl --test miri
+	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
+		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-metadata --test miri
 
 test-miri-strict:
 	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance" \
 		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-lang --test miri -- --skip remaining
 	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance" \
 		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-spl --test miri
+	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance" \
+		cargo +$(NIGHTLY_TOOLCHAIN) miri test -p quasar-metadata --test miri
 
 kani-lang: check-kani
 	@cargo kani -p quasar-lang
@@ -194,7 +199,10 @@ kani-lang: check-kani
 kani-spl: check-kani
 	@cargo kani -p quasar-spl
 
-kani: kani-lang kani-spl
+kani-metadata: check-kani
+	@cargo kani -p quasar-metadata
+
+kani: kani-lang kani-spl kani-metadata
 
 # Run all checks in sequence
 test-all:

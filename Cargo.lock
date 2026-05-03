@@ -2170,6 +2170,8 @@ version = "0.0.0"
 dependencies = [
  "quasar-lang",
  "solana-address 2.2.0",
+ "solana-program-error",
+ "trybuild",
 ]
 
 [[package]]
@@ -2293,6 +2295,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quasar-test-metadata-validate"
+version = "0.1.0"
+dependencies = [
+ "quasar-derive",
+ "quasar-lang",
+ "quasar-metadata",
+ "quasar-spl",
+]
+
+[[package]]
 name = "quasar-test-migrate"
 version = "0.1.0"
 dependencies = [
@@ -2345,6 +2357,7 @@ dependencies = [
  "quasar-test-errors",
  "quasar-test-events",
  "quasar-test-heap",
+ "quasar-test-metadata-validate",
  "quasar-test-migrate",
  "quasar-test-misc",
  "quasar-test-one-of",
