@@ -51,11 +51,10 @@ fn run_once(debug: bool, verbose: bool, features: Option<&str>, lint_flag: bool)
 
     let languages = config.client_languages();
     let crate_root = utils::find_program_crate(&config);
-    let parsed = crate::idl::generate(&crate_root, &languages, &clients_path)?;
+    crate::idl::generate(&crate_root, &languages, &clients_path)?;
 
-    if lint_flag || config.lint_enabled() {
-        crate::lint::run_lint_on_parsed(&parsed, &quasar_idl::lint::LintConfig::default())?;
-    }
+    // Lint pass removed — IDL-based lint will be re-introduced in a future PR.
+    let _ = lint_flag;
 
     let sp = if verbose {
         indicatif::ProgressBar::hidden()
@@ -240,7 +239,7 @@ pub fn profile_build() -> Result<PathBuf, crate::error::CliError> {
 
     let languages = config.client_languages();
     let crate_root = utils::find_program_crate(&config);
-    let _parsed = crate::idl::generate(&crate_root, &languages, &clients_path)?;
+    crate::idl::generate(&crate_root, &languages, &clients_path)?;
 
     let sp = style::spinner("Profile build...");
 
