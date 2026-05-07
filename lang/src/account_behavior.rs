@@ -43,6 +43,10 @@ pub trait AccountBehavior<A> {
     /// Whether `check` runs after account load.
     const RUN_CHECK: bool = true;
 
+    /// Whether a successful fresh init through this behavior establishes the
+    /// same invariants as `check`.
+    const INIT_SATISFIES_CHECK: bool = false;
+
     /// Whether `update` runs after validation (requires `#[account(mut)]`).
     const RUN_UPDATE: bool = false;
 

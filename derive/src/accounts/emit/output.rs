@@ -12,9 +12,11 @@ pub(crate) struct AccountsOutput<'a> {
     pub parse_impl_generics: proc_macro2::TokenStream,
     pub parse_where_clause: proc_macro2::TokenStream,
     pub count_expr: proc_macro2::TokenStream,
+    pub needs_event_cpi_expr: proc_macro2::TokenStream,
     pub parse_steps: Vec<proc_macro2::TokenStream>,
     pub typed_seed_asserts: proc_macro2::TokenStream,
     pub parse_body: proc_macro2::TokenStream,
+    pub direct_parse_body: proc_macro2::TokenStream,
     pub bumps_struct: proc_macro2::TokenStream,
     pub epilogue_method: proc_macro2::TokenStream,
     pub has_epilogue_expr: proc_macro2::TokenStream,
@@ -33,9 +35,11 @@ pub(crate) fn emit_accounts_output(output: AccountsOutput<'_>) -> proc_macro2::T
         parse_impl_generics,
         parse_where_clause,
         count_expr,
+        needs_event_cpi_expr,
         parse_steps,
         typed_seed_asserts,
         parse_body,
+        direct_parse_body,
         bumps_struct,
         epilogue_method,
         has_epilogue_expr,
@@ -139,10 +143,12 @@ pub(crate) fn emit_accounts_output(output: AccountsOutput<'_>) -> proc_macro2::T
 
         impl #impl_generics AccountCount for #name #ty_generics #where_clause {
             const COUNT: usize = #count_expr;
+            const NEEDS_EVENT_CPI: bool = #needs_event_cpi_expr;
         }
 
         impl #impl_generics #name #ty_generics #where_clause {
             #[inline(always)]
+            #[doc(hidden)]
             pub unsafe fn parse_accounts(
                 mut input: *mut u8,
                 buf: &mut core::mem::MaybeUninit<[quasar_lang::__internal::AccountView; #count_expr]>,
@@ -153,6 +159,17 @@ pub(crate) fn emit_accounts_output(output: AccountsOutput<'_>) -> proc_macro2::T
                 #(#parse_steps)*
 
                 Ok(input)
+            }
+
+            #[inline(always)]
+            #[doc(hidden)]
+            pub unsafe fn parse_direct_with_instruction_data_unchecked(
+                mut input: *mut u8,
+                __ix_data: &[u8],
+                __program_id: &quasar_lang::prelude::Address,
+            ) -> Result<(Self, #bumps_name), ProgramError> {
+                #ix_arg_extraction
+                #direct_parse_body
             }
         }
 

@@ -94,6 +94,7 @@ macro_rules! impl_token_behavior {
         impl AccountBehavior<$wrapper> for Behavior {
             type Args<'a> = Args<'a>;
             const SETS_INIT_PARAMS: bool = true;
+            const INIT_SATISFIES_CHECK: bool = true;
 
             #[inline(always)]
             fn set_init_param<'a>(

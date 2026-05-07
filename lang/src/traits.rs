@@ -97,6 +97,11 @@ pub trait Space {
 /// Used by: `dispatch!` macro to size the `MaybeUninit` account buffer.
 pub trait AccountCount {
     const COUNT: usize;
+    /// True when this account set may service `emit_cpi!` self-CPI events.
+    ///
+    /// Generated dispatch uses this to avoid carrying the event-CPI handler in
+    /// programs whose instructions cannot provide an event authority account.
+    const NEEDS_EVENT_CPI: bool;
 }
 
 /// Parse and validate a set of accounts from a raw `AccountView` slice.

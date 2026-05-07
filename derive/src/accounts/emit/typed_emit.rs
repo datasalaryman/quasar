@@ -19,6 +19,7 @@ pub(crate) fn emit_post_load_behavior(
     call: &BehaviorCall,
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
+    did_init_var: Option<&syn::Ident>,
 ) -> proc_macro2::TokenStream {
     let path = &call.path;
     let bhv =
@@ -32,12 +33,19 @@ pub(crate) fn emit_post_load_behavior(
                 #bhv::after_init(&mut #field_ident, &__bhv_args)?;
             }
         },
-        BehaviorPhase::Check => quote! {
-            if #bhv::RUN_CHECK {
-                #args_block
-                #bhv::check(&#field_ident, &__bhv_args)?;
+        BehaviorPhase::Check => {
+            let fresh_init_guard = if let Some(did_init_var) = did_init_var {
+                quote! { !(#did_init_var && #bhv::INIT_SATISFIES_CHECK) }
+            } else {
+                quote! { true }
+            };
+            quote! {
+                if #bhv::RUN_CHECK && #fresh_init_guard {
+                    #args_block
+                    #bhv::check(&#field_ident, &__bhv_args)?;
+                }
             }
-        },
+        }
         BehaviorPhase::Update => quote! {
             if #bhv::RUN_UPDATE {
                 #args_block
@@ -76,6 +84,7 @@ pub(crate) fn emit_behavior_init(
     field_ident: &syn::Ident,
     field_ty: &syn::Type,
     has_address: bool,
+    did_init_var: Option<&syn::Ident>,
 ) -> proc_macro2::TokenStream {
     let payer_ident = &spec.payer.ident;
     let idempotent = spec.idempotent;
@@ -98,6 +107,10 @@ pub(crate) fn emit_behavior_init(
         })
         .collect();
 
+    let did_init_assignment = did_init_var
+        .map(|did_init_var| quote! { #did_init_var = true; })
+        .unwrap_or_else(|| quote! {});
+
     let init_cpi = quote! {
         let mut __init_params = <#field_ty as quasar_lang::account_init::AccountInit>::InitParams::default();
         #(#set_params)*
@@ -109,6 +122,7 @@ pub(crate) fn emit_behavior_init(
             idempotent: #idempotent,
         };
         __init_op.apply::<#field_ty>(#field_ident, &__rent_ctx)?;
+        #did_init_assignment
     };
 
     let body = if has_address {

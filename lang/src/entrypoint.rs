@@ -68,7 +68,7 @@ macro_rules! dispatch {
                         program_id: __program_id,
                         accounts: &mut __accounts,
                         remaining_ptr: __remaining_ptr,
-                        data: $ix_data,
+                        data: unsafe { $ix_data.get_unchecked($disc_len..) },
                         // SAFETY: Instruction data is preceded by a u64 length
                         // field in the SVM buffer. Subtracting 8 gives the
                         // boundary between accounts and instruction data.
