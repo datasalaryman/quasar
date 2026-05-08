@@ -88,7 +88,15 @@ pub(crate) fn generate_one_of_account(
         .iter()
         .map(|v| {
             quote! {
-                <#v as quasar_lang::account_load::AccountLoad>::check(view, "").is_ok()
+                <#v as quasar_lang::account_load::AccountLoad>::check(view).is_ok()
+            }
+        })
+        .collect();
+    let checked_variant_checks: Vec<proc_macro2::TokenStream> = variant_paths
+        .iter()
+        .map(|v| {
+            quote! {
+                <#v as quasar_lang::account_load::AccountLoad>::check_checked(view).is_ok()
             }
         })
         .collect();
@@ -96,11 +104,17 @@ pub(crate) fn generate_one_of_account(
     let account_check = quote! {
         impl quasar_lang::account_load::AccountLoad for #name {
             #[inline(always)]
-            fn check(
-                view: &quasar_lang::__internal::AccountView,
-                _field_name: &str,
-            ) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
+            fn check(view: &quasar_lang::__internal::AccountView) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
                 if #(#variant_checks)||* {
+                    Ok(())
+                } else {
+                    Err(quasar_lang::__solana_program_error::ProgramError::InvalidAccountData)
+                }
+            }
+
+            #[inline(always)]
+            fn check_checked(view: &quasar_lang::__internal::AccountView) -> Result<(), quasar_lang::__solana_program_error::ProgramError> {
+                if #(#checked_variant_checks)||* {
                     Ok(())
                 } else {
                     Err(quasar_lang::__solana_program_error::ProgramError::InvalidAccountData)

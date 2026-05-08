@@ -24,6 +24,7 @@ mod syntax;
 
 pub(crate) use syntax::InstructionArg;
 use {
+    crate::helpers::strip_generics,
     plan::build_accounts_plan,
     proc_macro::TokenStream,
     quote::{format_ident, quote},
@@ -127,6 +128,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         count_expr,
         typed_seed_asserts,
         parse_body,
+        direct_parse_body,
     } = accounts_plan;
 
     let bumps_struct = emit::emit_bump_struct_def(&semantics, &emit_cx);
@@ -159,9 +161,11 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         parse_impl_generics: parse_impl_generics_ts,
         parse_where_clause: parse_where_clause_ts,
         count_expr,
+        needs_event_cpi_expr: emit_needs_event_cpi_expr(&semantics),
         parse_steps,
         typed_seed_asserts,
         parse_body,
+        direct_parse_body,
         bumps_struct,
         epilogue_method,
         has_epilogue_expr,
@@ -230,6 +234,40 @@ fn emit_idl_accounts_meta(
                 )
             })
         }
+    }
+}
+
+fn emit_needs_event_cpi_expr(semantics: &[resolve::FieldSemantics]) -> proc_macro2::TokenStream {
+    let terms: Vec<proc_macro2::TokenStream> = semantics
+        .iter()
+        .map(|sem| match sem.core.kind {
+            resolve::FieldKind::Composite => {
+                let inner_ty = strip_generics(&sem.core.effective_ty);
+                quote! { <#inner_ty as AccountCount>::NEEDS_EVENT_CPI }
+            }
+            resolve::FieldKind::Single if is_event_cpi_field(sem) => {
+                quote! { true }
+            }
+            resolve::FieldKind::Single => quote! { false },
+        })
+        .collect();
+
+    quote! { false #(|| #terms)* }
+}
+
+fn is_event_cpi_field(sem: &resolve::FieldSemantics) -> bool {
+    if sem.core.ident == "event_authority" {
+        return true;
+    }
+
+    if let syn::Type::Path(type_path) = &sem.core.effective_ty {
+        type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "EventAuthority")
+    } else {
+        false
     }
 }
 

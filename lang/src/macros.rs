@@ -66,11 +66,25 @@ macro_rules! define_account {
 
         impl $crate::account_load::AccountLoad for $name {
             #[inline(always)]
-            fn check(
-                view: &AccountView,
-                _field_name: &str,
-            ) -> Result<(), $crate::__solana_program_error::ProgramError> {
+            fn check(view: &AccountView) -> Result<(), $crate::__solana_program_error::ProgramError> {
                 $(<$name as $check>::check(view)?;)*
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn check_checked(view: &AccountView) -> Result<(), $crate::__solana_program_error::ProgramError> {
+                let __data = view.try_borrow()?;
+                let __size = core::mem::size_of::<<$schema as $crate::__zeropod::ZeroPodFixed>::Zc>();
+                if __data.len() < __size {
+                    return Err($crate::__solana_program_error::ProgramError::AccountDataTooSmall);
+                }
+                <$schema as $crate::__zeropod::ZeroPodFixed>::validate(&__data[..__size])
+                    .map_err(|_| $crate::__solana_program_error::ProgramError::InvalidAccountData)?;
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn check_intrinsic(_view: &AccountView) -> Result<(), $crate::__solana_program_error::ProgramError> {
                 Ok(())
             }
         }

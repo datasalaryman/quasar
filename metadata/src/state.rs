@@ -65,6 +65,11 @@ const _: () = assert!(core::mem::offset_of!(MasterEditionPrefixZc, max_supply) =
 /// Semantic accessors for MasterEditionPrefixZc.
 impl MasterEditionPrefixZc {
     #[inline(always)]
+    pub fn max_supply_tag_valid(&self) -> bool {
+        self.max_supply.raw_tag() <= 1
+    }
+
+    #[inline(always)]
     pub fn supply_value(&self) -> u64 {
         self.supply.get()
     }

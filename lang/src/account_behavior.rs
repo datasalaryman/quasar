@@ -43,6 +43,28 @@ pub trait AccountBehavior<A> {
     /// Whether `check` runs after account load.
     const RUN_CHECK: bool = true;
 
+    /// Whether a successful fresh init through this behavior establishes the
+    /// same invariants as `check`.
+    const INIT_SATISFIES_CHECK: bool = false;
+
+    /// Whether this behavior validates the target account's data.
+    ///
+    /// When true, generated parsing may use the target account type's cheaper
+    /// intrinsic pre-load path and rely on this behavior's semantic validation
+    /// to complete account-data checks before the parsed accounts are returned.
+    const VALIDATES_ACCOUNT_DATA: bool = false;
+
+    /// Whether this behavior consumes the given behavior arg in the given
+    /// lifecycle phase.
+    ///
+    /// Derive uses this to avoid building phase-local args that a concrete
+    /// behavior impl does not read. The default keeps all existing behavior
+    /// modules source-compatible.
+    #[inline(always)]
+    fn uses_arg<const PHASE: u8, const KEY: u64>() -> bool {
+        true
+    }
+
     /// Whether `update` runs after validation (requires `#[account(mut)]`).
     const RUN_UPDATE: bool = false;
 
@@ -78,4 +100,22 @@ pub trait AccountBehavior<A> {
     fn exit<'a>(_account: &mut A, _args: &Self::Args<'a>) -> Result<(), ProgramError> {
         Ok(())
     }
+}
+
+pub const ARG_PHASE_SET_INIT_PARAM: u8 = 0;
+pub const ARG_PHASE_AFTER_INIT: u8 = 1;
+pub const ARG_PHASE_CHECK: u8 = 2;
+pub const ARG_PHASE_UPDATE: u8 = 3;
+pub const ARG_PHASE_EXIT: u8 = 4;
+
+pub const fn behavior_arg_key_hash(key: &str) -> u64 {
+    let bytes = key.as_bytes();
+    let mut hash = 0xcbf29ce484222325u64;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        i += 1;
+    }
+    hash
 }

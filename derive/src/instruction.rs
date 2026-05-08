@@ -16,16 +16,19 @@ use {
         PodDynField,
     },
     proc_macro::TokenStream,
-    quote::quote,
+    quote::{format_ident, quote},
     syn::{parse_macro_input, FnArg, Ident, ItemFn, Pat, ReturnType, Type},
 };
 
-// Note: pre_hook/post_hook have been removed. Users should use
-// #[accounts(validate)] for pre-handler validation, or write logic
-// directly in the handler body.
+// Note: pre_hook/post_hook have been removed. Users should attach behavior
+// check groups to account fields or write logic directly in the handler body.
 
-/// Emit the ZeroPodFixed schema codegen block: derive struct, size check,
-/// validate, cast, and per-field `from_zc` extraction.
+/// Emit the fixed-argument decode block.
+///
+/// This deliberately avoids deriving a local `ZeroPodFixed` schema for the
+/// common fixed-only path. The derive had enough information to emit the ZC
+/// layout directly, which removes the schema wrapper's duplicate length check
+/// and lets each field validate through `InstructionArg::validate_zc`.
 fn emit_fixed_schema_stmts(
     param_ident: &Ident,
     field_names: &[Ident],
@@ -33,27 +36,33 @@ fn emit_fixed_schema_stmts(
 ) -> Vec<syn::Stmt> {
     let mut stmts: Vec<syn::Stmt> = Vec::new();
     stmts.push(syn::parse_quote!(
-        #[derive(zeropod::ZeroPod)]
-        struct __InstructionDataSchema {
-            #(#field_names: #field_types,)*
+        #[repr(C)]
+        struct __InstructionDataZc {
+            #(#field_names: <#field_types as quasar_lang::instruction_arg::InstructionArg>::Zc,)*
         }
     ));
     stmts.push(syn::parse_quote!(
-        if #param_ident.data.len() < <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE {
+        const _: () = assert!(
+            core::mem::align_of::<__InstructionDataZc>() == 1,
+            "fixed instruction data ZC layout must have alignment 1"
+        );
+    ));
+    stmts.push(syn::parse_quote!(
+        const __INSTRUCTION_DATA_SIZE: usize = core::mem::size_of::<__InstructionDataZc>();
+    ));
+    stmts.push(syn::parse_quote!(
+        if #param_ident.data.len() < __INSTRUCTION_DATA_SIZE {
             return Err(ProgramError::InvalidInstructionData);
         }
     ));
     stmts.push(syn::parse_quote!(
-        <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::validate(
-            &#param_ident.data[..<__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE]
-        ).map_err(|_| ProgramError::InvalidInstructionData)?;
-    ));
-    stmts.push(syn::parse_quote!(
-        let __zc = unsafe {
-            <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::from_bytes_unchecked(&#param_ident.data)
-        };
+        let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const __InstructionDataZc) };
     ));
     for (name, ty) in field_names.iter().zip(field_types.iter()) {
+        stmts.push(syn::parse_quote!(
+            <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&__zc.#name)
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+        ));
         stmts.push(syn::parse_quote!(
             let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
         ));
@@ -151,6 +160,219 @@ fn emit_handler_tail(
     tail
 }
 
+fn emit_decode_and_tail(
+    param_ident: &Ident,
+    remaining: &[syn::PatType],
+    stmts: &[syn::Stmt],
+    has_return_data: bool,
+    return_ok_type: Option<&Type>,
+) -> syn::Result<Vec<syn::Stmt>> {
+    let mut out = Vec::new();
+
+    if !remaining.is_empty() {
+        let mut field_names: Vec<Ident> = Vec::with_capacity(remaining.len());
+        for pt in remaining {
+            match &*pt.pat {
+                Pat::Ident(pat_ident) => field_names.push(pat_ident.ident.clone()),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &pt.pat,
+                        "#[instruction] parameters must be simple identifiers",
+                    ));
+                }
+            }
+        }
+
+        /// Per-arg classification: fixed-size or dynamic (compact) decode.
+        enum ArgClass {
+            Fixed,
+            PodDyn(PodDynField),
+        }
+
+        let mut arg_classes: Vec<ArgClass> = Vec::with_capacity(remaining.len());
+        for pt in remaining {
+            if let Some(pd) = classify_pod_dynamic(&pt.ty) {
+                arg_classes.push(ArgClass::PodDyn(pd));
+            } else if matches!(&*pt.ty, Type::Reference(_)) {
+                // Borrowed arg — desugar to compact via #[max(N)]
+                match parse_max_attr_from_fn_arg(pt) {
+                    Some(Ok((max_n, pfx))) => {
+                        match classify_borrowed_as_compact(&pt.ty, max_n, pfx) {
+                            Some(pd) => arg_classes.push(ArgClass::PodDyn(pd)),
+                            None => {
+                                return Err(syn::Error::new_spanned(
+                                    &pt.ty,
+                                    "unsupported borrowed type; use &str or &[T]",
+                                ));
+                            }
+                        }
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        return Err(syn::Error::new_spanned(
+                            &pt.ty,
+                            "borrowed instruction args require #[max(N)] annotation",
+                        ));
+                    }
+                }
+            } else if classify_lifetime_arg(&pt.ty) {
+                // Grouped borrowed struct (e.g., MintArgs<'a>) — must be the
+                // only arg.
+                if remaining.len() != 1 {
+                    return Err(syn::Error::new_spanned(
+                        &pt.ty,
+                        "a grouped borrowed struct must be the only instruction arg (besides ctx)",
+                    ));
+                }
+
+                // Generate: let arg_name = <ArgType>::decode_compact(&ctx.data)?;
+                let arg_name = &field_names[0];
+                let arg_ty = &pt.ty;
+                out.push(syn::parse_quote!(
+                    let #arg_name = <#arg_ty>::decode_compact(&#param_ident.data)?;
+                ));
+
+                out.push(syn::parse_quote!(
+                    #param_ident.data = &[];
+                ));
+
+                out.extend(emit_handler_tail(
+                    param_ident,
+                    stmts,
+                    has_return_data,
+                    return_ok_type,
+                ));
+                return Ok(out);
+            } else {
+                arg_classes.push(ArgClass::Fixed);
+            }
+        }
+
+        let first_dynamic = arg_classes
+            .iter()
+            .position(|cls| !matches!(cls, ArgClass::Fixed));
+        let last_fixed = arg_classes
+            .iter()
+            .rposition(|cls| matches!(cls, ArgClass::Fixed));
+        if let (Some(fd), Some(lf)) = (first_dynamic, last_fixed) {
+            if lf > fd {
+                return Err(syn::Error::new_spanned(
+                    &remaining[lf],
+                    "fixed instruction args must precede all dynamic or borrowed args",
+                ));
+            }
+        }
+
+        let vec_align_asserts: Vec<proc_macro2::TokenStream> = arg_classes
+            .iter()
+            .filter_map(|cls| match cls {
+                ArgClass::PodDyn(PodDynField::Vec { elem, .. }) => Some(quote! {
+                    const _: () = assert!(
+                        core::mem::align_of::<#elem>() == 1,
+                        "instruction Vec element type must have alignment 1"
+                    );
+                }),
+                _ => None,
+            })
+            .collect();
+
+        for assert_stmt in vec_align_asserts {
+            out.push(
+                syn::parse2(assert_stmt)
+                    .expect("failed to parse generated Vec alignment assert statement"),
+            );
+        }
+
+        let has_pod_dyn = arg_classes
+            .iter()
+            .any(|cls| matches!(cls, ArgClass::PodDyn(_)));
+
+        if has_pod_dyn {
+            // Alias quasar_lang's re-export so `zeropod::*` paths emitted by
+            // the ZeroPod derive resolve without a direct crate dependency.
+            out.push(syn::parse_quote!(
+                use quasar_lang::__zeropod as zeropod;
+            ));
+
+            // Compact path: a single zeropod compact schema with ALL fields
+            // (fixed + dynamic). The header contains fixed fields and length
+            // prefixes; tail data follows immediately after the header.
+            let compact_field_names: Vec<_> = field_names.clone();
+            let compact_field_types: Vec<proc_macro2::TokenStream> = arg_classes
+                .iter()
+                .zip(remaining.iter())
+                .map(|(cls, pt)| match cls {
+                    ArgClass::Fixed => {
+                        let ty = &pt.ty;
+                        quote!(#ty)
+                    }
+                    ArgClass::PodDyn(ref pd) => pod_dyn_to_compact_type(pd),
+                })
+                .collect();
+
+            out.push(syn::parse_quote!(
+                #[derive(zeropod::ZeroPod)]
+                #[zeropod(compact)]
+                struct __InstructionDataCompact {
+                    #(#compact_field_names: #compact_field_types,)*
+                }
+            ));
+
+            out.push(syn::parse_quote!(
+                <__InstructionDataCompact as quasar_lang::ZeroPodCompact>::validate(
+                    &#param_ident.data
+                ).map_err(|_| ProgramError::InvalidInstructionData)?;
+            ));
+
+            out.push(syn::parse_quote!(
+                let __ref = unsafe {
+                    __InstructionDataCompactRef::new_unchecked(&#param_ident.data)
+                };
+            ));
+
+            for (i, cls) in arg_classes.iter().enumerate() {
+                let name = &field_names[i];
+                let ty = &remaining[i].ty;
+                match cls {
+                    ArgClass::Fixed => {
+                        out.push(syn::parse_quote!(
+                            let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ref.#name);
+                        ));
+                    }
+                    ArgClass::PodDyn(_) => {
+                        out.push(syn::parse_quote!(
+                            let #name = __ref.#name();
+                        ));
+                    }
+                }
+            }
+        } else {
+            // Fixed-only path: emit the ZC layout directly.
+            let zc_field_names: Vec<_> = field_names.clone();
+            let zc_field_orig_types: Vec<_> = remaining.iter().map(|pt| (*pt.ty).clone()).collect();
+
+            out.extend(emit_fixed_schema_stmts(
+                param_ident,
+                &zc_field_names,
+                &zc_field_orig_types,
+            ));
+        }
+
+        // Clear ctx.data after extraction.
+        out.push(syn::parse_quote!(
+            #param_ident.data = &[];
+        ));
+    }
+
+    out.extend(emit_handler_tail(
+        param_ident,
+        stmts,
+        has_return_data,
+        return_ok_type,
+    ));
+    Ok(out)
+}
+
 pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as InstructionArgs);
     let mut func = parse_macro_input!(item as ItemFn);
@@ -186,7 +408,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // ── Raw path ────────────────────────────────────────────────────
     // When `raw` is set, the handler receives a bare `Context` — no
-    // Ctx<T>, no arg decoding, no validate(), no epilogue. The macro
+    // Ctx<T>, no arg decoding, no epilogue. The macro
     // just validates the signature and emits the function unchanged.
     // The `#[program]` codegen is responsible for generating the
     // dispatch arm that constructs and passes the `Context`.
@@ -290,232 +512,78 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         .push(syn::parse_quote!(mut context: Context));
 
     let stmts = std::mem::take(&mut func.block.stmts);
-    let mut new_stmts: Vec<syn::Stmt> = vec![
-        // Skip past the discriminator prefix. The dispatch! macro in the
-        // entrypoint already verified the discriminator matches via a
-        // fixed-size array comparison, so no need to re-check here.
-        syn::parse_quote!(
-            context.data = &context.data[#disc_len..];
-        ),
-        syn::parse_quote!(
-            let mut #param_name: #param_type = <#param_type>::new(context)?;
-        ),
-    ];
-
-    if !remaining.is_empty() {
-        let mut field_names: Vec<Ident> = Vec::with_capacity(remaining.len());
-        for pt in &remaining {
-            match &*pt.pat {
-                Pat::Ident(pat_ident) => field_names.push(pat_ident.ident.clone()),
-                _ => {
-                    return syn::Error::new_spanned(
-                        &pt.pat,
-                        "#[instruction] parameters must be simple identifiers",
-                    )
-                    .to_compile_error()
-                    .into();
-                }
-            }
-        }
-
-        /// Per-arg classification: fixed-size or dynamic (compact) decode.
-        enum ArgClass {
-            Fixed,
-            PodDyn(PodDynField),
-        }
-
-        let mut arg_classes: Vec<ArgClass> = Vec::with_capacity(remaining.len());
-        for pt in &remaining {
-            if let Some(pd) = classify_pod_dynamic(&pt.ty) {
-                arg_classes.push(ArgClass::PodDyn(pd));
-            } else if matches!(&*pt.ty, Type::Reference(_)) {
-                // Borrowed arg — desugar to compact via #[max(N)]
-                match parse_max_attr_from_fn_arg(pt) {
-                    Some(Ok((max_n, pfx))) => {
-                        match classify_borrowed_as_compact(&pt.ty, max_n, pfx) {
-                            Some(pd) => arg_classes.push(ArgClass::PodDyn(pd)),
-                            None => {
-                                return syn::Error::new_spanned(
-                                    &pt.ty,
-                                    "unsupported borrowed type; use &str or &[T]",
-                                )
-                                .to_compile_error()
-                                .into();
-                            }
-                        }
-                    }
-                    Some(Err(e)) => return e.to_compile_error().into(),
-                    None => {
-                        return syn::Error::new_spanned(
-                            &pt.ty,
-                            "borrowed instruction args require #[max(N)] annotation",
-                        )
-                        .to_compile_error()
-                        .into();
-                    }
-                }
-            } else if classify_lifetime_arg(&pt.ty) {
-                // Grouped borrowed struct (e.g., MintArgs<'a>) — must be the only arg
-                if remaining.len() != 1 {
-                    return syn::Error::new_spanned(
-                        &pt.ty,
-                        "a grouped borrowed struct must be the only instruction arg (besides ctx)",
-                    )
-                    .to_compile_error()
-                    .into();
-                }
-
-                // Generate: let arg_name = <ArgType>::decode_compact(&ctx.data)?;
-                let arg_name = &field_names[0];
-                let arg_ty = &pt.ty;
-                new_stmts.push(syn::parse_quote!(
-                    let #arg_name = <#arg_ty>::decode_compact(&#param_ident.data)?;
-                ));
-
-                // Clear ctx.data after extraction
-                new_stmts.push(syn::parse_quote!(
-                    #param_ident.data = &[];
-                ));
-
-                new_stmts.extend(emit_handler_tail(
-                    &param_ident,
-                    &stmts,
-                    has_return_data,
-                    return_ok_type.as_ref(),
-                ));
-                func.block.stmts = new_stmts;
-
-                return quote!(#func).into();
-            } else {
-                arg_classes.push(ArgClass::Fixed);
-            }
-        }
-
-        let first_dynamic = arg_classes
-            .iter()
-            .position(|cls| !matches!(cls, ArgClass::Fixed));
-        let last_fixed = arg_classes
-            .iter()
-            .rposition(|cls| matches!(cls, ArgClass::Fixed));
-        if let (Some(fd), Some(lf)) = (first_dynamic, last_fixed) {
-            if lf > fd {
-                return syn::Error::new_spanned(
-                    &remaining[lf],
-                    "fixed instruction args must precede all dynamic or borrowed args",
-                )
-                .to_compile_error()
-                .into();
-            }
-        }
-
-        let vec_align_asserts: Vec<proc_macro2::TokenStream> = arg_classes
-            .iter()
-            .filter_map(|cls| match cls {
-                ArgClass::PodDyn(PodDynField::Vec { elem, .. }) => Some(quote! {
-                    const _: () = assert!(
-                        core::mem::align_of::<#elem>() == 1,
-                        "instruction Vec element type must have alignment 1"
-                    );
-                }),
-                _ => None,
-            })
-            .collect();
-
-        for assert_stmt in vec_align_asserts {
-            new_stmts.push(
-                syn::parse2(assert_stmt)
-                    .expect("failed to parse generated Vec alignment assert statement"),
-            );
-        }
-
-        let has_pod_dyn = arg_classes
-            .iter()
-            .any(|cls| matches!(cls, ArgClass::PodDyn(_)));
-
-        // Alias quasar_lang's re-export so `zeropod::*` paths emitted by
-        // the ZeroPod derive resolve without a direct crate dependency.
-        new_stmts.push(syn::parse_quote!(
-            use quasar_lang::__zeropod as zeropod;
-        ));
-
-        if has_pod_dyn {
-            // Compact path: a single zeropod compact schema with ALL fields
-            // (fixed + dynamic). The header contains fixed fields and length
-            // prefixes; tail data follows immediately after the header.
-            let compact_field_names: Vec<_> = field_names.clone();
-            let compact_field_types: Vec<proc_macro2::TokenStream> = arg_classes
-                .iter()
-                .zip(remaining.iter())
-                .map(|(cls, pt)| match cls {
-                    ArgClass::Fixed => {
-                        let ty = &pt.ty;
-                        quote!(#ty)
-                    }
-                    ArgClass::PodDyn(ref pd) => pod_dyn_to_compact_type(pd),
-                })
-                .collect();
-
-            new_stmts.push(syn::parse_quote!(
-                #[derive(zeropod::ZeroPod)]
-                #[zeropod(compact)]
-                struct __InstructionDataCompact {
-                    #(#compact_field_names: #compact_field_types,)*
-                }
-            ));
-
-            new_stmts.push(syn::parse_quote!(
-                <__InstructionDataCompact as quasar_lang::ZeroPodCompact>::validate(
-                    &#param_ident.data
-                ).map_err(|_| ProgramError::InvalidInstructionData)?;
-            ));
-
-            new_stmts.push(syn::parse_quote!(
-                let __ref = unsafe {
-                    __InstructionDataCompactRef::new_unchecked(&#param_ident.data)
-                };
-            ));
-
-            for (i, cls) in arg_classes.iter().enumerate() {
-                let name = &field_names[i];
-                let ty = &remaining[i].ty;
-                match cls {
-                    ArgClass::Fixed => {
-                        new_stmts.push(syn::parse_quote!(
-                            let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ref.#name);
-                        ));
-                    }
-                    ArgClass::PodDyn(_) => {
-                        new_stmts.push(syn::parse_quote!(
-                            let #name = __ref.#name();
-                        ));
-                    }
-                }
-            }
-        } else {
-            // Fixed-only path: keep the current ZeroPodFixed schema.
-            let zc_field_names: Vec<_> = field_names.clone();
-            let zc_field_orig_types: Vec<_> = remaining.iter().map(|pt| (*pt.ty).clone()).collect();
-
-            new_stmts.extend(emit_fixed_schema_stmts(
-                &param_ident,
-                &zc_field_names,
-                &zc_field_orig_types,
-            ));
-        }
-
-        // Clear ctx.data after extraction
-        new_stmts.push(syn::parse_quote!(
-            #param_ident.data = &[];
-        ));
-    }
-
-    new_stmts.extend(emit_handler_tail(
+    let mut new_stmts: Vec<syn::Stmt> = vec![syn::parse_quote!(
+        let mut #param_name: #param_type = <#param_type>::new(context)?;
+    )];
+    let decoded_tail = match emit_decode_and_tail(
         &param_ident,
+        &remaining,
         &stmts,
         has_return_data,
         return_ok_type.as_ref(),
-    ));
+    ) {
+        Ok(stmts) => stmts,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    new_stmts.extend(decoded_tail);
     func.block.stmts = new_stmts;
 
-    quote!(#func).into()
+    let direct_fn = if let Some(accounts_ty) = extract_generic_inner_type(param_type, "Ctx") {
+        let fn_name = &func.sig.ident;
+        let direct_name = format_ident!("__quasar_direct_{}", fn_name);
+        let mut direct_stmts: Vec<syn::Stmt> = vec![
+            syn::parse_quote!(
+                let __program_id_addr = unsafe {
+                    &*(__program_id as *const [u8; 32] as *const quasar_lang::prelude::Address)
+                };
+            ),
+            syn::parse_quote!(
+                let (__accounts, __bumps) = unsafe {
+                    <#accounts_ty>::parse_direct_with_instruction_data_unchecked(
+                        __accounts_start,
+                        __ix_data,
+                        __program_id_addr,
+                    )?
+                };
+            ),
+            syn::parse_quote!(
+                let mut #param_name: #param_type = quasar_lang::context::Ctx {
+                    accounts: __accounts,
+                    bumps: __bumps,
+                    program_id: __program_id,
+                    data: __ix_data,
+                };
+            ),
+        ];
+        let decoded_tail = match emit_decode_and_tail(
+            &param_ident,
+            &remaining,
+            &stmts,
+            has_return_data,
+            return_ok_type.as_ref(),
+        ) {
+            Ok(stmts) => stmts,
+            Err(e) => return e.to_compile_error().into(),
+        };
+        direct_stmts.extend(decoded_tail);
+
+        quote! {
+            #[inline(always)]
+            fn #direct_name(
+                __program_id: &[u8; 32],
+                __accounts_start: *mut u8,
+                __ix_data: &[u8],
+            ) -> Result<(), ProgramError> {
+                #(#direct_stmts)*
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    quote!(
+        #func
+        #direct_fn
+    )
+    .into()
 }

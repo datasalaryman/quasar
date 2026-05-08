@@ -93,6 +93,11 @@ pub fn validate_master_edition_account(
         quasar_lang::prelude::log("validate_master_edition: wrong key discriminant");
         return Err(ProgramError::InvalidAccountData);
     }
+    if unlikely(!prefix.max_supply_tag_valid()) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("validate_master_edition: invalid max_supply tag");
+        return Err(ProgramError::InvalidAccountData);
+    }
     if let Some(mint_addr) = mint {
         crate::pda::verify_master_edition_address(view.address(), mint_addr)?;
     }

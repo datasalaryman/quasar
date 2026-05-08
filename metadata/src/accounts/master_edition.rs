@@ -175,6 +175,7 @@ pub struct Behavior;
 impl AccountBehavior<Account<crate::MasterEditionAccount>> for Behavior {
     type Args<'a> = Args<'a>;
     const SETS_INIT_PARAMS: bool = true;
+    const VALIDATES_ACCOUNT_DATA: bool = true;
 
     #[inline(always)]
     fn set_init_param<'a>(
@@ -206,10 +207,9 @@ impl AccountBehavior<Account<crate::MasterEditionAccount>> for Behavior {
     ) -> Result<(), ProgramError> {
         // Validate the metadata program address.
         crate::validate::validate_metadata_program(args.program)?;
-        // PDA verification (AccountLoad already checked owner/data_len/key).
-        crate::pda::verify_master_edition_address(
-            account.to_account_view().address(),
-            args.mint.address(),
+        crate::validate::validate_master_edition_account(
+            account.to_account_view(),
+            Some(args.mint.address()),
         )?;
         // Validate metadata account when provided (owner, key, mint, and PDA).
         if let Some(metadata) = args.metadata {

@@ -79,6 +79,16 @@ fn validate_token_account_inner(
     // SAFETY: Owner is a token program and `data_len >= LEN` checked
     // above. `TokenDataZc` is `#[repr(C)]` with alignment 1.
     let state = unsafe { &*(view.data_ptr() as *const TokenDataZc) };
+    if unlikely(!state.coption_tags_valid()) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("validate_token_account: invalid option tag");
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if unlikely(!state.state_valid()) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("validate_token_account: invalid state");
+        return Err(ProgramError::InvalidAccountData);
+    }
     if unlikely(!state.is_initialized()) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_token_account: not initialized");
@@ -141,6 +151,16 @@ pub fn validate_mint_with_freeze(
         return Err(ProgramError::InvalidAccountData);
     }
     let state = unsafe { &*(view.data_ptr() as *const MintDataZc) };
+    if unlikely(!state.coption_tags_valid()) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("validate_mint: invalid option tag");
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if unlikely(!state.initialized_flag_valid()) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("validate_mint: invalid initialized flag");
+        return Err(ProgramError::InvalidAccountData);
+    }
     if unlikely(!state.is_initialized()) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: not initialized");

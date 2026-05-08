@@ -153,9 +153,15 @@ where
     To: crate::traits::Space + crate::traits::Discriminator,
 {
     #[inline(always)]
-    fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
         From::check_owner(view)?;
-        From::check(view, field_name)
+        From::check(view)
+    }
+
+    #[inline(always)]
+    fn check_checked(view: &AccountView) -> Result<(), ProgramError> {
+        From::check_owner(view)?;
+        From::check_checked(view)
     }
 }
 

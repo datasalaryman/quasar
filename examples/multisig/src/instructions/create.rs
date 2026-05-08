@@ -38,7 +38,8 @@ impl Create {
             count = count.wrapping_add(1);
         }
 
-        if threshold == 0 || threshold as usize > count {
+        let threshold_count = threshold as usize;
+        if threshold_count == 0 || threshold_count > count {
             return Err(ProgramError::InvalidArgument);
         }
 

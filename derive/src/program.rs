@@ -161,22 +161,68 @@ struct InstructionSpec {
 }
 
 impl InstructionSpec {
-    fn dispatch_arm(&self) -> TokenStream2 {
-        let fn_name = &self.fn_name;
-        let accounts_type = &self.accounts_type;
-        let disc_bytes = &self.disc_bytes;
-        quote! {
-            [#(#disc_bytes),*] => #fn_name(#accounts_type)
-        }
-    }
-
-    fn heap_dispatch_arm(&self, any_heap: bool) -> TokenStream2 {
+    fn guarded_match_arm(&self, any_heap: bool, disc_len: usize) -> TokenStream2 {
         let cursor_init = emit_heap_cursor_block(self.heap, any_heap);
         let fn_name = &self.fn_name;
+        let direct_fn_name = format_ident!("__quasar_direct_{}", fn_name);
         let accounts_type = &self.accounts_type;
         let disc_bytes = &self.disc_bytes;
+        let data_after_disc = quote! {
+            unsafe { instruction_data.get_unchecked(#disc_len..) }
+        };
+
+        let buffered_body = quote! {
+            {
+                let mut __buf = core::mem::MaybeUninit::<
+                    [AccountView; <#accounts_type as AccountCount>::COUNT]
+                >::uninit();
+                let __remaining_ptr = unsafe {
+                    <#accounts_type>::parse_accounts(
+                        __accounts_start,
+                        &mut __buf,
+                        unsafe {
+                            &*(__program_id as *const [u8; 32] as *const quasar_lang::prelude::Address)
+                        },
+                    )?
+                };
+                let mut __accounts = unsafe { __buf.assume_init() };
+                #fn_name(Context {
+                    program_id: __program_id,
+                    accounts: &mut __accounts,
+                    remaining_ptr: __remaining_ptr,
+                    data: #data_after_disc,
+                    accounts_boundary: unsafe { instruction_data.as_ptr().sub(__U64_SIZE) },
+                })
+            }
+        };
+
+        let body = if self.has_remaining {
+            buffered_body
+        } else {
+            quote! {
+                // The direct helper removes one generated Context/Ctx::new layer.
+                // On small account lists the buffered path is cheaper, so the
+                // derive selects the lower-CU shape from the account count.
+                if <#accounts_type as AccountCount>::COUNT >= 8usize {
+                    #direct_fn_name(
+                        __program_id,
+                        __accounts_start,
+                        #data_after_disc,
+                    )
+                } else {
+                    #buffered_body
+                }
+            }
+        };
+
         quote! {
-            [#(#disc_bytes),*] => { #cursor_init } => #fn_name(#accounts_type)
+            [#(#disc_bytes),*] => {
+                #cursor_init
+                if (__num_accounts as usize) < <#accounts_type as AccountCount>::COUNT {
+                    return Err(ProgramError::NotEnoughAccountKeys);
+                }
+                #body
+            }
         }
     }
 
@@ -435,11 +481,6 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
-    let dispatch_arms: Vec<TokenStream2> = instruction_specs
-        .iter()
-        .map(InstructionSpec::dispatch_arm)
-        .collect();
-
     let client_items: Vec<TokenStream2> = instruction_specs
         .iter()
         .map(InstructionSpec::client_item)
@@ -646,27 +687,76 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         });
 
-        // Normal dispatch tail: either dispatch! with heap arms, dispatch!
-        // with simple arms, or just InvalidInstructionData if all instructions
-        // are raw.
-        let normal_dispatch_tail = if instruction_specs.is_empty() {
-            // All instructions are raw — no normal dispatch needed.
-            quote! { Err(ProgramError::InvalidInstructionData) }
-        } else if any_heap {
-            let heap_dispatch_arms: Vec<proc_macro2::TokenStream> = instruction_specs
+        let event_dispatch_block = if raw_instruction_specs.is_empty() {
+            let accounts_types: Vec<&TokenStream2> = instruction_specs
                 .iter()
-                .map(|spec| spec.heap_dispatch_arm(any_heap))
+                .map(|spec| &spec.accounts_type)
                 .collect();
-            quote! {
-                dispatch!(ptr, instruction_data, #disc_len_lit, {
-                    #(#heap_dispatch_arms),*
-                })
+            // Small dispatch tables compile smaller with the explicit 0xFF
+            // invalid-instruction fast path. Larger tables benefit from
+            // erasing it unless an account set can actually service event CPI.
+            if instruction_specs.len() >= 4 {
+                quote! {
+                    const __QUASAR_NEEDS_EVENT_CPI: bool =
+                        false #(|| <#accounts_types as AccountCount>::NEEDS_EVENT_CPI)*;
+                    if __QUASAR_NEEDS_EVENT_CPI {
+                        if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
+                            return __handle_event(ptr, instruction_data);
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    const __QUASAR_NEEDS_EVENT_CPI: bool =
+                        false #(|| <#accounts_types as AccountCount>::NEEDS_EVENT_CPI)*;
+                    if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
+                        if __QUASAR_NEEDS_EVENT_CPI {
+                            return __handle_event(ptr, instruction_data);
+                        }
+                        return Err(ProgramError::InvalidInstructionData);
+                    }
+                }
             }
         } else {
             quote! {
-                dispatch!(ptr, instruction_data, #disc_len_lit, {
-                    #(#dispatch_arms),*
-                })
+                if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
+                    return __handle_event(ptr, instruction_data);
+                }
+            }
+        };
+
+        // Normal dispatch tail: use a single match and pick the lower-CU
+        // account parser shape per instruction.
+        let normal_dispatch_tail = if instruction_specs.is_empty() {
+            // All instructions are raw — no normal dispatch needed.
+            quote! { Err(ProgramError::InvalidInstructionData) }
+        } else {
+            let normal_match_arms: Vec<proc_macro2::TokenStream> = instruction_specs
+                .iter()
+                .map(|spec| spec.guarded_match_arm(any_heap, disc_len_lit))
+                .collect();
+            quote! {
+                {
+                    let __program_id: &[u8; 32] = unsafe {
+                        &*(instruction_data.as_ptr().add(instruction_data.len()) as *const [u8; 32])
+                    };
+                    const __U64_SIZE: usize = core::mem::size_of::<u64>();
+                    let __num_accounts = unsafe { *(ptr as *const u64) };
+                    let __accounts_start = unsafe { (ptr as *mut u8).add(__U64_SIZE) };
+
+                    if instruction_data.len() < #disc_len_lit {
+                        return Err(ProgramError::InvalidInstructionData);
+                    }
+
+                    let __disc: [u8; #disc_len_lit] = unsafe {
+                        *(instruction_data.as_ptr() as *const [u8; #disc_len_lit])
+                    };
+
+                    match __disc {
+                        #(#normal_match_arms)*
+                        _ => Err(ProgramError::InvalidInstructionData),
+                    }
+                }
             }
         };
 
@@ -686,9 +776,7 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #dispatch_vis fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
                     #dispatch_heap_init
 
-                    if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
-                        return __handle_event(ptr, instruction_data);
-                    }
+                    #event_dispatch_block
 
                     #raw_dispatch_block
 
@@ -699,9 +787,7 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
             items.push(syn::parse_quote! {
                 #[inline(always)]
                 #dispatch_vis fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
-                    if !instruction_data.is_empty() && instruction_data[0] == 0xFF {
-                        return __handle_event(ptr, instruction_data);
-                    }
+                    #event_dispatch_block
 
                     #raw_dispatch_block
 
@@ -812,10 +898,7 @@ pub(crate) fn program(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl quasar_lang::account_load::AccountLoad for EventAuthority {
 
             #[inline(always)]
-            fn check(
-                view: &AccountView,
-                _field_name: &str,
-            ) -> Result<(), ProgramError> {
+            fn check(view: &AccountView) -> Result<(), ProgramError> {
                 if !quasar_lang::keys_eq(view.address(), &Self::ADDRESS) {
                     return Err(ProgramError::InvalidSeeds);
                 }

@@ -25,27 +25,26 @@ impl ExecuteTransfer {
         &self,
         amount: u64,
         bumps: &ExecuteTransferBumps,
-        remaining: RemainingAccounts,
+        remaining: RemainingAccounts<'_>,
     ) -> Result<(), ProgramError> {
         let stored_signers = self.config.signers();
-        let threshold = self.config.threshold;
+        let threshold = self.config.threshold as u32;
 
         let mut approvals = 0u32;
-        for account in remaining.iter() {
-            let account = account?;
-            if !account.is_signer() {
-                continue;
-            }
-            let addr = account.address();
-            for stored in stored_signers {
-                if addr == stored {
+        for stored in stored_signers {
+            for account in remaining.iter() {
+                let account = account?;
+                if account.is_signer() && quasar_lang::keys_eq(account.address(), stored) {
                     approvals = approvals.wrapping_add(1);
                     break;
                 }
             }
+            if approvals >= threshold {
+                break;
+            }
         }
 
-        if approvals < threshold as u32 {
+        if approvals < threshold {
             return Err(ProgramError::MissingRequiredSignature);
         }
 

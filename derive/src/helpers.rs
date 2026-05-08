@@ -146,8 +146,8 @@ impl Parse for InstructionArgs {
             } else if ident == "pre_hook" || ident == "post_hook" {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "pre_hook and post_hook have been removed. Use `#[accounts(validate)]` for \
-                     pre-handler validation, or move logic into the handler body.",
+                    "pre_hook and post_hook have been removed. Attach a behavior check group to \
+                     the relevant account field, or move logic into the handler body.",
                 ));
             } else {
                 return Err(syn::Error::new(

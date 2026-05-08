@@ -22,12 +22,11 @@ impl<T: crate::traits::Id> crate::account_load::AccountLoad for Program<T> {
     const IS_EXECUTABLE: bool = true;
 
     #[inline(always)]
-    fn check(view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
         if crate::utils::hint::unlikely(!crate::keys_eq(view.address(), &T::ID)) {
             #[cfg(feature = "debug")]
             crate::prelude::log(&::alloc::format!(
-                "Incorrect program ID for account '{}': expected {}, got {}",
-                _field_name,
+                "Incorrect program ID: expected {}, got {}",
                 T::ID,
                 view.address()
             ));

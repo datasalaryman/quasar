@@ -13,8 +13,16 @@ impl Withdraw {
     pub fn withdraw(&self, amount: u64) -> Result<(), ProgramError> {
         let vault = self.vault.to_account_view();
         let user = self.user.to_account_view();
-        set_lamports(vault, vault.lamports() - amount);
-        set_lamports(user, user.lamports() + amount);
+        let vault_lamports = vault
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(ProgramError::InsufficientFunds)?;
+        let user_lamports = user
+            .lamports()
+            .checked_add(amount)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        set_lamports(vault, vault_lamports);
+        set_lamports(user, user_lamports);
         Ok(())
     }
 }

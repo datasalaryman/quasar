@@ -5,7 +5,6 @@
 //!   = expr`, `realloc = expr`, `close(dest = ident)`
 //! - behavior: `path(arg = value, ...)`
 //! - check: `has_one(...)`, `constraints(...)`
-//! - allow: `allow(...)`
 //!
 //! Phase placement is NOT part of the user syntax. No `pre(...)` or
 //! `exit(...)`. The lowering layer decides which phases each behavior
@@ -29,8 +28,6 @@ pub(crate) enum Directive {
     Core(CoreDirective),
     Behavior(BehaviorGroup),
     Check(UserCheck),
-    #[allow(dead_code)]
-    Allow(Vec<Ident>),
 }
 
 /// Core structural directives — owned by the derive, not by protocol crates.
@@ -125,14 +122,6 @@ impl Parse for ParsedDirective {
                     };
                     return Ok(ParsedDirective {
                         inner: Directive::Core(CoreDirective::Init { idempotent }),
-                    });
-                }
-
-                // Lint suppressions: allow(unconstrained, ...)
-                "allow" => {
-                    let idents = parse_ident_list(&content)?;
-                    return Ok(ParsedDirective {
-                        inner: Directive::Allow(idents),
                     });
                 }
 

@@ -8,7 +8,7 @@
 //! let __rent_ctx = OpCtxWithRent::new(&program_id, &__rent);
 //!
 //! // Phase 1: load non-init fields
-//! let field_a = <Ty>::load(field_a, "field_a")?;
+//! let field_a = <Ty>::load(field_a)?;
 //!
 //! // Phase 2: address verify + init CPI for init fields (field-ordered)
 //! // Phase 3: load init fields (inlined into behavior init sequence)
@@ -23,7 +23,8 @@ use {
     super::{
         super::resolve::{
             specs::{
-                AccountsPlanTyped, EpilogueStep, InitPlan, PostLoadStep, PreLoadStep, RentPlan,
+                AccountsPlanTyped, EpilogueStep, FieldPlan, InitPlan, PostLoadStep, PreLoadStep,
+                RentPlan,
             },
             FieldKind, FieldSemantics, UserCheck,
         },
@@ -38,8 +39,26 @@ pub(crate) fn emit_parse_body(
     plan: &AccountsPlanTyped,
     cx: &super::EmitCx,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    emit_parse_body_inner(semantics, plan, cx, true)
+}
+
+pub(crate) fn emit_parse_body_without_behavior_assertions(
+    semantics: &[FieldSemantics],
+    plan: &AccountsPlanTyped,
+    cx: &super::EmitCx,
+) -> syn::Result<proc_macro2::TokenStream> {
+    emit_parse_body_inner(semantics, plan, cx, false)
+}
+
+fn emit_parse_body_inner(
+    semantics: &[FieldSemantics],
+    plan: &AccountsPlanTyped,
+    cx: &super::EmitCx,
+    include_behavior_assertions: bool,
+) -> syn::Result<proc_macro2::TokenStream> {
     let ctx_init = emit_rent_context(&plan.rent, semantics);
     let bump_vars = emit_bump_vars(semantics);
+    let init_state_vars = emit_init_state_vars(&plan.fields, semantics);
 
     // Phase 1: load non-init fields.
     let load_non_init = emit_load_filtered(semantics, false);
@@ -53,7 +72,11 @@ pub(crate) fn emit_parse_body(
     let bump_init = emit_bump_init(semantics, &cx.bumps_name);
 
     // Behavior const assertions: REQUIRES_MUT and SETS_INIT_PARAMS.
-    let behavior_asserts = emit_behavior_assertions(semantics);
+    let behavior_asserts = if include_behavior_assertions {
+        emit_behavior_assertions(semantics)
+    } else {
+        quote! {}
+    };
 
     let construct_fields: Vec<proc_macro2::TokenStream> = semantics
         .iter()
@@ -66,6 +89,7 @@ pub(crate) fn emit_parse_body(
     Ok(quote! {
         #behavior_asserts
         #bump_vars
+        #(#init_state_vars)*
         #ctx_init
         #(#load_non_init)*
         #(#init_phase)*
@@ -85,16 +109,14 @@ fn emit_rent_context(
         RentPlan::NotNeeded => quote! {},
         RentPlan::FromSysvarField { field } => {
             quote! {
-                let __rent: quasar_lang::sysvars::rent::Rent = unsafe {
-                    core::clone::Clone::clone(
-                        <quasar_lang::sysvars::rent::Rent as quasar_lang::sysvars::Sysvar>::from_bytes_unchecked(
-                            #field.borrow_unchecked()
-                        )
+                let __rent: &quasar_lang::sysvars::rent::Rent = unsafe {
+                    <quasar_lang::sysvars::rent::Rent as quasar_lang::sysvars::Sysvar>::from_bytes_unchecked(
+                        #field.borrow_unchecked()
                     )
                 };
                 let __rent_ctx = quasar_lang::ops::OpCtxWithRent::new(
                     unsafe { &*(__program_id as *const quasar_lang::prelude::Address) },
-                    &__rent,
+                    __rent,
                 );
             }
         }
@@ -138,13 +160,19 @@ fn emit_init_phase_typed(
                 }
                 PreLoadStep::Init(init_plan) => {
                     let has_address = sem.address.is_some();
+                    let did_init_var = needs_init_state_var(fp)
+                        .then(|| format_ident!("__quasar_did_init_{}", ident));
                     let ts = match init_plan {
                         InitPlan::Program(spec) => {
                             typed_emit::emit_program_init(spec, ident, ty, has_address)
                         }
-                        InitPlan::Behavior(spec) => {
-                            typed_emit::emit_behavior_init(spec, ident, ty, has_address)
-                        }
+                        InitPlan::Behavior(spec) => typed_emit::emit_behavior_init(
+                            spec,
+                            ident,
+                            ty,
+                            has_address,
+                            did_init_var.as_ref(),
+                        ),
                     };
                     stmts.push(ts);
                 }
@@ -153,6 +181,41 @@ fn emit_init_phase_typed(
     }
 
     Ok(stmts)
+}
+
+fn emit_init_state_vars(
+    field_plans: &[FieldPlan],
+    semantics: &[FieldSemantics],
+) -> Vec<proc_macro2::TokenStream> {
+    field_plans
+        .iter()
+        .zip(semantics.iter())
+        .filter(|(fp, _)| needs_init_state_var(fp))
+        .map(|(_, sem)| {
+            let ident = &sem.core.ident;
+            let did_init_var = format_ident!("__quasar_did_init_{}", ident);
+            quote! { let mut #did_init_var = false; }
+        })
+        .collect()
+}
+
+fn needs_init_state_var(field_plan: &FieldPlan) -> bool {
+    let has_behavior_init = field_plan
+        .pre_load
+        .iter()
+        .any(|step| matches!(step, PreLoadStep::Init(InitPlan::Behavior(_))));
+    let has_behavior_check = field_plan.post_load.iter().any(|step| {
+        matches!(
+            step,
+            PostLoadStep::Behavior(call)
+                if matches!(
+                    call.phase,
+                    super::super::resolve::specs::BehaviorPhase::Check
+                )
+        )
+    });
+
+    has_behavior_init && has_behavior_check
 }
 
 // ==== Post-load phase (from typed plan) ====
@@ -167,6 +230,8 @@ fn emit_post_load_typed(
         let ident = &sem.core.ident;
         let ty = &sem.core.effective_ty;
         let is_optional = sem.core.optional;
+        let did_init_var =
+            needs_init_state_var(fp).then(|| format_ident!("__quasar_did_init_{}", ident));
 
         for step in &fp.post_load {
             let (call, needs_mut) = match step {
@@ -176,7 +241,10 @@ fn emit_post_load_typed(
                         super::super::resolve::specs::BehaviorPhase::AfterInit
                             | super::super::resolve::specs::BehaviorPhase::Update
                     );
-                    (typed_emit::emit_post_load_behavior(bhv, ident, ty), needs)
+                    (
+                        typed_emit::emit_post_load_behavior(bhv, ident, ty, did_init_var.as_ref()),
+                        needs,
+                    )
                 }
                 PostLoadStep::Realloc(spec) => {
                     let payer_ident = &spec.payer.ident;
@@ -210,19 +278,42 @@ fn emit_post_load_typed(
                 PostLoadStep::VerifyExistingAddress(addr_spec) => {
                     let bump_var = format_ident!("__bumps_{}", ident);
                     let addr_expr = &addr_spec.expr;
-                    let use_fast_path = is_validated_account_type(ty);
-                    let verify_method = if use_fast_path {
-                        quote! { verify_existing }
+                    let verify_existing = if is_validated_account_type(ty) {
+                        quote! {
+                            #bump_var = quasar_lang::address::AddressVerify::verify_existing(
+                                &__addr, #ident.to_account_view().address(), __program_id,
+                            )?;
+                        }
                     } else {
-                        quote! { verify }
+                        quote! {
+                            #bump_var = quasar_lang::address::AddressVerify::verify(
+                                &__addr, #ident.to_account_view().address(), __program_id,
+                            )?;
+                        }
+                    };
+                    let verify = if let Some(bump_offset_expr) = stored_bump_offset_expr(ty) {
+                        quote! {
+                            if let Some(__bump_offset) = #bump_offset_expr {
+                                let __view = #ident.to_account_view();
+                                #bump_var = quasar_lang::address::AddressVerify::verify_existing_from_account(
+                                    &__addr,
+                                    __view.address(),
+                                    __program_id,
+                                    __view,
+                                    __bump_offset,
+                                )?;
+                            } else {
+                                #verify_existing
+                            }
+                        }
+                    } else {
+                        verify_existing
                     };
                     (
                         quote! {
                             {
                                 let __addr = #addr_expr;
-                                #bump_var = quasar_lang::address::AddressVerify::#verify_method(
-                                    &__addr, #ident.to_account_view().address(), __program_id,
-                                )?;
+                                #verify
                             }
                         },
                         false,
@@ -367,7 +458,7 @@ fn emit_load_filtered(
 fn emit_one_load(sem: &FieldSemantics) -> proc_macro2::TokenStream {
     let ident = &sem.core.ident;
     let ty = &sem.core.effective_ty;
-    let field_name_str = ident.to_string();
+    let behavior_validates_account_data = behavior_validates_account_data_expr(sem);
 
     if sem.core.dynamic {
         let inner_ty = sem.core.inner_ty.as_ref().unwrap_or(ty);
@@ -376,12 +467,19 @@ fn emit_one_load(sem: &FieldSemantics) -> proc_macro2::TokenStream {
     }
 
     if sem.core.optional {
+        let load = emit_load_expr(
+            ident,
+            ty,
+            sem.core.is_mut,
+            sem.core.dup,
+            behavior_validates_account_data.as_ref(),
+        );
         return if sem.core.is_mut {
             quote! {
                 let mut #ident = if quasar_lang::keys_eq(#ident.address(), __program_id) {
                     None
                 } else {
-                    Some(<#ty as quasar_lang::account_load::AccountLoad>::load_mut(#ident, #field_name_str)?)
+                    Some(#load)
                 };
             }
         } else {
@@ -389,21 +487,81 @@ fn emit_one_load(sem: &FieldSemantics) -> proc_macro2::TokenStream {
                 let #ident = if quasar_lang::keys_eq(#ident.address(), __program_id) {
                     None
                 } else {
-                    Some(<#ty as quasar_lang::account_load::AccountLoad>::load(#ident, #field_name_str)?)
+                    Some(#load)
                 };
             }
         };
     }
 
+    let load = emit_load_expr(
+        ident,
+        ty,
+        sem.core.is_mut,
+        sem.core.dup,
+        behavior_validates_account_data.as_ref(),
+    );
     if sem.core.is_mut {
-        quote! {
-            let mut #ident = <#ty as quasar_lang::account_load::AccountLoad>::load_mut(#ident, #field_name_str)?;
-        }
+        quote! { let mut #ident = #load; }
     } else {
-        quote! {
-            let #ident = <#ty as quasar_lang::account_load::AccountLoad>::load(#ident, #field_name_str)?;
+        quote! { let #ident = #load; }
+    }
+}
+
+fn emit_load_expr(
+    ident: &syn::Ident,
+    ty: &syn::Type,
+    is_mut: bool,
+    checked: bool,
+    behavior_validates_account_data: Option<&proc_macro2::TokenStream>,
+) -> proc_macro2::TokenStream {
+    match (is_mut, checked, behavior_validates_account_data) {
+        (true, true, _) => {
+            quote! { <#ty as quasar_lang::account_load::AccountLoad>::load_mut_checked(#ident)? }
+        }
+        (false, true, _) => {
+            quote! { <#ty as quasar_lang::account_load::AccountLoad>::load_checked(#ident)? }
+        }
+        (true, false, Some(validates_account_data)) => quote! {
+            if #validates_account_data {
+                unsafe {
+                    <#ty as quasar_lang::account_load::AccountLoad>::load_mut_intrinsic(#ident)?
+                }
+            } else {
+                <#ty as quasar_lang::account_load::AccountLoad>::load_mut(#ident)?
+            }
+        },
+        (false, false, Some(validates_account_data)) => quote! {
+            if #validates_account_data {
+                unsafe {
+                    <#ty as quasar_lang::account_load::AccountLoad>::load_intrinsic(#ident)?
+                }
+            } else {
+                <#ty as quasar_lang::account_load::AccountLoad>::load(#ident)?
+            }
+        },
+        (true, false, None) => {
+            quote! { <#ty as quasar_lang::account_load::AccountLoad>::load_mut(#ident)? }
+        }
+        (false, false, None) => {
+            quote! { <#ty as quasar_lang::account_load::AccountLoad>::load(#ident)? }
         }
     }
+}
+
+fn behavior_validates_account_data_expr(sem: &FieldSemantics) -> Option<proc_macro2::TokenStream> {
+    if sem.groups.is_empty() {
+        return None;
+    }
+
+    let ty = &sem.core.effective_ty;
+    let terms = sem.groups.iter().map(|group| {
+        let path = &group.path;
+        quote! {
+            <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::VALIDATES_ACCOUNT_DATA
+        }
+    });
+
+    Some(quote! { false #(|| #terms)* })
 }
 
 // ==== User checks (structural — not behavior-group based) ====
@@ -487,6 +645,18 @@ fn emit_behavior_assertions(semantics: &[FieldSemantics]) -> proc_macro2::TokenS
                     );
                 });
             }
+
+            let validates_data_msg = format!(
+                "behavior `{}` sets VALIDATES_ACCOUNT_DATA and must keep RUN_CHECK = true",
+                group.name(),
+            );
+            asserts.push(quote! {
+                const _: () = assert!(
+                    !<#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::VALIDATES_ACCOUNT_DATA
+                        || <#path::Behavior as quasar_lang::account_behavior::AccountBehavior<#ty>>::RUN_CHECK,
+                    #validates_data_msg,
+                );
+            });
         }
 
         // Init field assertions.
@@ -573,7 +743,11 @@ fn emit_bump_vars(semantics: &[FieldSemantics]) -> proc_macro2::TokenStream {
         .filter(|sem| sem.address.is_some())
         .map(|sem| {
             let var = format_ident!("__bumps_{}", sem.core.ident);
-            quote! { let mut #var: u8 = 0; }
+            if sem.core.optional {
+                quote! { let mut #var: u8 = 0; }
+            } else {
+                quote! { let #var: u8; }
+            }
         })
         .collect();
 
@@ -587,11 +761,10 @@ fn emit_bump_init(
     let inits: Vec<proc_macro2::TokenStream> = semantics
         .iter()
         .filter(|sem| sem.address.is_some())
-        .flat_map(|sem| {
+        .map(|sem| {
             let name = &sem.core.ident;
             let var = format_ident!("__bumps_{}", name);
-            let arr_name = format_ident!("__{}_bump", name);
-            vec![quote! { #name: #var }, quote! { #arr_name: [#var] }]
+            quote! { #name: #var }
         })
         .collect();
 
@@ -610,10 +783,9 @@ pub(crate) fn emit_bump_struct_def(
     let fields: Vec<proc_macro2::TokenStream> = semantics
         .iter()
         .filter(|sem| sem.address.is_some())
-        .flat_map(|sem| {
+        .map(|sem| {
             let name = &sem.core.ident;
-            let arr_name = format_ident!("__{}_bump", name);
-            vec![quote! { pub #name: u8 }, quote! { pub #arr_name: [u8; 1] }]
+            quote! { pub #name: u8 }
         })
         .collect();
 
@@ -630,4 +802,15 @@ fn is_validated_account_type(ty: &syn::Type) -> bool {
     extract_generic_inner_type(ty, "Account").is_some()
         || extract_generic_inner_type(ty, "InterfaceAccount").is_some()
         || extract_generic_inner_type(ty, "Migration").is_some()
+}
+
+/// Account<T> stores the discriminator-owned bump offset on T. Restrict this
+/// fast path to Account<T> so SPL/interface wrappers that do not implement
+/// Discriminator keep using the generic existing-account verifier.
+fn stored_bump_offset_expr(ty: &syn::Type) -> Option<proc_macro2::TokenStream> {
+    use crate::helpers::extract_generic_inner_type;
+    let inner = extract_generic_inner_type(ty, "Account")?;
+    Some(quote! {
+        <#inner as quasar_lang::traits::Discriminator>::BUMP_OFFSET
+    })
 }

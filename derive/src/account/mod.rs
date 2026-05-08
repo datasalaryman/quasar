@@ -165,7 +165,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The user must implement:
 /// ```ignore
 /// impl MyType {
-///     pub fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> { ... }
+///     pub fn check(view: &AccountView) -> Result<(), ProgramError> { ... }
 /// }
 /// ```
 ///
@@ -189,11 +189,8 @@ fn generate_custom_account(name: &syn::Ident) -> proc_macro2::TokenStream {
         impl quasar_lang::account_load::AccountLoad for #name {
 
             #[inline(always)]
-            fn check(
-                view: &quasar_lang::__internal::AccountView,
-                field_name: &str,
-            ) -> Result<(), solana_program_error::ProgramError> {
-                #name::check(view, field_name)
+            fn check(view: &quasar_lang::__internal::AccountView) -> Result<(), solana_program_error::ProgramError> {
+                #name::check(view)
             }
         }
 

@@ -14,7 +14,7 @@ impl Owner for SystemAccount {
 
 impl crate::account_load::AccountLoad for SystemAccount {
     #[inline(always)]
-    fn check(view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
         <Self as checks::Owner>::check(view)
     }
 }

@@ -135,7 +135,6 @@ fn lower_directives(sem: &mut FieldSemantics, directives: Vec<Directive>) -> syn
             Directive::Check(check) => {
                 sem.user_checks.push(check);
             }
-            Directive::Allow(_) => { /* lint-only, ignored by derive */ }
         }
     }
 

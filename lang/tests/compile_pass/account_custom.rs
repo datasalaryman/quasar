@@ -21,10 +21,7 @@ solana_address::declare_id!("11111111111111111111111111111112");
 pub struct ResolvedSigner;
 
 impl ResolvedSigner {
-    pub fn check(
-        _view: &AccountView,
-        _field_name: &str,
-    ) -> Result<(), ProgramError> {
+    pub fn check(_view: &AccountView) -> Result<(), ProgramError> {
         Ok(())
     }
 }
@@ -39,10 +36,7 @@ pub struct OraclePrice {
 }
 
 impl OraclePrice {
-    pub fn check(
-        view: &AccountView,
-        _field_name: &str,
-    ) -> Result<(), ProgramError> {
+    pub fn check(view: &AccountView) -> Result<(), ProgramError> {
         // Custom validation — check data length, skip owner/disc
         let data = unsafe { view.borrow_unchecked() };
         if data.len() < core::mem::size_of::<u64>() * 3 {

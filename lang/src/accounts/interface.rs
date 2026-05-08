@@ -19,13 +19,11 @@ impl<T: ProgramInterface> crate::account_load::AccountLoad for Interface<T> {
     const IS_EXECUTABLE: bool = true;
 
     #[inline(always)]
-    fn check(view: &AccountView, _field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
         if crate::utils::hint::unlikely(!T::matches(view.address())) {
             #[cfg(feature = "debug")]
             crate::prelude::log(&::alloc::format!(
-                "Program interface mismatch for account '{}': address {} does not match any \
-                 allowed programs",
-                _field_name,
+                "Program interface mismatch: address {} does not match any allowed programs",
                 view.address()
             ));
             return Err(ProgramError::IncorrectProgramId);

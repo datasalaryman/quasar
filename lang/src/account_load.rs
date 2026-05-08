@@ -15,7 +15,26 @@ pub trait AccountLoad: AsAccountView + Sized {
     ///
     /// Header flags (signer, writable, executable) are already validated by
     /// `parse_accounts` before this is called.
-    fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError>;
+    fn check(view: &AccountView) -> Result<(), ProgramError>;
+
+    /// Validate through runtime-checked account-data borrows.
+    ///
+    /// The default implementation is equivalent to [`Self::check`] for account
+    /// wrappers that do not inspect data. Data-bearing account types override
+    /// this so `#[account(dup)]` fields validate without unchecked aliasing.
+    #[inline(always)]
+    fn check_checked(view: &AccountView) -> Result<(), ProgramError> {
+        Self::check(view)
+    }
+
+    /// Validate only intrinsic account invariants.
+    ///
+    /// The default preserves normal account loading. Wrapper types may make
+    /// this cheaper for protocol behaviors that validate account data.
+    #[inline(always)]
+    fn check_intrinsic(view: &AccountView) -> Result<(), ProgramError> {
+        Self::check(view)
+    }
 
     /// # Safety
     /// Caller must ensure the `AccountView` is valid for `#[repr(transparent)]`
@@ -33,14 +52,46 @@ pub trait AccountLoad: AsAccountView + Sized {
     }
 
     #[inline(always)]
-    fn load(view: &AccountView, field_name: &str) -> Result<Self, ProgramError> {
-        Self::check(view, field_name)?;
+    fn load(view: &AccountView) -> Result<Self, ProgramError> {
+        Self::check(view)?;
         Ok(unsafe { core::ptr::read(Self::from_view_unchecked(view) as *const Self) })
     }
 
     #[inline(always)]
-    fn load_mut(view: &mut AccountView, field_name: &str) -> Result<Self, ProgramError> {
-        Self::check(view, field_name)?;
+    fn load_mut(view: &mut AccountView) -> Result<Self, ProgramError> {
+        Self::check(view)?;
+        Ok(unsafe { core::ptr::read(Self::from_view_unchecked_mut(view) as *const Self) })
+    }
+
+    #[inline(always)]
+    fn load_checked(view: &AccountView) -> Result<Self, ProgramError> {
+        Self::check_checked(view)?;
+        Ok(unsafe { core::ptr::read(Self::from_view_unchecked(view) as *const Self) })
+    }
+
+    #[inline(always)]
+    fn load_mut_checked(view: &mut AccountView) -> Result<Self, ProgramError> {
+        Self::check_checked(view)?;
+        Ok(unsafe { core::ptr::read(Self::from_view_unchecked_mut(view) as *const Self) })
+    }
+
+    /// # Safety
+    ///
+    /// Caller must ensure any validation skipped by `check_intrinsic` is
+    /// completed before the loaded account can be observed or dereferenced.
+    #[inline(always)]
+    unsafe fn load_intrinsic(view: &AccountView) -> Result<Self, ProgramError> {
+        Self::check_intrinsic(view)?;
+        Ok(unsafe { core::ptr::read(Self::from_view_unchecked(view) as *const Self) })
+    }
+
+    /// # Safety
+    ///
+    /// Caller must ensure any validation skipped by `check_intrinsic` is
+    /// completed before the loaded account can be observed or dereferenced.
+    #[inline(always)]
+    unsafe fn load_mut_intrinsic(view: &mut AccountView) -> Result<Self, ProgramError> {
+        Self::check_intrinsic(view)?;
         Ok(unsafe { core::ptr::read(Self::from_view_unchecked_mut(view) as *const Self) })
     }
 

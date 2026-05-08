@@ -9,7 +9,7 @@ use {
 
 quasar_lang::define_account!(
     /// Token-2022 account data — validates owner is Token-2022 program.
-    pub struct Token2022 => [checks::DataLen, checks::ZeroPod]: TokenData
+    pub struct Token2022 => [checks::ZeroPod]: TokenData
 );
 
 impl Owner for Token2022 {
@@ -25,7 +25,7 @@ impl Id for Token2022Program {
 
 quasar_lang::define_account!(
     /// Mint-2022 account data — validates owner is Token-2022 program.
-    pub struct Mint2022 => [checks::DataLen, checks::ZeroPod]: MintData
+    pub struct Mint2022 => [checks::ZeroPod]: MintData
 );
 
 impl Owner for Mint2022 {

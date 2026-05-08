@@ -12,6 +12,7 @@ pub(crate) struct AccountsPlan {
     pub count_expr: proc_macro2::TokenStream,
     pub typed_seed_asserts: proc_macro2::TokenStream,
     pub parse_body: proc_macro2::TokenStream,
+    pub direct_parse_body: proc_macro2::TokenStream,
 }
 
 struct ParseFieldPlan {
@@ -94,6 +95,7 @@ pub(crate) fn build_accounts_plan(
         count_expr: emit_count_expr(&fields),
         typed_seed_asserts: quote! {},
         parse_body: emit_full_parse_body(semantics, typed_plan, &fields, cx)?,
+        direct_parse_body: emit_direct_parse_body(semantics, typed_plan, &fields, cx)?,
     })
 }
 
@@ -250,7 +252,13 @@ fn emit_full_parse_body(
     cx: &emit::EmitCx,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let inner_body = emit::emit_parse_body(semantics, typed_plan, cx)?;
+    emit_parse_body_from_inner(fields, inner_body)
+}
 
+fn emit_parse_body_from_inner(
+    fields: &[ParseFieldPlan],
+    inner_body: proc_macro2::TokenStream,
+) -> syn::Result<proc_macro2::TokenStream> {
     if fields
         .iter()
         .any(|field| matches!(field.kind, ParseFieldKind::Composite { .. }))
@@ -301,4 +309,41 @@ fn emit_full_parse_body(
             #inner_body
         })
     }
+}
+
+fn emit_direct_parse_body(
+    semantics: &[resolve::FieldSemantics],
+    typed_plan: &resolve::specs::AccountsPlanTyped,
+    fields: &[ParseFieldPlan],
+    cx: &emit::EmitCx,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let count_expr = emit_count_expr(fields);
+    let fallback_body =
+        emit_parse_body_without_behavior_assertions(semantics, typed_plan, fields, cx)?;
+    Ok(quote! {
+        let mut __buf = core::mem::MaybeUninit::<
+            [quasar_lang::__internal::AccountView; #count_expr]
+        >::uninit();
+        let _ = Self::parse_accounts(input, &mut __buf, __program_id)?;
+        let mut __accounts = unsafe { __buf.assume_init() };
+        let accounts = &mut __accounts;
+        let __parsed_result: Result<
+            (Self, <Self as quasar_lang::traits::ParseAccounts>::Bumps),
+            ProgramError,
+        > = {
+            #fallback_body
+        };
+        let (__parsed_accounts, __parsed_bumps) = __parsed_result?;
+        Ok((__parsed_accounts, __parsed_bumps))
+    })
+}
+
+fn emit_parse_body_without_behavior_assertions(
+    semantics: &[resolve::FieldSemantics],
+    typed_plan: &resolve::specs::AccountsPlanTyped,
+    fields: &[ParseFieldPlan],
+    cx: &emit::EmitCx,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let inner_body = emit::emit_parse_body_without_behavior_assertions(semantics, typed_plan, cx)?;
+    emit_parse_body_from_inner(fields, inner_body)
 }

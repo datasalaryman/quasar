@@ -28,7 +28,7 @@ impl<T: Owners + crate::account_load::AccountLoad> InterfaceAccount<T> {
     #[inline(always)]
     pub fn from_account_view(view: &AccountView) -> Result<&Self, ProgramError> {
         <T as Owners>::check_owner(view)?;
-        T::check(view, "")?;
+        T::check(view)?;
         Ok(unsafe { &*(view as *const AccountView as *const Self) })
     }
     #[inline(always)]
@@ -37,7 +37,7 @@ impl<T: Owners + crate::account_load::AccountLoad> InterfaceAccount<T> {
             return Err(ProgramError::Immutable);
         }
         <T as Owners>::check_owner(view)?;
-        T::check(view, "")?;
+        T::check(view)?;
         Ok(unsafe { &mut *(view as *mut AccountView as *mut Self) })
     }
 
@@ -60,9 +60,15 @@ impl<T: Owners + crate::account_load::AccountLoad> crate::account_load::AccountL
     for InterfaceAccount<T>
 {
     #[inline(always)]
-    fn check(view: &AccountView, field_name: &str) -> Result<(), ProgramError> {
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
         <T as Owners>::check_owner(view)?;
-        T::check(view, field_name)
+        T::check(view)
+    }
+
+    #[inline(always)]
+    fn check_checked(view: &AccountView) -> Result<(), ProgramError> {
+        <T as Owners>::check_owner(view)?;
+        T::check_checked(view)
     }
 }
 

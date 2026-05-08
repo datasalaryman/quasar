@@ -17,6 +17,14 @@ pub(crate) fn emit_parse_body(
     parse::emit_parse_body(semantics, plan, cx)
 }
 
+pub(crate) fn emit_parse_body_without_behavior_assertions(
+    semantics: &[super::resolve::FieldSemantics],
+    plan: &AccountsPlanTyped,
+    cx: &EmitCx,
+) -> syn::Result<proc_macro2::TokenStream> {
+    parse::emit_parse_body_without_behavior_assertions(semantics, plan, cx)
+}
+
 pub(crate) fn emit_bump_struct_def(
     semantics: &[super::resolve::FieldSemantics],
     cx: &EmitCx,

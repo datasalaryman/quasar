@@ -30,10 +30,14 @@ pub fn resize(view: &mut AccountView, new_len: usize) -> Result<(), ProgramError
         return Ok(());
     }
 
-    let difference = new_len_i32 - current_len;
+    let difference = new_len_i32
+        .checked_sub(current_len)
+        .ok_or(ProgramError::InvalidRealloc)?;
 
     let delta_ptr = unsafe { core::ptr::addr_of_mut!((*raw).padding) as *mut i32 };
-    let accumulated = unsafe { delta_ptr.read_unaligned() } + difference;
+    let accumulated = unsafe { delta_ptr.read_unaligned() }
+        .checked_add(difference)
+        .ok_or(ProgramError::InvalidRealloc)?;
 
     if crate::utils::hint::unlikely(accumulated > MAX_PERMITTED_DATA_INCREASE as i32) {
         return Err(ProgramError::InvalidRealloc);
@@ -109,7 +113,11 @@ pub fn realloc_account_raw(
     } else if current_lamports > rent_exempt_lamports {
         let excess = current_lamports - rent_exempt_lamports;
         view.set_lamports(rent_exempt_lamports);
-        set_lamports(payer, payer.lamports() + excess);
+        let payer_lamports = payer
+            .lamports()
+            .checked_add(excess)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        set_lamports(payer, payer_lamports);
     }
 
     let old_len = view.data_len();
@@ -154,7 +162,7 @@ impl<T> Account<T> {
     }
 }
 
-impl<T: AsAccountView + crate::traits::StaticView> Account<T> {
+impl<T: AsAccountView + crate::traits::StaticView + crate::traits::Space> Account<T> {
     /// Resize data region, adjusting lamports for rent-exemption.
     #[inline(always)]
     pub fn realloc(
@@ -163,6 +171,9 @@ impl<T: AsAccountView + crate::traits::StaticView> Account<T> {
         payer: &AccountView,
         rent: Option<&crate::sysvars::rent::Rent>,
     ) -> Result<(), ProgramError> {
+        if new_space < <T as crate::traits::Space>::SPACE {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
         let view = unsafe { &mut *(self as *mut Account<T> as *mut AccountView) };
         realloc_account(view, new_space, payer, rent)
     }
@@ -187,7 +198,7 @@ impl<T: crate::account_load::AccountLoad + CheckOwner + StaticView> Account<T> {
     #[inline(always)]
     pub fn from_account_view(view: &AccountView) -> Result<&Self, ProgramError> {
         T::check_owner(view)?;
-        T::check(view, "")?;
+        T::check(view)?;
         Ok(unsafe { &*(view as *const AccountView as *const Self) })
     }
 }
@@ -329,18 +340,32 @@ impl<T: AsAccountView + crate::account_load::AccountLoad + CheckOwner + StaticVi
     crate::account_load::AccountLoad for Account<T>
 {
     #[inline(always)]
-    fn check(
-        view: &AccountView,
-        field_name: &str,
-    ) -> Result<(), solana_program_error::ProgramError> {
+    fn check(view: &AccountView) -> Result<(), solana_program_error::ProgramError> {
         T::check_owner(view).inspect_err(|_| {
             #[cfg(feature = "debug")]
-            crate::prelude::log(&::alloc::format!(
-                "Owner check failed for account '{}'",
-                field_name
-            ));
+            crate::prelude::log("Owner check failed for account");
         })?;
-        T::check(view, field_name)?;
+        T::check(view)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn check_checked(view: &AccountView) -> Result<(), solana_program_error::ProgramError> {
+        T::check_owner(view).inspect_err(|_| {
+            #[cfg(feature = "debug")]
+            crate::prelude::log("Owner check failed for account");
+        })?;
+        T::check_checked(view)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn check_intrinsic(view: &AccountView) -> Result<(), solana_program_error::ProgramError> {
+        T::check_owner(view).inspect_err(|_| {
+            #[cfg(feature = "debug")]
+            crate::prelude::log("Owner check failed for account");
+        })?;
+        T::check_intrinsic(view)?;
         Ok(())
     }
 }

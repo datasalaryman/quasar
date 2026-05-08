@@ -292,20 +292,34 @@ jobs:
             ${{ runner.os }}-cargo-bench-
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Preserve benchmark harness
+        run: |
+          cp scripts/bench-tracked-programs.sh /tmp/bench-tracked-programs.sh
+          mkdir -p \
+            /tmp/benchmark-inputs/examples/vault/src \
+            /tmp/benchmark-inputs/examples/escrow/src \
+            /tmp/benchmark-inputs/examples/multisig/src
+          cp examples/vault/src/tests.rs /tmp/benchmark-inputs/examples/vault/src/tests.rs
+          cp examples/escrow/src/tests.rs /tmp/benchmark-inputs/examples/escrow/src/tests.rs
+          cp examples/multisig/src/tests.rs /tmp/benchmark-inputs/examples/multisig/src/tests.rs
+
       - name: Capture base metrics
         run: |
           git checkout -f ${{ github.event.pull_request.base.sha }}
-          bash scripts/bench-tracked-programs.sh capture /tmp/base_metrics.env
+          cp /tmp/benchmark-inputs/examples/vault/src/tests.rs examples/vault/src/tests.rs
+          cp /tmp/benchmark-inputs/examples/escrow/src/tests.rs examples/escrow/src/tests.rs
+          cp /tmp/benchmark-inputs/examples/multisig/src/tests.rs examples/multisig/src/tests.rs
+          bash /tmp/bench-tracked-programs.sh capture /tmp/base_metrics.env
 
       - name: Capture PR metrics
         run: |
           git checkout -f ${{ github.event.pull_request.head.sha }}
-          bash scripts/bench-tracked-programs.sh capture /tmp/pr_metrics.env
+          bash /tmp/bench-tracked-programs.sh capture /tmp/pr_metrics.env
 
       - name: Fail on CU regression
         id: perf_guard
         run: |
-          bash scripts/bench-tracked-programs.sh compare-files /tmp/base_metrics.env /tmp/pr_metrics.env
+          bash /tmp/bench-tracked-programs.sh compare-files /tmp/base_metrics.env /tmp/pr_metrics.env
 
       - name: Post benchmark comment
         if: always()
@@ -358,7 +372,17 @@ jobs:
             | Make | ${fmtNum(metric('ESCROW_MAKE_CU', base))} | ${fmtNum(metric('ESCROW_MAKE_CU', pr))} | ${delta(metric('ESCROW_MAKE_CU', base), metric('ESCROW_MAKE_CU', pr))} |
             | Take | ${fmtNum(metric('ESCROW_TAKE_CU', base))} | ${fmtNum(metric('ESCROW_TAKE_CU', pr))} | ${delta(metric('ESCROW_TAKE_CU', base), metric('ESCROW_TAKE_CU', pr))} |
             | Refund | ${fmtNum(metric('ESCROW_REFUND_CU', base))} | ${fmtNum(metric('ESCROW_REFUND_CU', pr))} | ${delta(metric('ESCROW_REFUND_CU', base), metric('ESCROW_REFUND_CU', pr))} |
-            | Binary size | ${fmtNum(metric('ESCROW_SIZE', base))} | ${fmtNum(metric('ESCROW_SIZE', pr))} | ${delta(metric('ESCROW_SIZE', base), metric('ESCROW_SIZE', pr))} bytes`.replace(/^            /gm, '');
+            | Binary size | ${fmtNum(metric('ESCROW_SIZE', base))} | ${fmtNum(metric('ESCROW_SIZE', pr))} | ${delta(metric('ESCROW_SIZE', base), metric('ESCROW_SIZE', pr))} bytes |
+
+            ### Multisig
+
+            | Instruction | Base | PR | Delta |
+            |-------------|------|-----|-------|
+            | Create | ${fmtNum(metric('MULTISIG_CREATE_CU', base))} | ${fmtNum(metric('MULTISIG_CREATE_CU', pr))} | ${delta(metric('MULTISIG_CREATE_CU', base), metric('MULTISIG_CREATE_CU', pr))} |
+            | Deposit | ${fmtNum(metric('MULTISIG_DEPOSIT_CU', base))} | ${fmtNum(metric('MULTISIG_DEPOSIT_CU', pr))} | ${delta(metric('MULTISIG_DEPOSIT_CU', base), metric('MULTISIG_DEPOSIT_CU', pr))} |
+            | Set label | ${fmtNum(metric('MULTISIG_SET_LABEL_CU', base))} | ${fmtNum(metric('MULTISIG_SET_LABEL_CU', pr))} | ${delta(metric('MULTISIG_SET_LABEL_CU', base), metric('MULTISIG_SET_LABEL_CU', pr))} |
+            | Execute transfer | ${fmtNum(metric('MULTISIG_EXECUTE_TRANSFER_CU', base))} | ${fmtNum(metric('MULTISIG_EXECUTE_TRANSFER_CU', pr))} | ${delta(metric('MULTISIG_EXECUTE_TRANSFER_CU', base), metric('MULTISIG_EXECUTE_TRANSFER_CU', pr))} |
+            | Binary size | ${fmtNum(metric('MULTISIG_SIZE', base))} | ${fmtNum(metric('MULTISIG_SIZE', pr))} | ${delta(metric('MULTISIG_SIZE', base), metric('MULTISIG_SIZE', pr))} bytes`.replace(/^            /gm, '');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,

@@ -88,12 +88,28 @@ impl<'a> ArgsBuilder<'a> {
 
 pub struct Behavior;
 
+const TOKEN_PROGRAM_ARG: u64 =
+    quasar_lang::account_behavior::behavior_arg_key_hash("token_program");
+
 /// Implement token behavior for a concrete token wrapper type.
 macro_rules! impl_token_behavior {
-    ($wrapper:ty) => {
+    (
+        $wrapper:ty,
+        check_token_program = $check_token_program:literal,
+        validates_account_data = $validates_account_data:literal
+    ) => {
         impl AccountBehavior<$wrapper> for Behavior {
             type Args<'a> = Args<'a>;
             const SETS_INIT_PARAMS: bool = true;
+            const INIT_SATISFIES_CHECK: bool = true;
+            const VALIDATES_ACCOUNT_DATA: bool = $validates_account_data;
+
+            #[inline(always)]
+            fn uses_arg<const PHASE: u8, const KEY: u64>() -> bool {
+                !(!$check_token_program
+                    && PHASE == quasar_lang::account_behavior::ARG_PHASE_CHECK
+                    && KEY == TOKEN_PROGRAM_ARG)
+            }
 
             #[inline(always)]
             fn set_init_param<'a>(
@@ -115,7 +131,11 @@ macro_rules! impl_token_behavior {
                     TokenCheckCtx {
                         mint: args.mint,
                         authority: args.authority,
-                        token_program: args.token_program,
+                        token_program: if $check_token_program {
+                            args.token_program
+                        } else {
+                            None
+                        },
                     },
                 )
             }
@@ -123,9 +143,21 @@ macro_rules! impl_token_behavior {
     };
 }
 
-impl_token_behavior!(Account<crate::token::Token>);
-impl_token_behavior!(Account<crate::token_2022::Token2022>);
-impl_token_behavior!(InterfaceAccount<crate::token::Token>);
+impl_token_behavior!(
+    Account<crate::token::Token>,
+    check_token_program = false,
+    validates_account_data = true
+);
+impl_token_behavior!(
+    Account<crate::token_2022::Token2022>,
+    check_token_program = false,
+    validates_account_data = true
+);
+impl_token_behavior!(
+    InterfaceAccount<crate::token::Token>,
+    check_token_program = true,
+    validates_account_data = false
+);
 
 /// Check-only behavior for InterfaceAccount<TokenInterface>.
 /// InterfaceAccount doesn't have AccountLayout, so we call validate directly.

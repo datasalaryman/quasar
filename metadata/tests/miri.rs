@@ -9,11 +9,14 @@
 #![allow(clippy::needless_range_loop)]
 
 use {
-    quasar_lang::__internal::{
-        AccountView, RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED,
+    quasar_lang::{
+        __internal::{AccountView, RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED},
+        account_load::AccountLoad,
+        accounts::Account,
     },
     quasar_metadata::{
-        MasterEditionAccount, MasterEditionPrefixZc, MetadataAccount, MetadataPrefixZc,
+        validate::validate_master_edition_account, MasterEditionAccount, MasterEditionPrefixZc,
+        MetadataAccount, MetadataPrefixZc,
     },
     solana_address::Address,
     solana_program_error::ProgramError,
@@ -153,8 +156,7 @@ fn metadata_deref_reads_correct_fields() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_ok());
 
     let account = unsafe { MetadataAccount::from_account_view_unchecked(&view) };
@@ -178,8 +180,7 @@ fn metadata_wrong_key_byte_rejected() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
 }
 
@@ -198,8 +199,7 @@ fn metadata_wrong_owner_rejected() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(matches!(result, Err(ProgramError::IllegalOwner)));
 }
 
@@ -218,8 +218,7 @@ fn metadata_data_too_small_rejected() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
 }
 
@@ -242,10 +241,7 @@ fn master_edition_deref_reads_correct_fields() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(
-        &view,
-        "master_edition",
-    );
+    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_ok());
 
     let account = unsafe { MasterEditionAccount::from_account_view_unchecked(&view) };
@@ -269,10 +265,7 @@ fn master_edition_unlimited_supply() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(
-        &view,
-        "master_edition",
-    );
+    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_ok());
 
     let account = unsafe { MasterEditionAccount::from_account_view_unchecked(&view) };
@@ -295,10 +288,7 @@ fn master_edition_wrong_key_byte_rejected() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(
-        &view,
-        "master_edition",
-    );
+    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
 }
 
@@ -317,11 +307,33 @@ fn master_edition_data_too_small_rejected() {
     buf.write_data(&data);
 
     let view = unsafe { buf.view() };
-    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(
-        &view,
-        "master_edition",
-    );
+    let result = <MasterEditionAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
+}
+
+#[test]
+fn master_edition_behavior_validation_rejects_invalid_max_supply_tag_after_fast_load() {
+    let mut data = build_master_edition_data(6, 42, None);
+    data[9] = 2; // invalid Borsh Option tag for max_supply
+    let mut buf = AccountBuffer::new(data.len());
+    buf.init(
+        FAKE_ADDR,
+        METADATA_OWNER,
+        1_000_000,
+        data.len() as u64,
+        false,
+        false,
+    );
+    buf.write_data(&data);
+
+    let view = unsafe { buf.view() };
+    assert!(
+        unsafe { <Account<MasterEditionAccount> as AccountLoad>::load_intrinsic(&view) }.is_ok()
+    );
+    assert_eq!(
+        validate_master_edition_account(&view, None),
+        Err(ProgramError::InvalidAccountData)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +356,7 @@ fn metadata_all_zeros_rejected() {
 
     let view = unsafe { buf.view() };
     // key=0, should be rejected (not 4)
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
 }
 
@@ -365,8 +376,7 @@ fn metadata_all_ff_rejected_or_valid() {
 
     let view = unsafe { buf.view() };
     // key=0xFF, should be rejected (not 4)
-    let result =
-        <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view, "metadata");
+    let result = <MetadataAccount as quasar_lang::account_load::AccountLoad>::check(&view);
     assert!(result.is_err());
 }
 

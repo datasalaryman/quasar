@@ -185,6 +185,7 @@ pub struct Behavior;
 impl AccountBehavior<Account<crate::MetadataAccount>> for Behavior {
     type Args<'a> = Args<'a>;
     const SETS_INIT_PARAMS: bool = true;
+    const VALIDATES_ACCOUNT_DATA: bool = true;
 
     #[inline(always)]
     fn set_init_param<'a>(
@@ -214,27 +215,13 @@ impl AccountBehavior<Account<crate::MetadataAccount>> for Behavior {
     ) -> Result<(), ProgramError> {
         // Validate the metadata program address.
         crate::validate::validate_metadata_program(args.program)?;
-        // PDA verification (AccountLoad already checked owner/data_len/key).
-        crate::pda::verify_metadata_address(
-            account.to_account_view().address(),
+        let view = account.to_account_view();
+        crate::validate::validate_metadata_account(
+            view,
             args.mint.address(),
+            args.update_authority.map(|ua| ua.address()),
         )?;
-        // Cross-validate mint field in prefix matches the mint account.
-        if quasar_lang::utils::hint::unlikely(!quasar_lang::keys_eq(
-            account.mint(),
-            args.mint.address(),
-        )) {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // Optional update_authority check.
-        if let Some(ua) = args.update_authority {
-            if quasar_lang::utils::hint::unlikely(!quasar_lang::keys_eq(
-                account.update_authority(),
-                ua.address(),
-            )) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-        }
+        crate::pda::verify_metadata_address(view.address(), args.mint.address())?;
         Ok(())
     }
 }
