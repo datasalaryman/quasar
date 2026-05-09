@@ -377,13 +377,19 @@ pub(crate) fn classify_pod_dynamic(ty: &Type) -> Option<PodDynField> {
     classify_pod_string(ty).or_else(|| classify_pod_vec(ty))
 }
 
+/// Returns the dynamic inner field if the type is `Option<T>` where T is a
+/// dynamic pod type.
+pub(crate) fn classify_option_pod_dynamic(ty: &Type) -> Option<PodDynField> {
+    if let Some(inner) = extract_generic_inner_type(ty, "Option") {
+        classify_pod_dynamic(inner)
+    } else {
+        None
+    }
+}
+
 /// Returns true if the type is `Option<T>` where T is a dynamic pod type.
 pub(crate) fn classify_option_dynamic(ty: &Type) -> bool {
-    if let Some(inner) = extract_generic_inner_type(ty, "Option") {
-        classify_pod_dynamic(inner).is_some()
-    } else {
-        false
-    }
+    classify_option_pod_dynamic(ty).is_some()
 }
 
 /// Classify a borrowed reference type as a compact schema field.

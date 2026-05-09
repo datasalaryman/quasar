@@ -954,7 +954,14 @@ fn emit_compact_type_codec(out: &mut String, name: &str, fields: &[IdlFieldDef],
     for f in &dyn_fields {
         let pfx = codec_prefix_bytes(&f.codec);
         let pfx_codec = prefix_codec(pfx);
-        if is_string_type(&f.ty) {
+        if is_optional_dynamic_string(&f.ty) || is_optional_dynamic_vec(&f.ty) {
+            writeln!(
+                out,
+                "    const {name}Tag = getU8Codec().encode(value.{name} === null ? 0 : 1);",
+                name = f.name
+            )
+            .expect("write to String");
+        } else if is_string_type(&f.ty) {
             writeln!(
                 out,
                 "    const {name}Bytes = new TextEncoder().encode(value.{name});",
