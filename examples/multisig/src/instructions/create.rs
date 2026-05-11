@@ -55,8 +55,7 @@ impl Create {
                 signers,
             },
             self.creator.to_account_view(),
-            self.rent.lamports_per_byte(),
-            self.rent.exemption_threshold_raw(),
+            &self.rent,
         )
     }
 }

@@ -35,6 +35,13 @@ impl RentAccess for &crate::sysvars::rent::Rent {
     }
 }
 
+impl RentAccess for crate::accounts::Sysvar<crate::sysvars::rent::Rent> {
+    #[inline(always)]
+    fn get(&self) -> Result<&crate::sysvars::rent::Rent, solana_program_error::ProgramError> {
+        Ok(self.get())
+    }
+}
+
 /// Lazily resolves Rent for lifecycle operations.
 ///
 /// Used only when no `Sysvar<Rent>` account is present. The syscall is

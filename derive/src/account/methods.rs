@@ -105,12 +105,11 @@ pub(super) fn emit_set_inner_impl(spec: SetInnerSpec<'_>) -> proc_macro2::TokenS
 
             impl #name {
                 #[inline(always)]
-                pub fn set_inner(
+                pub fn set_inner<R: quasar_lang::ops::RentAccess>(
                     &mut self,
                     inner: #inner_name<'_>,
                     payer: &AccountView,
-                    rent_lpb: u64,
-                    rent_threshold: u64,
+                    rent: &R,
                 ) -> Result<(), ProgramError> {
                     #(let #init_field_names = inner.#init_field_names;)*
                     #(#max_checks)*
@@ -119,12 +118,13 @@ pub(super) fn emit_set_inner_impl(spec: SetInnerSpec<'_>) -> proc_macro2::TokenS
                     let __view = unsafe { &mut *(self as *mut Self as *mut AccountView) };
 
                     if __space != __view.data_len() {
+                        let __rent = rent.get()?;
                         quasar_lang::accounts::account::realloc_account_raw(
                             __view,
                             __space,
                             payer,
-                            rent_lpb,
-                            rent_threshold,
+                            __rent.lamports_per_byte(),
+                            __rent.exemption_threshold_raw(),
                         )?;
                     }
 

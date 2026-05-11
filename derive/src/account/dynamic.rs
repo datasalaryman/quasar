@@ -178,15 +178,14 @@ pub(super) fn emit_dyn_writer(
         .collect();
 
     quote! {
-        pub struct #writer_name<'a> {
+        pub struct #writer_name<'a, R: quasar_lang::ops::RentAccess> {
             __view: &'a mut AccountView,
             __payer: &'a AccountView,
-            __rent_lpb: u64,
-            __rent_threshold: u64,
+            __rent: &'a R,
             #(#setter_fields,)*
         }
 
-        impl<'a> core::ops::Deref for #writer_name<'a> {
+        impl<'a, R: quasar_lang::ops::RentAccess> core::ops::Deref for #writer_name<'a, R> {
             type Target = #zc_path;
 
             #[inline(always)]
@@ -195,14 +194,14 @@ pub(super) fn emit_dyn_writer(
             }
         }
 
-        impl<'a> core::ops::DerefMut for #writer_name<'a> {
+        impl<'a, R: quasar_lang::ops::RentAccess> core::ops::DerefMut for #writer_name<'a, R> {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
                 unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_path) }
             }
         }
 
-        impl<'a> #writer_name<'a> {
+        impl<'a, R: quasar_lang::ops::RentAccess> #writer_name<'a, R> {
             #(#setter_methods)*
 
             pub fn commit(&mut self) -> Result<(), ProgramError> {
@@ -213,12 +212,13 @@ pub(super) fn emit_dyn_writer(
                     #(#size_terms)*;
                 let __old_total = self.__view.data_len();
                 if __new_total != __old_total {
+                    let __rent = self.__rent.get()?;
                     quasar_lang::accounts::account::realloc_account_raw(
                         self.__view,
                         __new_total,
                         self.__payer,
-                        self.__rent_lpb,
-                        self.__rent_threshold,
+                        __rent.lamports_per_byte(),
+                        __rent.exemption_threshold_raw(),
                     )?;
                 }
 
@@ -237,12 +237,11 @@ pub(super) fn emit_dyn_writer(
 
         impl #name {
             #[inline(always)]
-            pub fn compact_writer<'a>(
+            pub fn compact_writer<'a, R: quasar_lang::ops::RentAccess>(
                 &'a mut self,
                 payer: &'a AccountView,
-                rent_lpb: u64,
-                rent_threshold: u64,
-            ) -> #writer_name<'a> {
+                rent: &'a R,
+            ) -> #writer_name<'a, R> {
                 // SAFETY: `self.__view` is the transparent account backing store for this
                 // wrapper. Reborrowing it as `&mut AccountView` is sound here because the
                 // writer exclusively owns `&'a mut self` for its full lifetime and does not
@@ -251,8 +250,7 @@ pub(super) fn emit_dyn_writer(
                 #writer_name {
                     __view,
                     __payer: payer,
-                    __rent_lpb: rent_lpb,
-                    __rent_threshold: rent_threshold,
+                    __rent: rent,
                     #(#setter_inits,)*
                 }
             }
