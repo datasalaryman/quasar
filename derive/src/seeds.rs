@@ -11,13 +11,14 @@
 //! with `AddressVerify` impls.
 
 use {
+    crate::seed_param::{parse_seed_type, SeedType},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
     syn::{
         parse::{Parse, ParseStream},
         parse2,
         spanned::Spanned,
-        Data, DeriveInput, Error, Ident, LitByteStr, Result, Token,
+        Data, DeriveInput, Error, Ident, LitByteStr, Result, Token, Type,
     },
 };
 
@@ -25,68 +26,6 @@ use {
 struct SeedParam {
     name: Ident,
     ty: SeedType,
-}
-
-/// Supported seed parameter types.
-enum SeedType {
-    Address,
-    U8,
-    U16,
-    U32,
-    U64,
-}
-
-impl SeedType {
-    /// The field storage type in SeedSet.
-    /// Address: borrowed reference (zero-copy).
-    /// Scalars: owned byte array (needs backing storage for to_le_bytes).
-    fn field_type(&self) -> TokenStream {
-        match self {
-            SeedType::Address => quote! { &'__quasar_seed quasar_lang::prelude::Address },
-            SeedType::U8 => quote! { [u8; 1] },
-            SeedType::U16 => quote! { [u8; 2] },
-            SeedType::U32 => quote! { [u8; 4] },
-            SeedType::U64 => quote! { [u8; 8] },
-        }
-    }
-
-    /// The constructor parameter type. Address uses the generated seed lifetime
-    /// to tie the borrow to the SeedSet.
-    fn param_type(&self) -> TokenStream {
-        match self {
-            SeedType::Address => quote! { &'__quasar_seed quasar_lang::prelude::Address },
-            SeedType::U8 => quote! { u8 },
-            SeedType::U16 => quote! { u16 },
-            SeedType::U32 => quote! { u32 },
-            SeedType::U64 => quote! { u64 },
-        }
-    }
-
-    /// Expression to store the parameter in the SeedSet field.
-    fn to_stored_expr(&self, param: &Ident) -> TokenStream {
-        match self {
-            SeedType::Address => quote! { #param },
-            SeedType::U8 => quote! { [#param] },
-            _ => quote! { #param.to_le_bytes() },
-        }
-    }
-
-    /// Expression for as_slices() — how to get a `&[u8]` from the field.
-    fn slice_expr(&self, field_name: &Ident, prefix: &str) -> TokenStream {
-        let prefix_ident: Option<Ident> = if prefix.is_empty() {
-            None
-        } else {
-            Some(Ident::new(prefix, field_name.span()))
-        };
-        let access = match prefix_ident {
-            None => quote! { self.#field_name },
-            Some(p) => quote! { self.#p.#field_name },
-        };
-        match self {
-            SeedType::Address => quote! { #access.as_ref() },
-            _ => quote! { &#access },
-        }
-    }
 }
 
 /// Parsed `#[seeds(...)]` attribute content.
@@ -98,6 +37,12 @@ struct SeedsAttr {
 impl Parse for SeedsAttr {
     fn parse(input: ParseStream) -> Result<Self> {
         let prefix: LitByteStr = input.parse()?;
+        if prefix.value().len() > 32 {
+            return Err(Error::new_spanned(
+                &prefix,
+                "seed prefix exceeds MAX_SEED_LEN of 32",
+            ));
+        }
 
         let mut params = Vec::new();
         while input.peek(Token![,]) {
@@ -108,20 +53,8 @@ impl Parse for SeedsAttr {
             }
             let name: Ident = input.parse()?;
             let _: Token![:] = input.parse()?;
-            let ty_ident: Ident = input.parse()?;
-            let ty = match ty_ident.to_string().as_str() {
-                "Address" => SeedType::Address,
-                "u8" => SeedType::U8,
-                "u16" => SeedType::U16,
-                "u32" => SeedType::U32,
-                "u64" => SeedType::U64,
-                _ => {
-                    return Err(Error::new(
-                        ty_ident.span(),
-                        "unsupported seed type; expected Address, u8, u16, u32, or u64",
-                    ))
-                }
-            };
+            let ty: Type = input.parse()?;
+            let ty = parse_seed_type(ty)?;
             params.push(SeedParam { name, ty });
         }
 
