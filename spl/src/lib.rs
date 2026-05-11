@@ -90,8 +90,8 @@ macro_rules! impl_token_account_init {
             const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
             #[inline(always)]
-            fn init<'a>(
-                ctx: quasar_lang::account_init::InitCtx<'a>,
+            fn init<'a, R: quasar_lang::ops::RentAccess>(
+                ctx: quasar_lang::account_init::InitCtx<'a, R>,
                 params: &Self::InitParams<'a>,
             ) -> Result<(), ProgramError> {
                 match params {
@@ -107,7 +107,7 @@ macro_rules! impl_token_account_init {
                         mint,
                         authority,
                         ctx.signers,
-                        ctx.rent,
+                        ctx.rent.get()?,
                     ),
                     crate::token::TokenInitKind::AssociatedToken {
                         mint,
@@ -146,8 +146,8 @@ macro_rules! impl_mint_account_init {
             const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
             #[inline(always)]
-            fn init<'a>(
-                ctx: quasar_lang::account_init::InitCtx<'a>,
+            fn init<'a, R: quasar_lang::ops::RentAccess>(
+                ctx: quasar_lang::account_init::InitCtx<'a, R>,
                 params: &Self::InitParams<'a>,
             ) -> Result<(), ProgramError> {
                 match params {
@@ -165,7 +165,7 @@ macro_rules! impl_mint_account_init {
                         authority,
                         *freeze_authority,
                         ctx.signers,
-                        ctx.rent,
+                        ctx.rent.get()?,
                     ),
                 }
             }

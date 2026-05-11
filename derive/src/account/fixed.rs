@@ -169,8 +169,8 @@ pub(super) fn generate_account(
                 type InitParams<'a> = ();
 
                 #[inline(always)]
-                fn init<'a>(
-                    ctx: quasar_lang::account_init::InitCtx<'a>,
+                fn init<'a, R: quasar_lang::ops::RentAccess>(
+                    ctx: quasar_lang::account_init::InitCtx<'a, R>,
                     _params: &(),
                 ) -> Result<(), quasar_lang::prelude::ProgramError> {
                     quasar_lang::account_init::init_account(
@@ -179,7 +179,7 @@ pub(super) fn generate_account(
                         ctx.space,
                         ctx.program_id,
                         ctx.signers,
-                        ctx.rent,
+                        ctx.rent.get()?,
                         <Self as quasar_lang::traits::Discriminator>::DISCRIMINATOR,
                     )
                 }

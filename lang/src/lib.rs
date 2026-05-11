@@ -361,7 +361,7 @@ pub mod event;
 pub mod instruction_arg;
 /// Low-level `sol_log_data` syscall wrapper.
 pub mod log;
-/// Op-dispatch: `OpCtxWithRent`, `SupportsRealloc`, structural ops (init,
+/// Op-dispatch: `OpCtx`, `SupportsRealloc`, structural ops (init,
 /// realloc, close).
 pub mod ops;
 /// Program Derived Address creation and lookup.

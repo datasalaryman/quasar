@@ -3,9 +3,8 @@
 //! Generated parse body shape:
 //!
 //! ```text
-//! // Rent (only when init/realloc/migration needs it)
-//! let __rent: Rent = Sysvar::get()?;
-//! let __rent_ctx = OpCtxWithRent::new(&program_id, &__rent);
+//! // Rent source (only when init/realloc/migration may need it)
+//! let __rent_ctx = OpCtx::new(&program_id, &__rent);
 //!
 //! // Phase 1: load non-init fields
 //! let field_a = <Ty>::load(field_a)?;
@@ -114,7 +113,7 @@ fn emit_rent_context(
                         #field.borrow_unchecked()
                     )
                 };
-                let __rent_ctx = quasar_lang::ops::OpCtxWithRent::new(
+                let __rent_ctx = quasar_lang::ops::OpCtx::new(
                     unsafe { &*(__program_id as *const quasar_lang::prelude::Address) },
                     __rent,
                 );
@@ -122,11 +121,9 @@ fn emit_rent_context(
         }
         RentPlan::FetchOnce => {
             quote! {
-                let __rent: quasar_lang::sysvars::rent::Rent =
-                    <quasar_lang::sysvars::rent::Rent as quasar_lang::sysvars::Sysvar>::get()?;
-                let __rent_ctx = quasar_lang::ops::OpCtxWithRent::new(
+                let __rent_ctx = quasar_lang::ops::OpCtx::new(
                     unsafe { &*(__program_id as *const quasar_lang::prelude::Address) },
-                    &__rent,
+                    quasar_lang::ops::RentResolver::fetch_once(),
                 );
             }
         }
@@ -256,7 +253,7 @@ fn emit_post_load_typed(
                                     space: (#realloc_expr) as usize,
                                     payer: #payer_ident.to_account_view(),
                                 };
-                                __realloc_op.apply::<#ty>(&mut #ident, &__rent_ctx)?;
+                                __realloc_op.apply::<#ty, _>(&mut #ident, &__rent_ctx)?;
                             }
                         },
                         true,

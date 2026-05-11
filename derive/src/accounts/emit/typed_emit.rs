@@ -121,7 +121,7 @@ pub(crate) fn emit_behavior_init(
             params: __init_params,
             idempotent: #idempotent,
         };
-        __init_op.apply::<#field_ty>(#field_ident, &__rent_ctx)?;
+        __init_op.apply::<#field_ty, _>(#field_ident, &__rent_ctx)?;
         #did_init_assignment
     };
 
@@ -182,7 +182,7 @@ pub(crate) fn emit_program_init(
             params: __init_params,
             idempotent: #idempotent,
         };
-        __init_op.apply::<#field_ty>(#field_ident, &__rent_ctx)?;
+        __init_op.apply::<#field_ty, _>(#field_ident, &__rent_ctx)?;
     };
 
     let body = if has_address {

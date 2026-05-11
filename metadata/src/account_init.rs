@@ -43,8 +43,8 @@ impl quasar_lang::account_init::AccountInit for MetadataAccount {
     const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
     #[inline(always)]
-    fn init<'a>(
-        ctx: quasar_lang::account_init::InitCtx<'a>,
+    fn init<'a, R: quasar_lang::ops::RentAccess>(
+        ctx: quasar_lang::account_init::InitCtx<'a, R>,
         params: &Self::InitParams<'a>,
     ) -> quasar_lang::__solana_program_error::ProgramResult {
         match params {
@@ -114,8 +114,8 @@ impl quasar_lang::account_init::AccountInit for MasterEditionAccount {
     const DEFAULT_INIT_PARAMS_VALID: bool = false;
 
     #[inline(always)]
-    fn init<'a>(
-        ctx: quasar_lang::account_init::InitCtx<'a>,
+    fn init<'a, R: quasar_lang::ops::RentAccess>(
+        ctx: quasar_lang::account_init::InitCtx<'a, R>,
         params: &Self::InitParams<'a>,
     ) -> quasar_lang::__solana_program_error::ProgramResult {
         match params {

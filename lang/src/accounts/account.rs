@@ -393,8 +393,8 @@ impl<T: crate::account_init::AccountInit> crate::account_init::AccountInit for A
     const DEFAULT_INIT_PARAMS_VALID: bool = T::DEFAULT_INIT_PARAMS_VALID;
 
     #[inline(always)]
-    fn init<'a>(
-        ctx: crate::account_init::InitCtx<'a>,
+    fn init<'a, R: crate::ops::RentAccess>(
+        ctx: crate::account_init::InitCtx<'a, R>,
         params: &Self::InitParams<'a>,
     ) -> solana_program_error::ProgramResult {
         T::init(ctx, params)

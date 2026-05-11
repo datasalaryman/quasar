@@ -1,6 +1,7 @@
 use {
     crate::{
         cpi::{system, Signer},
+        ops::RentAccess,
         sysvars::rent::Rent,
     },
     solana_account_view::AccountView,
@@ -9,13 +10,13 @@ use {
 };
 
 /// Context for account initialization CPI.
-pub struct InitCtx<'a> {
+pub struct InitCtx<'a, R: RentAccess> {
     pub payer: &'a AccountView,
     pub target: &'a mut AccountView,
     pub program_id: &'a Address,
     pub space: u64,
     pub signers: &'a [Signer<'a, 'a>],
-    pub rent: &'a Rent,
+    pub rent: &'a R,
 }
 
 /// Initialization behavior for account types.
@@ -37,7 +38,8 @@ pub trait AccountInit {
     /// runtime error if no behavior fills the params.
     const DEFAULT_INIT_PARAMS_VALID: bool = true;
 
-    fn init<'a>(ctx: InitCtx<'a>, params: &Self::InitParams<'a>) -> ProgramResult;
+    fn init<'a, R: RentAccess>(ctx: InitCtx<'a, R>, params: &Self::InitParams<'a>)
+        -> ProgramResult;
 }
 
 /// Create account via system program + write discriminator.
