@@ -3,14 +3,14 @@ use {
     std::collections::HashMap,
 };
 
-pub struct ProfileResult {
-    pub stack_counts: Vec<(Vec<String>, u64)>,
-    pub total_cus: u64,
+pub(crate) struct ProfileResult {
+    pub(crate) stack_counts: Vec<(Vec<String>, u64)>,
+    pub(crate) total_cus: u64,
     /// (function_name, self_cu_count) sorted descending
-    pub function_cus: Vec<(String, u64)>,
+    pub(crate) function_cus: Vec<(String, u64)>,
 }
 
-pub fn profile(mmap: &[u8], info: &ElfInfo, resolver: &Resolver) -> ProfileResult {
+pub(crate) fn profile(mmap: &[u8], info: &ElfInfo, resolver: &Resolver) -> ProfileResult {
     let text = &mmap[info.text_offset..info.text_offset + info.text_size];
     let walker = InstructionWalker::new(text, info.text_base_addr);
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 /// Check if something is already listening on the given port.
-pub fn is_alive(port: u16) -> bool {
+pub(crate) fn is_alive(port: u16) -> bool {
     let Ok(addr) = format!("127.0.0.1:{port}").parse() else {
         return false;
     };
@@ -21,7 +21,7 @@ pub fn is_alive(port: u16) -> bool {
 /// `idle_secs` of inactivity (no new connections = browser tab closed).
 ///
 /// Returns the URL on success.
-pub fn serve_background(root: &Path, port: u16, program: &str) -> std::io::Result<String> {
+pub(crate) fn serve_background(root: &Path, port: u16, program: &str) -> std::io::Result<String> {
     // Try to bind first to fail fast if port is busy
     let listener = TcpListener::bind(format!("127.0.0.1:{port}"))?;
     let url = format!("http://127.0.0.1:{port}/?program={program}");
@@ -49,7 +49,7 @@ pub fn serve_background(root: &Path, port: u16, program: &str) -> std::io::Resul
 }
 
 /// Blocking serve (for --diff mode which needs to stay alive until Ctrl-C).
-pub fn serve_blocking(root: &Path, port: u16) -> std::io::Result<()> {
+pub(crate) fn serve_blocking(root: &Path, port: u16) -> std::io::Result<()> {
     let listener = TcpListener::bind(format!("127.0.0.1:{port}"))?;
     let root = root.to_path_buf();
 

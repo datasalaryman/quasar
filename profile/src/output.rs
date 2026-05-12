@@ -44,7 +44,12 @@ fn bar_fill(s: &str) -> String {
 
 const LAST_PROFILE: &str = "target/profile/.last-profile";
 
-pub fn print_summary(result: &ProfileResult, program_name: &str, _binary_size: u64, expand: bool) {
+pub(crate) fn print_summary(
+    result: &ProfileResult,
+    program_name: &str,
+    _binary_size: u64,
+    expand: bool,
+) {
     println!();
     let total = result.total_cus;
     let fn_count = result.function_cus.len();
@@ -238,7 +243,7 @@ fn print_full_table(
     );
 }
 
-pub fn print_flamegraph_link(url: &str) {
+pub(crate) fn print_flamegraph_link(url: &str) {
     println!("  {}  {}", dim("flamegraph"), cyan(url));
 }
 
@@ -400,7 +405,7 @@ struct BuildNode {
     children: HashMap<String, BuildNode>,
 }
 
-pub fn write_json(
+pub(crate) fn write_json(
     result: &ProfileResult,
     path: &Path,
     program_name: &str,
