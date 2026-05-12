@@ -82,11 +82,8 @@ fn parse_max_attr_from_program_arg(pt: &syn::PatType) -> Option<(usize, usize)> 
     None
 }
 
-/// Context wrapper kind, classified once per instruction function.
-enum CtxKind<'a> {
-    Ctx { inner_ty: &'a Type },
-    CtxWithRemaining { inner_ty: &'a Type },
-}
+/// Context wrapper classification for an instruction function.
+struct CtxKind<'a>(&'a Type, bool);
 
 impl<'a> CtxKind<'a> {
     /// Classify the first parameter of an instruction function.
@@ -102,10 +99,10 @@ impl<'a> CtxKind<'a> {
         };
 
         if let Some(inner) = extract_generic_inner_type(&first_arg.ty, "Ctx") {
-            return Ok(CtxKind::Ctx { inner_ty: inner });
+            return Ok(CtxKind(inner, false));
         }
         if let Some(inner) = extract_generic_inner_type(&first_arg.ty, "CtxWithRemaining") {
-            return Ok(CtxKind::CtxWithRemaining { inner_ty: inner });
+            return Ok(CtxKind(inner, true));
         }
 
         Err(syn::Error::new_spanned(
@@ -115,13 +112,11 @@ impl<'a> CtxKind<'a> {
     }
 
     fn inner_ty(&self) -> &'a Type {
-        match self {
-            CtxKind::Ctx { inner_ty } | CtxKind::CtxWithRemaining { inner_ty } => inner_ty,
-        }
+        self.0
     }
 
     fn has_remaining(&self) -> bool {
-        matches!(self, CtxKind::CtxWithRemaining { .. })
+        self.1
     }
 }
 
@@ -150,7 +145,6 @@ struct InstructionSpec {
     disc_bytes: Vec<LitInt>,
     disc_values: Vec<u8>,
     accounts_type: TokenStream2,
-    #[allow(dead_code)]
     accounts_type_str: String,
     heap: bool,
     client_struct_name: Ident,
