@@ -2111,7 +2111,6 @@ dependencies = [
  "quote",
  "serde_json",
  "solana-address 2.2.0",
- "solana-program-error",
  "syn 2.0.117",
  "trybuild",
 ]
