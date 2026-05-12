@@ -10,7 +10,6 @@ use {
 pub(crate) struct AccountsPlan {
     pub parse_steps: Vec<proc_macro2::TokenStream>,
     pub count_expr: proc_macro2::TokenStream,
-    pub typed_seed_asserts: proc_macro2::TokenStream,
     pub parse_body: proc_macro2::TokenStream,
     pub direct_parse_body: proc_macro2::TokenStream,
 }
@@ -93,7 +92,6 @@ pub(crate) fn build_accounts_plan(
     Ok(AccountsPlan {
         parse_steps: emit_parse_account_steps(&fields),
         count_expr: emit_count_expr(&fields),
-        typed_seed_asserts: quote! {},
         parse_body: emit_full_parse_body(semantics, typed_plan, &fields, cx)?,
         direct_parse_body: emit_direct_parse_body(semantics, typed_plan, &fields, cx)?,
     })

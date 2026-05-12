@@ -14,7 +14,6 @@ pub(crate) struct AccountsOutput<'a> {
     pub count_expr: proc_macro2::TokenStream,
     pub needs_event_cpi_expr: proc_macro2::TokenStream,
     pub parse_steps: Vec<proc_macro2::TokenStream>,
-    pub typed_seed_asserts: proc_macro2::TokenStream,
     pub parse_body: proc_macro2::TokenStream,
     pub direct_parse_body: proc_macro2::TokenStream,
     pub bumps_struct: proc_macro2::TokenStream,
@@ -37,7 +36,6 @@ pub(crate) fn emit_accounts_output(output: AccountsOutput<'_>) -> proc_macro2::T
         count_expr,
         needs_event_cpi_expr,
         parse_steps,
-        typed_seed_asserts,
         parse_body,
         direct_parse_body,
         bumps_struct,
@@ -117,7 +115,6 @@ pub(crate) fn emit_accounts_output(output: AccountsOutput<'_>) -> proc_macro2::T
                 __ix_data: &[u8],
                 __program_id: &Address,
             ) -> Result<(Self, Self::Bumps), ProgramError> {
-                #typed_seed_asserts
                 #ix_arg_extraction
                 #parse_body
             }

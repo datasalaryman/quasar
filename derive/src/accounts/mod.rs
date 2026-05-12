@@ -129,7 +129,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     let plan::AccountsPlan {
         parse_steps,
         count_expr,
-        typed_seed_asserts,
         parse_body,
         direct_parse_body,
     } = accounts_plan;
@@ -174,7 +173,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         count_expr,
         needs_event_cpi_expr: emit_needs_event_cpi_expr(&semantics),
         parse_steps,
-        typed_seed_asserts,
         parse_body,
         direct_parse_body,
         bumps_struct,
