@@ -125,7 +125,7 @@ fn test_token_state_delegate_present() {
     let delegate = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 1000, Some(&delegate), 1, None, 500, None);
     let state = cast_token(&bytes);
-    assert!(state.has_delegate());
+    assert!(state.delegate().is_some());
     assert_eq!(state.delegate(), Some(&delegate));
 }
 
@@ -135,7 +135,7 @@ fn test_token_state_delegate_absent() {
     let owner = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 1000, None, 1, None, 0, None);
     let state = cast_token(&bytes);
-    assert!(!state.has_delegate());
+    assert!(state.delegate().is_none());
     assert_eq!(state.delegate(), None);
 }
 
@@ -175,7 +175,7 @@ fn test_token_state_native() {
     let owner = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 500, None, 1, Some(1_000_000), 0, None);
     let state = cast_token(&bytes);
-    assert!(state.is_native());
+    assert!(state.native().is_some());
     assert_eq!(state.native_amount(), Some(1_000_000));
 }
 
@@ -185,7 +185,7 @@ fn test_token_state_not_native() {
     let owner = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 500, None, 1, None, 0, None);
     let state = cast_token(&bytes);
-    assert!(!state.is_native());
+    assert!(state.native().is_none());
     assert_eq!(state.native_amount(), None);
 }
 
@@ -207,7 +207,7 @@ fn test_token_state_close_authority_present() {
     let close_auth = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 0, None, 1, None, 0, Some(&close_auth));
     let state = cast_token(&bytes);
-    assert!(state.has_close_authority());
+    assert!(state.close_authority().is_some());
     assert_eq!(state.close_authority(), Some(&close_auth));
 }
 
@@ -217,7 +217,7 @@ fn test_token_state_close_authority_absent() {
     let owner = Address::new_unique();
     let bytes = build_token_account_bytes(&mint, &owner, 0, None, 1, None, 0, None);
     let state = cast_token(&bytes);
-    assert!(!state.has_close_authority());
+    assert!(state.close_authority().is_none());
     assert_eq!(state.close_authority(), None);
 }
 
@@ -230,7 +230,7 @@ fn test_mint_state_has_authority() {
     let authority = Address::new_unique();
     let bytes = build_mint_account_bytes(Some(&authority), 1_000_000, 9, 1, None);
     let state = cast_mint(&bytes);
-    assert!(state.has_mint_authority());
+    assert!(state.mint_authority().is_some());
     assert_eq!(state.mint_authority(), Some(&authority));
 }
 
@@ -238,7 +238,7 @@ fn test_mint_state_has_authority() {
 fn test_mint_state_no_authority() {
     let bytes = build_mint_account_bytes(None, 1_000_000, 9, 1, None);
     let state = cast_mint(&bytes);
-    assert!(!state.has_mint_authority());
+    assert!(state.mint_authority().is_none());
     assert_eq!(state.mint_authority(), None);
 }
 
@@ -279,7 +279,7 @@ fn test_mint_state_freeze_authority_present() {
     let freeze = Address::new_unique();
     let bytes = build_mint_account_bytes(Some(&authority), 0, 9, 1, Some(&freeze));
     let state = cast_mint(&bytes);
-    assert!(state.has_freeze_authority());
+    assert!(state.freeze_authority().is_some());
     assert_eq!(state.freeze_authority(), Some(&freeze));
 }
 
@@ -288,7 +288,7 @@ fn test_mint_state_freeze_authority_absent() {
     let authority = Address::new_unique();
     let bytes = build_mint_account_bytes(Some(&authority), 0, 9, 1, None);
     let state = cast_mint(&bytes);
-    assert!(!state.has_freeze_authority());
+    assert!(state.freeze_authority().is_none());
     assert_eq!(state.freeze_authority(), None);
 }
 

@@ -79,7 +79,11 @@ fn validate_token_account_inner(
     // SAFETY: Owner is a token program and `data_len >= LEN` checked
     // above. `TokenDataZc` is `#[repr(C)]` with alignment 1.
     let state = unsafe { &*(view.data_ptr() as *const TokenDataZc) };
-    if unlikely(!state.coption_tags_valid()) {
+    if unlikely(
+        !state.delegate.tag_valid()
+            || !state.native.tag_valid()
+            || !state.close_authority.tag_valid(),
+    ) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_token_account: invalid option tag");
         return Err(ProgramError::InvalidAccountData);
@@ -151,7 +155,7 @@ pub fn validate_mint_with_freeze(
         return Err(ProgramError::InvalidAccountData);
     }
     let state = unsafe { &*(view.data_ptr() as *const MintDataZc) };
-    if unlikely(!state.coption_tags_valid()) {
+    if unlikely(!state.mint_authority.tag_valid() || !state.freeze_authority.tag_valid()) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: invalid option tag");
         return Err(ProgramError::InvalidAccountData);
@@ -166,10 +170,10 @@ pub fn validate_mint_with_freeze(
         quasar_lang::prelude::log("validate_mint: not initialized");
         return Err(ProgramError::UninitializedAccount);
     }
-    if unlikely(
-        !state.has_mint_authority()
-            || !quasar_lang::keys_eq(state.mint_authority_unchecked(), mint_authority),
-    ) {
+    if unlikely(match state.mint_authority() {
+        Some(authority) => !quasar_lang::keys_eq(authority, mint_authority),
+        None => true,
+    }) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: authority mismatch");
         return Err(ProgramError::InvalidAccountData);
@@ -184,17 +188,17 @@ pub fn validate_mint_with_freeze(
     match freeze {
         FreezeCheck::Skip => {}
         FreezeCheck::AssertNone => {
-            if unlikely(state.has_freeze_authority()) {
+            if unlikely(state.freeze_authority().is_some()) {
                 #[cfg(feature = "debug")]
                 quasar_lang::prelude::log("validate_mint: freeze authority mismatch");
                 return Err(ProgramError::InvalidAccountData);
             }
         }
         FreezeCheck::AssertEquals(expected) => {
-            if unlikely(
-                !state.has_freeze_authority()
-                    || !quasar_lang::keys_eq(state.freeze_authority_unchecked(), expected),
-            ) {
+            if unlikely(match state.freeze_authority() {
+                Some(authority) => !quasar_lang::keys_eq(authority, expected),
+                None => true,
+            }) {
                 #[cfg(feature = "debug")]
                 quasar_lang::prelude::log("validate_mint: freeze authority mismatch");
                 return Err(ProgramError::InvalidAccountData);

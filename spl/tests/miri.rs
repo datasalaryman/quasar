@@ -422,14 +422,12 @@ fn token_deref_reads_all_fields() {
     assert_eq!(state.mint(), &Address::new_from_array([0xAA; 32]));
     assert_eq!(state.owner(), &Address::new_from_array([0xBB; 32]));
     assert_eq!(state.amount(), 1_000_000);
-    assert!(!state.has_delegate());
     assert!(state.delegate().is_none());
     assert!(state.is_initialized());
     assert!(!state.is_frozen());
-    assert!(!state.is_native());
+    assert!(state.native().is_none());
     assert!(state.native_amount().is_none());
     assert_eq!(state.delegated_amount(), 0);
-    assert!(!state.has_close_authority());
     assert!(state.close_authority().is_none());
 }
 
@@ -527,27 +525,19 @@ fn token_deref_various_flag_patterns() {
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
     let state: &TokenDataZc = &*account;
 
-    assert!(state.has_delegate());
+    assert!(state.delegate().is_some());
     assert_eq!(
         state.delegate().unwrap(),
         &Address::new_from_array([0x33; 32])
     );
-    assert_eq!(
-        state.delegate_unchecked(),
-        &Address::new_from_array([0x33; 32])
-    );
     assert!(state.is_frozen());
     assert!(state.is_initialized());
-    assert!(state.is_native());
+    assert!(state.native().is_some());
     assert_eq!(state.native_amount().unwrap(), 100_000);
     assert_eq!(state.delegated_amount(), 3_000_000);
-    assert!(state.has_close_authority());
+    assert!(state.close_authority().is_some());
     assert_eq!(
         state.close_authority().unwrap(),
-        &Address::new_from_array([0x44; 32])
-    );
-    assert_eq!(
-        state.close_authority_unchecked(),
         &Address::new_from_array([0x44; 32])
     );
 }
@@ -571,11 +561,9 @@ fn token_deref_no_flags_set() {
     let account = unsafe { Account::<Token>::from_account_view_unchecked(&view) };
     let state: &TokenDataZc = &*account;
 
-    assert!(!state.has_delegate());
     assert!(state.delegate().is_none());
-    assert!(!state.is_native());
+    assert!(state.native().is_none());
     assert!(state.native_amount().is_none());
-    assert!(!state.has_close_authority());
     assert!(state.close_authority().is_none());
     assert!(!state.is_initialized());
     assert!(!state.is_frozen());
@@ -595,19 +583,14 @@ fn mint_deref_reads_all_fields() {
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
     let state: &MintDataZc = &*account;
 
-    assert!(state.has_mint_authority());
+    assert!(state.mint_authority().is_some());
     assert_eq!(
         state.mint_authority().unwrap(),
-        &Address::new_from_array([0xCC; 32])
-    );
-    assert_eq!(
-        state.mint_authority_unchecked(),
         &Address::new_from_array([0xCC; 32])
     );
     assert_eq!(state.supply(), 1_000_000_000);
     assert_eq!(state.decimals(), 9);
     assert!(state.is_initialized());
-    assert!(!state.has_freeze_authority());
     assert!(state.freeze_authority().is_none());
 }
 
@@ -654,17 +637,13 @@ fn mint_all_flags_set() {
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
     let state: &MintDataZc = &*account;
 
-    assert!(state.has_mint_authority());
+    assert!(state.mint_authority().is_some());
     assert_eq!(state.supply(), u64::MAX);
     assert_eq!(state.decimals(), 18);
     assert!(state.is_initialized());
-    assert!(state.has_freeze_authority());
+    assert!(state.freeze_authority().is_some());
     assert_eq!(
         state.freeze_authority().unwrap(),
-        &Address::new_from_array([0xBB; 32])
-    );
-    assert_eq!(
-        state.freeze_authority_unchecked(),
         &Address::new_from_array([0xBB; 32])
     );
 }
@@ -680,9 +659,7 @@ fn mint_no_authorities() {
     let account = unsafe { Account::<Mint>::from_account_view_unchecked(&view) };
     let state: &MintDataZc = &*account;
 
-    assert!(!state.has_mint_authority());
     assert!(state.mint_authority().is_none());
-    assert!(!state.has_freeze_authority());
     assert!(state.freeze_authority().is_none());
     assert!(!state.is_initialized());
 }
@@ -1232,9 +1209,9 @@ fn all_zero_token_data() {
     assert_eq!(state.amount(), 0);
     assert!(!state.is_initialized());
     assert!(!state.is_frozen());
-    assert!(!state.has_delegate());
-    assert!(!state.is_native());
-    assert!(!state.has_close_authority());
+    assert!(state.delegate().is_none());
+    assert!(state.native().is_none());
+    assert!(state.close_authority().is_none());
     assert_eq!(state.delegated_amount(), 0);
 }
 
@@ -1252,8 +1229,8 @@ fn all_zero_mint_data() {
     assert_eq!(state.supply(), 0);
     assert_eq!(state.decimals(), 0);
     assert!(!state.is_initialized());
-    assert!(!state.has_mint_authority());
-    assert!(!state.has_freeze_authority());
+    assert!(state.mint_authority().is_none());
+    assert!(state.freeze_authority().is_none());
 }
 
 #[test]
@@ -1271,17 +1248,17 @@ fn all_ff_token_data() {
 
     assert_eq!(state.amount(), u64::MAX);
     // 0xFF != 1, so flags are NOT set despite all bytes being 0xFF
-    assert!(!state.has_delegate());
-    assert!(!state.is_native());
+    assert!(state.delegate().is_none());
+    assert!(state.native().is_none());
     assert_eq!(state.delegated_amount(), u64::MAX);
-    assert!(!state.has_close_authority());
-    // delegate_unchecked / close_authority_unchecked still return addresses
+    assert!(state.close_authority().is_none());
+    // The option is semantically None, but the payload bytes are still present.
     assert_eq!(
-        state.delegate_unchecked(),
+        state.delegate.value_unchecked(),
         &Address::new_from_array([0xFF; 32])
     );
     assert_eq!(
-        state.close_authority_unchecked(),
+        state.close_authority.value_unchecked(),
         &Address::new_from_array([0xFF; 32])
     );
 }
