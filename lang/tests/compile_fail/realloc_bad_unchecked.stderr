@@ -10,7 +10,6 @@ error[E0277]: the trait bound `quasar_lang::accounts::UncheckedAccount: Supports
   = help: the following other types implement trait `SupportsRealloc`:
             Account<T>
             InterfaceAccount<T>
-            Migration<From, To>
 note: required by a bound in `quasar_lang::ops::realloc::Op::<'a>::apply`
  --> src/ops/realloc.rs
   |
@@ -32,7 +31,6 @@ error[E0277]: the trait bound `quasar_lang::accounts::UncheckedAccount: quasar_l
   = help: the following other types implement trait `quasar_lang::prelude::Space`:
             Account<T>
             InterfaceAccount<T>
-            Migration<From, To>
 note: required by a bound in `quasar_lang::ops::realloc::Op::<'a>::apply`
  --> src/ops/realloc.rs
   |

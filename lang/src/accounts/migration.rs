@@ -22,14 +22,6 @@ impl<From, To> AsAccountView for Migration<From, To> {
 // Safety: Migration is repr(transparent) over AccountView.
 unsafe impl<From, To> crate::traits::StaticView for Migration<From, To> {}
 
-// Migration supports realloc (performed by `.migrate(...)`).
-impl<From, To> crate::ops::SupportsRealloc for Migration<From, To> {}
-
-// Space for Migration is the target's space (what we're reallocating to).
-impl<From, To: crate::traits::Space> crate::traits::Space for Migration<From, To> {
-    const SPACE: usize = <To as crate::traits::Space>::SPACE;
-}
-
 impl<From, To> Migration<From, To> {
     #[inline(always)]
     fn view(&self) -> &AccountView {
