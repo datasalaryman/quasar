@@ -85,6 +85,7 @@ macro_rules! impl_token_close_behavior {
     ($wrapper:ty) => {
         impl AccountBehavior<$wrapper> for Behavior {
             type Args<'a> = Args<'a>;
+            const RUN_CHECK: bool = false;
             const RUN_EXIT: bool = true;
 
             #[inline(always)]
