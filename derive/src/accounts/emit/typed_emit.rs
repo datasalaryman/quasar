@@ -167,10 +167,9 @@ pub(crate) fn emit_program_init(
 ) -> proc_macro2::TokenStream {
     let payer_ident = &spec.payer.ident;
     let idempotent = spec.idempotent;
-    let space = match &spec.space {
-        SpaceSpec::FromType(ty) => quote! {
-            <#ty as quasar_lang::traits::Space>::SPACE as u64
-        },
+    let space_ty = &spec.space_ty;
+    let space = quote! {
+        <#space_ty as quasar_lang::traits::Space>::SPACE as u64
     };
 
     let inner_body = quote! {

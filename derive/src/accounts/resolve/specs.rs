@@ -75,13 +75,6 @@ pub(crate) enum BehaviorPhase {
 // Core structural specs (protocol-agnostic)
 // ---------------------------------------------------------------------------
 
-/// Space specification for program init.
-#[derive(Clone)]
-pub(crate) enum SpaceSpec {
-    /// Derived from `<T as Space>::SPACE`.
-    FromType(Type),
-}
-
 /// A reference that is guaranteed to be a field (never an expression).
 /// Used for payer refs where the planner enforces field-only.
 #[derive(Clone)]
@@ -94,7 +87,7 @@ pub(crate) struct FieldRef {
 #[derive(Clone)]
 pub(crate) struct ProgramInitSpec {
     pub payer: FieldRef,
-    pub space: SpaceSpec,
+    pub space_ty: Type,
     pub idempotent: bool,
 }
 

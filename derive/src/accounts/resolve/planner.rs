@@ -233,7 +233,7 @@ fn plan_init(
     if sem.groups.is_empty() {
         return Ok(InitPlan::Program(ProgramInitSpec {
             payer,
-            space: SpaceSpec::FromType(sem.core.effective_ty.clone()),
+            space_ty: sem.core.effective_ty.clone(),
             idempotent,
         }));
     }
