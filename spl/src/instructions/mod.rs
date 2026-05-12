@@ -15,6 +15,31 @@ pub use {
     initialize_mint::initialize_mint2, transfer_checked::transfer_checked,
 };
 
+#[inline(always)]
+fn amount_data<const DISCRIMINATOR: u8>(amount: u64) -> [u8; 9] {
+    // SAFETY: All 9 bytes written before `assume_init`.
+    unsafe {
+        let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
+        let ptr = buf.as_mut_ptr() as *mut u8;
+        core::ptr::write(ptr, DISCRIMINATOR);
+        (ptr.add(1) as *mut u64).write_unaligned(amount);
+        buf.assume_init()
+    }
+}
+
+#[inline(always)]
+fn checked_amount_data<const DISCRIMINATOR: u8>(amount: u64, decimals: u8) -> [u8; 10] {
+    // SAFETY: All 10 bytes written before `assume_init`.
+    unsafe {
+        let mut buf = core::mem::MaybeUninit::<[u8; 10]>::uninit();
+        let ptr = buf.as_mut_ptr() as *mut u8;
+        core::ptr::write(ptr, DISCRIMINATOR);
+        (ptr.add(1) as *mut u64).write_unaligned(amount);
+        core::ptr::write(ptr.add(9), decimals);
+        buf.assume_init()
+    }
+}
+
 /// Trait for types that can execute SPL Token CPI calls.
 ///
 /// Implemented by `Program<Token>`, `Program<Token2022>`, and `TokenInterface`.
@@ -235,8 +260,8 @@ pub trait TokenCpi: AsAccountView {
 // Kani proof harnesses for SPL Token instruction data layout
 // ---------------------------------------------------------------------------
 //
-// Each harness replicates the unsafe `MaybeUninit` + pointer-write pattern used
-// by the corresponding instruction builder and asserts:
+// Each harness exercises the shared instruction-data helper used by the
+// corresponding instruction builder and asserts:
 //   1. The discriminator byte is correct.
 //   2. Payload fields are written at the expected offsets.
 //   3. All bytes of the buffer are initialised before `assume_init`.
@@ -257,13 +282,7 @@ mod kani_proofs {
     fn transfer_instruction_layout() {
         let amount: u64 = kani::any();
 
-        let data = unsafe {
-            let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
-            let ptr = buf.as_mut_ptr() as *mut u8;
-            core::ptr::write(ptr, 3u8);
-            (ptr.add(1) as *mut u64).write_unaligned(amount);
-            buf.assume_init()
-        };
+        let data = super::amount_data::<3>(amount);
 
         // Discriminator at offset 0
         assert!(data[0] == 3u8);
@@ -287,13 +306,7 @@ mod kani_proofs {
     fn mint_to_instruction_layout() {
         let amount: u64 = kani::any();
 
-        let data = unsafe {
-            let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
-            let ptr = buf.as_mut_ptr() as *mut u8;
-            core::ptr::write(ptr, 7u8);
-            (ptr.add(1) as *mut u64).write_unaligned(amount);
-            buf.assume_init()
-        };
+        let data = super::amount_data::<7>(amount);
 
         assert!(data[0] == 7u8);
         let amount_bytes = amount.to_le_bytes();
@@ -315,13 +328,7 @@ mod kani_proofs {
     fn burn_instruction_layout() {
         let amount: u64 = kani::any();
 
-        let data = unsafe {
-            let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
-            let ptr = buf.as_mut_ptr() as *mut u8;
-            core::ptr::write(ptr, 8u8);
-            (ptr.add(1) as *mut u64).write_unaligned(amount);
-            buf.assume_init()
-        };
+        let data = super::amount_data::<8>(amount);
 
         assert!(data[0] == 8u8);
         let amount_bytes = amount.to_le_bytes();
@@ -343,13 +350,7 @@ mod kani_proofs {
     fn approve_instruction_layout() {
         let amount: u64 = kani::any();
 
-        let data = unsafe {
-            let mut buf = core::mem::MaybeUninit::<[u8; 9]>::uninit();
-            let ptr = buf.as_mut_ptr() as *mut u8;
-            core::ptr::write(ptr, 4u8);
-            (ptr.add(1) as *mut u64).write_unaligned(amount);
-            buf.assume_init()
-        };
+        let data = super::amount_data::<4>(amount);
 
         assert!(data[0] == 4u8);
         let amount_bytes = amount.to_le_bytes();
@@ -372,14 +373,7 @@ mod kani_proofs {
         let amount: u64 = kani::any();
         let decimals: u8 = kani::any();
 
-        let data = unsafe {
-            let mut buf = core::mem::MaybeUninit::<[u8; 10]>::uninit();
-            let ptr = buf.as_mut_ptr() as *mut u8;
-            core::ptr::write(ptr, 12u8);
-            (ptr.add(1) as *mut u64).write_unaligned(amount);
-            core::ptr::write(ptr.add(9), decimals);
-            buf.assume_init()
-        };
+        let data = super::checked_amount_data::<12>(amount, decimals);
 
         assert!(data[0] == 12u8);
         let amount_bytes = amount.to_le_bytes();
