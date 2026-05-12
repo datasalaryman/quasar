@@ -1,25 +1,4 @@
-pub(crate) use quasar_schema::{pascal_to_snake, snake_to_pascal};
-
-/// Convert snake_case to camelCase (first word lowercase, subsequent words
-/// capitalized).
-pub(crate) fn snake_to_camel(s: &str) -> String {
-    let mut result = String::new();
-    for (i, part) in s.split('_').enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if i == 0 {
-            result.push_str(part);
-        } else {
-            let mut chars = part.chars();
-            if let Some(c) = chars.next() {
-                result.push(c.to_ascii_uppercase());
-                result.extend(chars);
-            }
-        }
-    }
-    result
-}
+pub(crate) use quasar_schema::{pascal_to_snake, snake_to_pascal, to_camel_case as snake_to_camel};
 use {
     quote::quote,
     syn::{
