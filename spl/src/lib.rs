@@ -57,12 +57,7 @@ macro_rules! impl_token_account_traits {
                 authority: &AccountView,
                 token_program: &AccountView,
             ) -> Result<(), ProgramError> {
-                crate::exit::close_token_account(
-                    token_program,
-                    unsafe { &*(view as *const AccountView) },
-                    dest,
-                    authority,
-                )
+                crate::exit::close_token_account(token_program, view, dest, authority)
             }
         }
 
