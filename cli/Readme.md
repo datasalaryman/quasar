@@ -41,7 +41,7 @@ quasar init .                # Scaffold into current directory
 quasar init my-program -y --verbose
 ```
 
-### `quasar build [--debug] [--verbose] [--watch] [--features FEATURES] [--lint]`
+### `quasar build [--debug] [--verbose] [--watch] [--features FEATURES]`
 
 Compile the on-chain program. Reads `Quasar.toml` to determine which toolchain to use and automatically generates the IDL before building. By default, Quasar shows phase progress and keeps child-process output quiet unless the build fails. With `--verbose`, it streams the underlying build command output directly.
 
@@ -51,7 +51,6 @@ Compile the on-chain program. Reads `Quasar.toml` to determine which toolchain t
 | `--verbose` | Stream the underlying build command output directly |
 | `--watch` | Watch `src/` for changes and rebuild automatically |
 | `--features FEATURES` | Cargo features to enable (passed through to the build command) |
-| `--lint` | Run the account relationship linter after IDL generation |
 
 On success, prints the binary size and delta from the previous build:
 

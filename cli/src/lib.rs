@@ -14,7 +14,6 @@ pub mod error;
 pub mod idl;
 pub mod init;
 pub mod keys;
-pub mod lint;
 pub mod new;
 pub mod style;
 pub mod test;
@@ -56,8 +55,6 @@ pub enum Command {
     Client(ClientCommand),
     /// Measure compute-unit usage
     Profile(ProfileCommand),
-    /// Run the account relationship linter
-    Lint(LintCommand),
     /// Dump sBPF assembly
     Dump(DumpCommand),
     /// Manage program keypair
@@ -141,21 +138,6 @@ pub struct BuildCommand {
     /// Cargo features to enable (comma-separated or repeated)
     #[arg(long, value_name = "FEATURES")]
     pub features: Option<String>,
-
-    /// Run the account relationship linter
-    #[arg(long, action = ArgAction::SetTrue)]
-    pub lint: bool,
-}
-
-#[derive(Args, Debug, Default)]
-pub struct LintCommand {
-    /// Apply auto-fixes for missing constraints
-    #[arg(long, action = ArgAction::SetTrue)]
-    pub fix: bool,
-
-    /// Output the account graph (ascii, mermaid, dot, json)
-    #[arg(long, value_name = "FORMAT")]
-    pub graph: Option<String>,
 }
 
 #[derive(Args, Debug, Default)]
@@ -356,9 +338,7 @@ pub fn run(cli: Cli) -> CliResult {
             }
             Ok(())
         }
-        Command::Build(cmd) => {
-            build::run(cmd.debug, cmd.verbose, cmd.watch, cmd.features, cmd.lint)
-        }
+        Command::Build(cmd) => build::run(cmd.debug, cmd.verbose, cmd.watch, cmd.features),
         Command::Test(cmd) => test::run(
             cmd.debug,
             cmd.show_output,
@@ -379,7 +359,6 @@ pub fn run(cli: Cli) -> CliResult {
         Command::Config(cmd) => cfg::run(cmd.action),
         Command::Idl(cmd) => idl::run(cmd),
         Command::Client(cmd) => client::run(cmd),
-        Command::Lint(cmd) => lint::run(cmd),
         Command::Dump(cmd) => dump::run(cmd.elf_path, cmd.function, cmd.source),
         Command::Completions(cmd) => {
             clap_complete::generate(
@@ -470,10 +449,6 @@ pub fn print_help() {
     print_cmd(
         "client  <idl> [--lang ts,py,go]",
         "Generate client code from IDL",
-    );
-    print_cmd(
-        "lint    [--fix] [--graph FORMAT]",
-        "Check account relationships",
     );
     print_cmd(
         "profile [elf] [--expand] [--diff] [-w]",

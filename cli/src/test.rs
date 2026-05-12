@@ -40,7 +40,7 @@ fn run_once(
     let config = QuasarConfig::load()?;
 
     if !no_build {
-        crate::build::run(debug, verbose, false, features.map(String::from), false)?;
+        crate::build::run(debug, verbose, false, features.map(String::from))?;
     }
 
     if config.has_typescript_tests() {

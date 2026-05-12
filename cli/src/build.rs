@@ -30,21 +30,15 @@ enum BuildResult {
     Streamed(ExitStatus),
 }
 
-pub fn run(
-    debug: bool,
-    verbose: bool,
-    watch: bool,
-    features: Option<String>,
-    lint: bool,
-) -> CliResult {
+pub fn run(debug: bool, verbose: bool, watch: bool, features: Option<String>) -> CliResult {
     if watch {
         run_watch(debug, verbose, features);
     }
 
-    run_once(debug, verbose, features.as_deref(), lint)
+    run_once(debug, verbose, features.as_deref())
 }
 
-fn run_once(debug: bool, verbose: bool, features: Option<&str>, lint_flag: bool) -> CliResult {
+fn run_once(debug: bool, verbose: bool, features: Option<&str>) -> CliResult {
     let config = QuasarConfig::load()?;
     let clients_path = config.client_path();
     let start = Instant::now();
@@ -55,9 +49,6 @@ fn run_once(debug: bool, verbose: bool, features: Option<&str>, lint_flag: bool)
     progress.step("Generating IDL and clients...");
     crate::idl::generate(&crate_root, &languages, &clients_path)?;
     progress.done("Generated IDL and clients");
-
-    // Lint pass removed — IDL-based lint will be re-introduced in a future PR.
-    let _ = lint_flag;
 
     if verbose {
         eprintln!("  {}", style::step("Building program..."));
@@ -362,7 +353,7 @@ pub fn profile_build() -> Result<PathBuf, crate::error::CliError> {
 }
 
 fn run_watch(debug: bool, verbose: bool, features: Option<String>) -> ! {
-    watch_loop(|| run_once(debug, verbose, features.as_deref(), false))
+    watch_loop(|| run_once(debug, verbose, features.as_deref()))
 }
 
 fn run_build_command(cmd: &mut Command, verbose: bool) -> std::io::Result<BuildResult> {

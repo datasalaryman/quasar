@@ -6,10 +6,8 @@
 //!
 //! This crate provides:
 //! - **Codegen** — TypeScript and Rust client generators from IDL JSON
-//! - **Lint** — static analysis passes on the IDL
 //! - **Types** — re-export of `quasar-idl-schema` types
 //!
-//! The source-scraping parser has been replaced by trait-based emission from
-//! derive macros. Programs compile with `--features idl-build` to produce IDL.
+//! Programs compile with `--features idl-build` to produce IDL.
 pub mod codegen;
 pub mod types;
