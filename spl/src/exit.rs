@@ -2,7 +2,7 @@ use {crate::instructions, quasar_lang::prelude::*};
 
 /// Close a token account via CPI to the token program.
 #[inline(always)]
-pub fn close_token_account(
+pub(crate) fn close_token_account(
     token_program: &AccountView,
     account: &AccountView,
     destination: &AccountView,
@@ -13,7 +13,7 @@ pub fn close_token_account(
 
 /// Transfer all tokens out, then no-op if balance is zero.
 #[inline(always)]
-pub fn sweep_token_account(
+pub(crate) fn sweep_token_account(
     token_program: &AccountView,
     source: &AccountView,
     mint: &AccountView,

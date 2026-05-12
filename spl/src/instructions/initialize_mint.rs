@@ -25,7 +25,7 @@ use quasar_lang::{
 /// [35..67] freeze_authority (32-byte address, zeroed if absent)
 /// ```
 #[inline(always)]
-pub fn initialize_mint2<'a>(
+pub(crate) fn initialize_mint2<'a>(
     token_program: &'a AccountView,
     mint: &'a AccountView,
     decimals: u8,

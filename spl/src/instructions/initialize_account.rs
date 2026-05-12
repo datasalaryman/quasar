@@ -23,7 +23,7 @@ use quasar_lang::{
 /// [1..33] owner          (32-byte address)
 /// ```
 #[inline(always)]
-pub fn initialize_account3<'a>(
+pub(crate) fn initialize_account3<'a>(
     token_program: &'a AccountView,
     account: &'a AccountView,
     mint: &'a AccountView,

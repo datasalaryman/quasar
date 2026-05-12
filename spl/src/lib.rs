@@ -198,9 +198,7 @@ pub use {
         AssociatedTokenCpi, AssociatedTokenProgram,
     },
     constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
-    exit::{close_token_account, sweep_token_account},
-    init::{init_ata, init_mint_account, init_token_account},
-    instructions::{initialize_account3, initialize_mint2, TokenCpi},
+    instructions::TokenCpi,
     interface::TokenInterface,
     quasar_lang::prelude::InterfaceAccount,
     token::{

@@ -5,7 +5,7 @@ use {
 
 /// Create token account + initialize_account3.
 #[inline(always)]
-pub fn init_token_account(
+pub(crate) fn init_token_account(
     payer: &AccountView,
     account: &mut AccountView,
     token_program: &AccountView,
@@ -28,7 +28,7 @@ pub fn init_token_account(
 /// Create mint account + initialize_mint2.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub fn init_mint_account(
+pub(crate) fn init_mint_account(
     payer: &AccountView,
     account: &mut AccountView,
     token_program: &AccountView,
@@ -60,7 +60,7 @@ pub fn init_mint_account(
 /// is true.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub fn init_ata(
+pub(crate) fn init_ata(
     ata_program: &AccountView,
     payer: &AccountView,
     ata: &AccountView,
