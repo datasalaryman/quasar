@@ -1,7 +1,7 @@
 //! Shared schema utilities consumed by multiple Quasar crates.
 //!
-//! Keep this crate narrow: only case-conversion utilities and address lookups
-//! belong here. The canonical IDL type definitions live in `quasar-idl-schema`.
+//! Keep this crate narrow: only shared case-conversion utilities belong here.
+//! The canonical IDL type definitions live in `quasar-idl-schema`.
 
 // ---------------------------------------------------------------------------
 // Case-conversion utilities (shared across derive, idl, cli, client)
@@ -91,25 +91,5 @@ pub fn camel_to_pascal(s: &str) -> String {
     match chars.next() {
         None => String::new(),
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Known addresses
-// ---------------------------------------------------------------------------
-
-pub fn known_address_for_type(base: &str, inner: Option<&str>) -> Option<&'static str> {
-    match (base, inner) {
-        ("SystemProgram", _) | ("Program", Some("System")) => {
-            Some("11111111111111111111111111111111")
-        }
-        ("Program", Some("Token")) => Some("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
-        ("Program", Some("Token2022")) => Some("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
-        ("Program", Some("AssociatedTokenProgram")) => {
-            Some("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-        }
-        ("Sysvar", Some("Rent")) => Some("SysvarRent111111111111111111111111111111111"),
-        ("Sysvar", Some("Clock")) => Some("SysvarC1ock11111111111111111111111111111111"),
-        _ => None,
     }
 }
