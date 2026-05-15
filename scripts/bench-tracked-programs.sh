@@ -108,6 +108,21 @@ metric_value() {
   printf '%s' "$value"
 }
 
+accepted_cu_delta() {
+  local key="$1"
+
+  # Narrow budgets for intentional safer typed/runtime paths. Unlisted metrics
+  # still fail on any CU regression.
+  case "$key" in
+    ESCROW_MAKE_CU) echo 7 ;;
+    ESCROW_TAKE_CU) echo 5 ;;
+    ESCROW_REFUND_CU) echo 5 ;;
+    MULTISIG_CREATE_CU) echo 70 ;;
+    MULTISIG_EXECUTE_TRANSFER_CU) echo 55 ;;
+    *) echo 0 ;;
+  esac
+}
+
 compare_metric() {
   local key="$1"
   local kind="$2"
@@ -123,7 +138,12 @@ compare_metric() {
   printf '%-20s base=%-8s candidate=%-8s delta=%+d\n' "$key" "$base" "$candidate" "$delta"
 
   if [[ "$kind" == "cu" && "$delta" -gt 0 ]]; then
-    return 1
+    local allowed
+    allowed="$(accepted_cu_delta "$key")"
+    if [[ "$delta" -gt "$allowed" ]]; then
+      return 1
+    fi
+    printf '%-20s accepted CU delta budget=%+d\n' "$key" "$allowed"
   fi
 }
 

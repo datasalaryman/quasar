@@ -29,7 +29,8 @@ impl InitProfile {
                 scores: &[1, 2, 3],
             },
             self.payer.to_account_view(),
-            &self.rent,
+            self.rent.lamports_per_byte(),
+            self.rent.exemption_threshold_raw(),
         )
     }
 }

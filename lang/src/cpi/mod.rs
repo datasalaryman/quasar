@@ -37,6 +37,28 @@ pub trait CpiSignerSeeds {
         F: FnOnce(&[Signer<'_, '_>]) -> R;
 }
 
+impl<'seed, const N: usize> CpiSignerSeeds for [Seed<'seed>; N] {
+    #[inline(always)]
+    fn with_signers<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&[Signer<'_, '_>]) -> R,
+    {
+        let signer = Signer::from(self);
+        f(core::slice::from_ref(&signer))
+    }
+}
+
+impl<'seed> CpiSignerSeeds for [Seed<'seed>] {
+    #[inline(always)]
+    fn with_signers<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&[Signer<'_, '_>]) -> R,
+    {
+        let signer = Signer::from(self);
+        f(core::slice::from_ref(&signer))
+    }
+}
+
 #[cfg(any(target_os = "solana", target_arch = "bpf"))]
 #[repr(C)]
 struct CInstruction<'a> {
