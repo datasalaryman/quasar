@@ -2083,6 +2083,8 @@ dependencies = [
  "bs58",
  "quasar-idl-schema",
  "quasar-schema",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
