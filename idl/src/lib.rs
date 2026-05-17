@@ -10,4 +10,5 @@
 //!
 //! Programs compile with `--features idl-build` to produce IDL.
 pub mod codegen;
+pub mod lint;
 pub mod types;
