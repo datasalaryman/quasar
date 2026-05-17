@@ -63,10 +63,16 @@ pub fn run(command: ProfileCommand) {
     let info = elf::load(&mmap, &elf_path);
 
     let resolver = match info.debug_level {
-        DebugLevel::Dwarf => dwarf::Resolver::Dwarf(
-            dwarf::DwarfResolver::new(&mmap),
-            dwarf::SymbolResolver::new(&info.symbols),
-        ),
+        DebugLevel::Dwarf => {
+            let symbols = dwarf::SymbolResolver::new(&info.symbols);
+            match dwarf::DwarfResolver::try_new(&mmap) {
+                Some(dwarf) => dwarf::Resolver::Dwarf(dwarf, symbols),
+                None => {
+                    eprintln!("Warning: failed to load DWARF; falling back to symbols");
+                    dwarf::Resolver::Symbol(symbols)
+                }
+            }
+        }
         DebugLevel::SymbolsOnly => {
             dwarf::Resolver::Symbol(dwarf::SymbolResolver::new(&info.symbols))
         }

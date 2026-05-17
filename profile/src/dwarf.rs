@@ -30,8 +30,8 @@ pub(crate) struct DwarfResolver<'a> {
 }
 
 impl<'a> DwarfResolver<'a> {
-    pub(crate) fn new(data: &'a [u8]) -> Self {
-        let obj = object::File::parse(data).expect("failed to parse object file for DWARF");
+    pub(crate) fn try_new(data: &'a [u8]) -> Option<Self> {
+        let obj = object::File::parse(data).ok()?;
 
         let endian = if obj.is_little_endian() {
             gimli::RunTimeEndian::Little
@@ -48,12 +48,11 @@ impl<'a> DwarfResolver<'a> {
                 None => gimli::EndianSlice::new(&[], endian),
             })
         })
-        .expect("failed to load DWARF sections");
+        .ok()?;
 
-        let ctx =
-            addr2line::Context::from_dwarf(dwarf).expect("failed to create addr2line context");
+        let ctx = addr2line::Context::from_dwarf(dwarf).ok()?;
 
-        Self { ctx }
+        Some(Self { ctx })
     }
 
     pub(crate) fn resolve(&self, addr: u64) -> Vec<String> {
@@ -121,5 +120,15 @@ impl SymbolResolver {
         }
 
         vec!["[unknown]".into()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DwarfResolver;
+
+    #[test]
+    fn malformed_dwarf_input_returns_none() {
+        assert!(DwarfResolver::try_new(b"not an elf").is_none());
     }
 }
